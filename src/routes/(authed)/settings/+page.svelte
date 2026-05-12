@@ -217,12 +217,99 @@
     }
   }
 
-  onMount(() => {
-    void loadFilters()
-  })
-
   let notifStatus = $state<'idle' | 'generating' | 'done' | 'error'>('idle')
   let notifPublicKey = $state('')
+  let pushStatus = $state<'unknown' | 'unsupported' | 'denied' | 'subscribed' | 'unsubscribed'>(
+    'unknown'
+  )
+  let subscribing = $state(false)
+  let testingPush = $state(false)
+
+  onMount(async () => {
+    void loadFilters()
+
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      pushStatus = 'unsupported'
+      return
+    }
+    if (Notification.permission === 'denied') {
+      pushStatus = 'denied'
+      return
+    }
+    try {
+      const reg = await navigator.serviceWorker.getRegistration('/')
+      if (!reg) {
+        pushStatus = 'unsubscribed'
+        return
+      }
+      const sub = await reg.pushManager.getSubscription()
+      pushStatus = sub ? 'subscribed' : 'unsubscribed'
+    } catch {
+      pushStatus = 'unsubscribed'
+    }
+  })
+
+  async function enablePushNotifications() {
+    subscribing = true
+    try {
+      const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' })
+      await navigator.serviceWorker.ready
+
+      const res = await fetch('/api/push/vapid-public-key')
+      const { publicKey } = await res.json()
+      if (!publicKey) {
+        errorDialogMessage = 'VAPID keys not configured. Generate them below first.'
+        return
+      }
+
+      const existing = await reg.pushManager.getSubscription()
+      if (existing) {
+        pushStatus = 'subscribed'
+        return
+      }
+
+      const permission = await Notification.requestPermission()
+      if (permission !== 'granted') {
+        pushStatus = permission === 'denied' ? 'denied' : 'unsubscribed'
+        return
+      }
+
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: publicKey
+      })
+
+      const subRes = await fetch('/api/push/subscribe', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(sub.toJSON())
+      })
+
+      if (!subRes.ok) {
+        throw new Error(await readErrorMessage(subRes, 'Failed to subscribe.'))
+      }
+
+      pushStatus = 'subscribed'
+    } catch (error) {
+      errorDialogMessage = errorMessageFromUnknown(error, 'Failed to enable notifications.')
+    } finally {
+      subscribing = false
+    }
+  }
+
+  async function testPush() {
+    testingPush = true
+    try {
+      const res = await fetch('/api/push/test', { method: 'POST' })
+      if (!res.ok) {
+        errorDialogMessage = await readErrorMessage(res, 'Failed to send test notification.')
+      }
+    } catch (error) {
+      errorDialogMessage = errorMessageFromUnknown(error, 'Failed to send test notification.')
+    } finally {
+      testingPush = false
+    }
+  }
 
   async function generateVapid() {
     notifStatus = 'generating'
@@ -888,8 +975,54 @@
         Push Notifications
       </h2>
       <p class="text-sm text-zinc-500">
-        Generate VAPID keys to enable browser push notifications for new mail. Keys are stored in
-        the database and only need to be generated once.
+        Receive push notifications for new mail. On iOS, the app must be added to the home screen
+        first.
+      </p>
+
+      <!-- Subscription status -->
+      <div class="rounded-lg border border-white/8 bg-white/3 p-4">
+        {#if pushStatus === 'unsupported'}
+          <p class="text-sm text-zinc-500">
+            Push notifications are not supported in this browser.
+          </p>
+        {:else if pushStatus === 'denied'}
+          <p class="text-sm text-amber-400">
+            Notifications are blocked. Enable them in your browser or OS settings, then reload.
+          </p>
+        {:else if pushStatus === 'subscribed'}
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p class="text-sm text-emerald-400">Notifications are enabled on this device.</p>
+            <button
+              type="button"
+              onclick={() => void testPush()}
+              disabled={testingPush}
+              class="shrink-0 rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm text-zinc-300 transition hover:bg-white/10 disabled:opacity-50"
+            >
+              {testingPush ? 'Sending…' : 'Send test'}
+            </button>
+          </div>
+        {:else}
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p class="text-sm font-medium text-zinc-200">Enable notifications</p>
+              <p class="mt-0.5 text-xs text-zinc-500">
+                Get notified when new mail arrives.
+              </p>
+            </div>
+            <button
+              type="button"
+              onclick={() => void enablePushNotifications()}
+              disabled={subscribing}
+              class="shrink-0 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-50"
+            >
+              {subscribing ? 'Enabling…' : 'Enable notifications'}
+            </button>
+          </div>
+        {/if}
+      </div>
+
+      <p class="text-xs text-zinc-600">
+        VAPID keys are required for push to work. Generate them once below.
       </p>
       <div class="flex flex-wrap items-center gap-3">
         <button

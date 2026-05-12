@@ -548,24 +548,34 @@
     const startedAt = now()
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) return
     try {
+      // Register SW first so it's ready before we ask for permission
+      const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' })
+      await navigator.serviceWorker.ready
+
       const res = await fetch('/api/push/vapid-public-key')
       const { publicKey } = await res.json()
       if (!publicKey) return
 
-      const permission = await Notification.requestPermission()
-      if (permission !== 'granted') return
+      // Permission must be requested from a user gesture on iOS 16.4+.
+      // If already granted we can subscribe silently.
+      if (Notification.permission === 'default') {
+        const permission = await Notification.requestPermission()
+        if (permission !== 'granted') return
+      } else if (Notification.permission !== 'granted') {
+        return
+      }
 
-      const reg = await navigator.serviceWorker.register('/sw.js')
-      await navigator.serviceWorker.ready
+      let sub = await reg.pushManager.getSubscription()
+      if (!sub) {
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: publicKey
+        })
+      }
 
-      const existing = await reg.pushManager.getSubscription()
-      if (existing) return // already subscribed
-
-      const sub = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: publicKey
-      })
-
+      // Always re-post to the server — the server upserts so this is idempotent.
+      // This ensures the subscription is registered even after a DB reset or
+      // VAPID key regeneration that left the browser with a stale record.
       await fetch('/api/push/subscribe', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
