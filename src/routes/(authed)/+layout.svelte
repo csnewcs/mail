@@ -455,7 +455,17 @@
   }
 
   let faviconLinkEl: HTMLLinkElement | null = null
+  function updateAppBadge(count: number) {
+    if (!('setAppBadge' in navigator)) return
+    if (count > 0) {
+      navigator.setAppBadge(count).catch(() => {})
+    } else {
+      navigator.clearAppBadge().catch(() => {})
+    }
+  }
+
   function updateFaviconAndTitle(count: number) {
+    updateAppBadge(count)
     // Update page title
     const base = document.title.replace(/^\(\d+\)\s*/, '')
     document.title = count > 0 ? `(${count}) ${base}` : base
@@ -625,6 +635,7 @@
       window.removeEventListener(MAILBOX_STATE_CHANGED_EVENT, onMailboxStateChanged)
       clearInterval(draftsInterval)
       clearInterval(unreadInterval)
+      navigator.clearAppBadge?.().catch(() => {})
     }
   })
 
