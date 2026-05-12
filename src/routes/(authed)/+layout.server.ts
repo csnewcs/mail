@@ -1,9 +1,9 @@
 import type { LayoutServerLoad } from './$types'
 import { db } from '$lib/server/db'
-import { mailMessageMailbox } from '$lib/server/db/schema'
+import { mailMessage, mailMessageMailbox } from '$lib/server/db/schema'
 import { getImapMailboxes } from '$lib/server/mail'
 import { getSimplifiedViewEnabled, getTranslationTargetLanguage } from '$lib/server/preferences'
-import { notLike, sql } from 'drizzle-orm'
+import { eq, notLike, sql } from 'drizzle-orm'
 import { getDemoUnreadCounts, isDemoModeEnabled } from '$lib/server/demo'
 
 export const load: LayoutServerLoad = async ({ locals, cookies }) => {
@@ -22,9 +22,10 @@ export const load: LayoutServerLoad = async ({ locals, cookies }) => {
     db
       .select({
         mailbox: mailMessageMailbox.mailbox,
-        count: sql<number>`count(*)`
+        count: sql<number>`count(distinct ${mailMessage.threadKey})`
       })
       .from(mailMessageMailbox)
+      .innerJoin(mailMessage, eq(mailMessageMailbox.messageId, mailMessage.messageId))
       .where(notLike(mailMessageMailbox.flags, '%\\\\Seen%'))
       .groupBy(mailMessageMailbox.mailbox)
   ])

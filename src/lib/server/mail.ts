@@ -95,7 +95,7 @@ export type MailRow = MailListRow & {
   references: string | null
 }
 
-export type ThreadRow = MailListRow & { threadCount: number }
+export type ThreadRow = MailListRow & { threadCount: number; hasUnread?: boolean }
 
 export type SyncResult = {
   mailbox: string
@@ -807,8 +807,9 @@ async function syncOneMailbox(
               .where(inArray(mailMessage.messageId, newlyStoredMessageIds))
               .limit(5)
             const [unreadRow] = await db
-              .select({ count: sql<number>`count(*)` })
+              .select({ count: sql<number>`count(distinct ${mailMessage.threadKey})` })
               .from(mailMessageMailbox)
+              .innerJoin(mailMessage, eq(mailMessageMailbox.messageId, mailMessage.messageId))
               .where(
                 and(
                   eq(mailMessageMailbox.mailbox, mailboxPath),
@@ -1487,6 +1488,14 @@ export async function listStoredThreads(
           select count(*)
           from ${mailMessage} as thread_message
           where thread_message.thread_key = ${mailThreadSummary.threadKey}
+        )`,
+        hasUnread: sql<boolean>`exists (
+          select 1
+          from mail_message_mailbox as unread_mmm
+          inner join mail_message as unread_mm on unread_mmm.message_id = unread_mm.message_id
+          where unread_mm.thread_key = ${mailThreadSummary.threadKey}
+          and unread_mmm.mailbox = ${mailThreadSummary.mailbox}
+          and unread_mmm.flags not like ${'%\\\\Seen%'}
         )`
       })
       .from(mailThreadSummary)
@@ -1511,8 +1520,9 @@ export async function listStoredThreads(
     return rows.map((row) => ({
       ...row,
       threadCount: Number(row.threadCount),
+      hasUnread: Boolean((row as typeof row & { hasUnread: boolean | null }).hasUnread),
       receivedAt: row.receivedAt != null ? new Date(row.receivedAt) : null
-    }))
+    })) as unknown as ThreadRow[]
   } catch (error) {
     perfLog('mail.listStoredThreads', {
       mailbox: mailboxPath,

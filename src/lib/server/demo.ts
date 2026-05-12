@@ -748,7 +748,10 @@ export function listDemoStoredThreads(mailboxPath: string, limit = 100, offset =
     )
   ).map((message) => ({
     ...message,
-    threadCount: byThread.get(message.threadId ?? message.messageId)?.length ?? 1
+    threadCount: byThread.get(message.threadId ?? message.messageId)?.length ?? 1,
+    hasUnread: (byThread.get(message.threadId ?? message.messageId) ?? [message]).some(
+      (m) => !(JSON.parse(m.flags) as string[]).includes('\\Seen')
+    )
   }))
 
   return rows.slice(offset, offset + limit)

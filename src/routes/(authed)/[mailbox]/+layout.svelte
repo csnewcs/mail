@@ -52,6 +52,7 @@
     to: string | null
     preview: string | null
     flags: string[]
+    hasUnread?: boolean
     receivedAt: string | null
     mailbox?: string
     threadId?: string | null
@@ -209,7 +210,7 @@
 
   const visibleMessages = $derived.by(() => {
     return messages.filter((message) => {
-      if (activeFilter === 'unread' && !isUnread(message.flags)) return false
+      if (activeFilter === 'unread' && !isUnread(message.flags, message.hasUnread)) return false
       return true
     })
   })
@@ -370,8 +371,8 @@
     return relativeFormatter.format(Math.round(diffMs / minute), 'minute')
   }
 
-  function isUnread(flags: string[] = []) {
-    return !flags.includes('\\Seen')
+  function isUnread(flags: string[] = [], hasUnread?: boolean) {
+    return hasUnread !== undefined ? hasUnread : !flags.includes('\\Seen')
   }
 
   function senderLabel(from: string | null | undefined) {
@@ -840,7 +841,7 @@
       items.push({ action: 'spam', label: 'Move to spam' })
     }
 
-    if (isUnread(message.flags)) {
+    if (isUnread(message.flags, message.hasUnread)) {
       items.push({ action: 'mark_read', label: 'Mark as read' })
     } else {
       items.push({ action: 'mark_unread', label: 'Mark as unread' })
@@ -1511,7 +1512,7 @@
                         <p class="truncate text-sm font-medium text-zinc-300">
                           {senderName(message.from)}
                         </p>
-                        {#if isUnread(message.flags)}
+                        {#if isUnread(message.flags, message.hasUnread)}
                           <span class="h-2 w-2 shrink-0 rounded-full bg-sky-400"></span>
                           <span class="text-xs font-medium text-sky-300">Unread</span>
                         {/if}
@@ -1863,12 +1864,12 @@
                           <p
                             class={[
                               'truncate text-sm',
-                              isUnread(message.flags) ? 'font-semibold text-white' : 'text-zinc-300'
+                              isUnread(message.flags, message.hasUnread) ? 'font-semibold text-white' : 'text-zinc-300'
                             ]}
                           >
                             {senderName(message.from)}
                           </p>
-                          {#if isUnread(message.flags)}
+                          {#if isUnread(message.flags, message.hasUnread)}
                             <span class="h-2 w-2 rounded-full bg-sky-400"></span>
                           {/if}
                         </div>
@@ -1949,12 +1950,12 @@
                         <p
                           class={[
                             'truncate text-sm',
-                            isUnread(message.flags) ? 'font-semibold text-white' : 'text-zinc-300'
+                            isUnread(message.flags, message.hasUnread) ? 'font-semibold text-white' : 'text-zinc-300'
                           ]}
                         >
                           {senderName(message.from)}
                         </p>
-                        {#if isUnread(message.flags)}
+                        {#if isUnread(message.flags, message.hasUnread)}
                           <span class="h-2 w-2 rounded-full bg-sky-400"></span>
                         {/if}
                         {#if threadedMode && message.threadCount && message.threadCount > 1}

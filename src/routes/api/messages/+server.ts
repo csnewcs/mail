@@ -34,6 +34,7 @@ function serializeMessage(message: MailListRow | ThreadRow, includeMailbox = fal
     receivedAt: message.receivedAt?.toISOString() ?? null,
     threadId: message.threadId ?? null,
     ...('threadCount' in message ? { threadCount: message.threadCount } : {}),
+    ...('hasUnread' in message ? { hasUnread: message.hasUnread } : {}),
     ...(includeMailbox ? { mailbox: message.mailbox } : {})
   }
 }

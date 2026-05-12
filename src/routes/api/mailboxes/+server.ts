@@ -1,10 +1,10 @@
 import { json } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
 import { db } from '$lib/server/db'
-import { mailMessageMailbox } from '$lib/server/db/schema'
+import { mailMessage, mailMessageMailbox } from '$lib/server/db/schema'
 import { getImapMailboxes } from '$lib/server/mail'
 import { payloadBytes, perfLog, perfMs, perfNow } from '$lib/server/perf'
-import { notLike, sql } from 'drizzle-orm'
+import { eq, notLike, sql } from 'drizzle-orm'
 import { getDemoUnreadCounts, isDemoModeEnabled } from '$lib/server/demo'
 
 export const GET: RequestHandler = async () => {
@@ -29,9 +29,10 @@ export const GET: RequestHandler = async () => {
     db
       .select({
         mailbox: mailMessageMailbox.mailbox,
-        count: sql<number>`count(*)`
+        count: sql<number>`count(distinct ${mailMessage.threadKey})`
       })
       .from(mailMessageMailbox)
+      .innerJoin(mailMessage, eq(mailMessageMailbox.messageId, mailMessage.messageId))
       .where(notLike(mailMessageMailbox.flags, '%\\\\Seen%'))
       .groupBy(mailMessageMailbox.mailbox)
   ])
