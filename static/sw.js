@@ -1,4 +1,4 @@
-const CACHE_NAME = 'mail-v2'
+const CACHE_NAME = 'mail-v3'
 
 self.addEventListener('install', () => {
   self.skipWaiting()
