@@ -721,18 +721,29 @@ export function getDemoMailboxSyncStatus(mailboxPath: string) {
   }
 }
 
-export function listDemoStoredMessages(mailboxPath: string, limit = 100, offset = 0) {
-  return sortedMessages(demoMessages.filter((message) => message.mailbox === mailboxPath)).slice(
-    offset,
-    offset + limit
+export function listDemoStoredMessages(
+  mailboxPath: string,
+  limit = 100,
+  offset = 0,
+  unreadOnly = false
+) {
+  const msgs = demoMessages.filter(
+    (message) =>
+      message.mailbox === mailboxPath &&
+      (!unreadOnly || !(JSON.parse(message.flags) as string[]).includes('\\Seen'))
   )
+  return sortedMessages(msgs).slice(offset, offset + limit)
 }
 
-export function countDemoStoredMessages(mailboxPath: string) {
-  return demoMessages.filter((message) => message.mailbox === mailboxPath).length
+export function countDemoStoredMessages(mailboxPath: string, unreadOnly = false) {
+  return demoMessages.filter(
+    (message) =>
+      message.mailbox === mailboxPath &&
+      (!unreadOnly || !(JSON.parse(message.flags) as string[]).includes('\\Seen'))
+  ).length
 }
 
-export function listDemoStoredThreads(mailboxPath: string, limit = 100, offset = 0) {
+export function listDemoStoredThreads(mailboxPath: string, limit = 100, offset = 0, unreadOnly = false) {
   const mailboxMessages = demoMessages.filter((message) => message.mailbox === mailboxPath)
   const byThread = new Map<string, DemoMailRow[]>()
   for (const message of mailboxMessages) {
@@ -754,15 +765,27 @@ export function listDemoStoredThreads(mailboxPath: string, limit = 100, offset =
     )
   }))
 
-  return rows.slice(offset, offset + limit)
+  const filtered = unreadOnly ? rows.filter((r) => r.hasUnread) : rows
+  return filtered.slice(offset, offset + limit)
 }
 
-export function countDemoStoredThreads(mailboxPath: string) {
-  return new Set(
-    demoMessages
-      .filter((message) => message.mailbox === mailboxPath)
-      .map((message) => message.threadId ?? message.messageId)
-  ).size
+export function countDemoStoredThreads(mailboxPath: string, unreadOnly = false) {
+  const mailboxMessages = demoMessages.filter((message) => message.mailbox === mailboxPath)
+  if (!unreadOnly) {
+    return new Set(mailboxMessages.map((message) => message.threadId ?? message.messageId)).size
+  }
+  const byThread = new Map<string, typeof mailboxMessages>()
+  for (const message of mailboxMessages) {
+    const key = message.threadId ?? message.messageId
+    const bucket = byThread.get(key) ?? []
+    bucket.push(message)
+    byThread.set(key, bucket)
+  }
+  let unreadThreads = 0
+  for (const messages of byThread.values()) {
+    if (messages.some((m) => !(JSON.parse(m.flags) as string[]).includes('\\Seen'))) unreadThreads++
+  }
+  return unreadThreads
 }
 
 export function getDemoMessagesInThread(threadKey: string, mailboxPath: string) {

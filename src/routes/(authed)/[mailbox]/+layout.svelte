@@ -407,6 +407,7 @@
       mailbox
     })
     if (threadedMode) params.set('threaded', '1')
+    if (activeFilter === 'unread') params.set('unread', '1')
     return `/api/messages?${params}`
   }
 
@@ -914,6 +915,19 @@
     }
 
     void refreshVisibleListWindow(seed ? 'route-threaded-reload' : 'detail-hydration-reload')
+  })
+
+  let lastActiveFilter = activeFilter
+  $effect(() => {
+    const filter = activeFilter
+    if (filter === untrack(() => lastActiveFilter)) return
+    lastActiveFilter = filter
+    messages = []
+    hasMore = false
+    loadedCount = 0
+    totalCount = 0
+    loadMoreError = null
+    void refreshVisibleListWindow(`filter-change:${filter}`)
   })
 
   async function toggleThreadedMode() {

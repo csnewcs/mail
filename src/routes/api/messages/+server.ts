@@ -79,13 +79,14 @@ export const GET: RequestHandler = async ({ url }) => {
   const limit = Math.min(Math.max(requestedLimit, 1), MAX_LIMIT)
   const mailboxSlug = url.searchParams.get('mailbox') ?? 'inbox'
   const threaded = url.searchParams.get('threaded') === '1'
+  const unreadOnly = url.searchParams.get('unread') === '1'
 
   const mailboxPath = await resolveMailboxPath(mailboxSlug)
 
   if (threaded) {
     const [threads, total] = await Promise.all([
-      listStoredThreads(mailboxPath, limit + 1, offset),
-      countStoredThreads(mailboxPath)
+      listStoredThreads(mailboxPath, limit + 1, offset, unreadOnly),
+      countStoredThreads(mailboxPath, unreadOnly)
     ])
     const hasMore = threads.length > limit
     const body = {
@@ -99,6 +100,7 @@ export const GET: RequestHandler = async ({ url }) => {
       mailbox: mailboxPath,
       offset,
       limit,
+      unreadOnly,
       rows: body.messages.length,
       hasMore,
       payloadBytes: payloadBytes(body),
@@ -109,8 +111,8 @@ export const GET: RequestHandler = async ({ url }) => {
   }
 
   const [messages, total] = await Promise.all([
-    listStoredMessages(mailboxPath, limit + 1, offset),
-    countStoredMessages(mailboxPath)
+    listStoredMessages(mailboxPath, limit + 1, offset, unreadOnly),
+    countStoredMessages(mailboxPath, unreadOnly)
   ])
   const hasMore = messages.length > limit
   const body = {

@@ -1412,16 +1412,25 @@ export async function repairThreadKeys() {
   })
 }
 
-export async function listStoredMessages(mailboxPath: string, limit = 100, offset = 0) {
-  if (isDemoModeEnabled()) return listDemoStoredMessages(mailboxPath, limit, offset)
+export async function listStoredMessages(
+  mailboxPath: string,
+  limit = 100,
+  offset = 0,
+  unreadOnly = false
+) {
+  if (isDemoModeEnabled()) return listDemoStoredMessages(mailboxPath, limit, offset, unreadOnly)
   const startedAt = perfNow()
 
   try {
+    const whereClause = unreadOnly
+      ? and(eq(mailMessageMailbox.mailbox, mailboxPath), notLike(mailMessageMailbox.flags, '%\\\\Seen%'))
+      : eq(mailMessageMailbox.mailbox, mailboxPath)
+
     const rows = await db
       .select(listSelect)
       .from(mailMessageMailbox)
       .innerJoin(mailMessage, eq(mailMessageMailbox.messageId, mailMessage.messageId))
-      .where(eq(mailMessageMailbox.mailbox, mailboxPath))
+      .where(whereClause)
       .orderBy(desc(mailMessageMailbox.receivedAt), desc(mailMessageMailbox.uid))
       .limit(limit)
       .offset(offset)
@@ -1430,6 +1439,7 @@ export async function listStoredMessages(mailboxPath: string, limit = 100, offse
       mailbox: mailboxPath,
       limit,
       offset,
+      unreadOnly,
       rows: rows.length,
       ms: perfMs(startedAt)
     })
@@ -1450,12 +1460,15 @@ export async function listStoredMessages(mailboxPath: string, limit = 100, offse
   }
 }
 
-export async function countStoredMessages(mailboxPath: string) {
-  if (isDemoModeEnabled()) return countDemoStoredMessages(mailboxPath)
+export async function countStoredMessages(mailboxPath: string, unreadOnly = false) {
+  if (isDemoModeEnabled()) return countDemoStoredMessages(mailboxPath, unreadOnly)
+  const whereClause = unreadOnly
+    ? and(eq(mailMessageMailbox.mailbox, mailboxPath), notLike(mailMessageMailbox.flags, '%\\\\Seen%'))
+    : eq(mailMessageMailbox.mailbox, mailboxPath)
   const [row] = await db
     .select({ value: count() })
     .from(mailMessageMailbox)
-    .where(eq(mailMessageMailbox.mailbox, mailboxPath))
+    .where(whereClause)
 
   return Number(row?.value ?? 0)
 }
@@ -1464,9 +1477,10 @@ export async function countStoredMessages(mailboxPath: string) {
 export async function listStoredThreads(
   mailboxPath: string,
   limit = 100,
-  offset = 0
+  offset = 0,
+  unreadOnly = false
 ): Promise<ThreadRow[]> {
-  if (isDemoModeEnabled()) return listDemoStoredThreads(mailboxPath, limit, offset)
+  if (isDemoModeEnabled()) return listDemoStoredThreads(mailboxPath, limit, offset, unreadOnly)
   const startedAt = perfNow()
 
   try {
@@ -1504,7 +1518,21 @@ export async function listStoredThreads(
         eq(mailMessageMailbox.id, mailThreadSummary.representativeMailboxEntryId)
       )
       .innerJoin(mailMessage, eq(mailMessageMailbox.messageId, mailMessage.messageId))
-      .where(eq(mailThreadSummary.mailbox, mailboxPath))
+      .where(
+        unreadOnly
+          ? and(
+              eq(mailThreadSummary.mailbox, mailboxPath),
+              sql`exists (
+                select 1
+                from mail_message_mailbox as unread_mmm
+                inner join mail_message as unread_mm on unread_mmm.message_id = unread_mm.message_id
+                where unread_mm.thread_key = ${mailThreadSummary.threadKey}
+                and unread_mmm.mailbox = ${mailThreadSummary.mailbox}
+                and unread_mmm.flags not like ${'%\\\\Seen%'}
+              )`
+            )
+          : eq(mailThreadSummary.mailbox, mailboxPath)
+      )
       .orderBy(desc(mailThreadSummary.latestReceivedAt), desc(mailThreadSummary.latestUid))
       .limit(limit)
       .offset(offset)
@@ -1535,12 +1563,26 @@ export async function listStoredThreads(
   }
 }
 
-export async function countStoredThreads(mailboxPath: string) {
-  if (isDemoModeEnabled()) return countDemoStoredThreads(mailboxPath)
+export async function countStoredThreads(mailboxPath: string, unreadOnly = false) {
+  if (isDemoModeEnabled()) return countDemoStoredThreads(mailboxPath, unreadOnly)
   const [row] = await db
     .select({ value: count() })
     .from(mailThreadSummary)
-    .where(eq(mailThreadSummary.mailbox, mailboxPath))
+    .where(
+      unreadOnly
+        ? and(
+            eq(mailThreadSummary.mailbox, mailboxPath),
+            sql`exists (
+              select 1
+              from mail_message_mailbox as unread_mmm
+              inner join mail_message as unread_mm on unread_mmm.message_id = unread_mm.message_id
+              where unread_mm.thread_key = ${mailThreadSummary.threadKey}
+              and unread_mmm.mailbox = ${mailThreadSummary.mailbox}
+              and unread_mmm.flags not like ${'%\\\\Seen%'}
+            )`
+          )
+        : eq(mailThreadSummary.mailbox, mailboxPath)
+    )
 
   return Number(row?.value ?? 0)
 }
