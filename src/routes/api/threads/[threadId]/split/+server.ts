@@ -1,6 +1,7 @@
 import { error, json } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
 import { resolveMailboxPath, splitThreadFromMessage } from '$lib/server/mail'
+import { decodeThreadId } from '$lib/thread-url'
 
 export const POST: RequestHandler = async ({ params, request }) => {
   const body = await request.json().catch(() => null)
@@ -16,7 +17,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
   }
 
   const mailboxPath = await resolveMailboxPath(mailbox)
-  const result = await splitThreadFromMessage(params.threadId, mailboxPath, messageId)
+  const result = await splitThreadFromMessage(decodeThreadId(params.threadId), mailboxPath, messageId)
 
   if (!result) {
     error(422, 'Thread cannot be split at the selected message')

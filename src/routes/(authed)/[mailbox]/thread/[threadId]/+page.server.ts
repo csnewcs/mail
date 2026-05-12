@@ -6,6 +6,7 @@ import {
   getMailboxRole,
   resolveMailboxPath
 } from '$lib/server/mail'
+import { decodeThreadId } from '$lib/thread-url'
 import { db } from '$lib/server/db'
 import { mailAttachment } from '$lib/server/db/schema'
 import { payloadBytes, perfLog, perfMs, perfNow } from '$lib/server/perf'
@@ -34,8 +35,9 @@ function serializeMessage(message: Awaited<ReturnType<typeof getMessagesInThread
 
 export const load: PageServerLoad = async ({ params }) => {
   const startedAt = perfNow()
+  const threadId = decodeThreadId(params.threadId)
   const mailboxPath = await resolveMailboxPath(params.mailbox)
-  const messages = await getMessagesInThread(params.threadId, mailboxPath)
+  const messages = await getMessagesInThread(threadId, mailboxPath)
 
   if (messages.length === 0) {
     error(404, 'Thread not found')
@@ -73,7 +75,7 @@ export const load: PageServerLoad = async ({ params }) => {
   const mailboxRole = getMailboxRole(mailboxPath)
 
   const body = {
-    threadId: params.threadId,
+    threadId,
     mailbox: mailboxPath,
     messages: messages.map(serializeMessage),
     attachments,
@@ -82,7 +84,7 @@ export const load: PageServerLoad = async ({ params }) => {
 
   perfLog('load.threadPage', {
     mailbox: mailboxPath,
-    threadId: params.threadId,
+    threadId,
     messages: body.messages.length,
     attachments: attachments.length,
     payloadBytes: payloadBytes(body),

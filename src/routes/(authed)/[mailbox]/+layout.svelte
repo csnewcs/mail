@@ -28,6 +28,7 @@
     Sparkles
   } from 'lucide-svelte'
   import { openCompose } from '$lib/composer.svelte'
+  import { encodeThreadId } from '$lib/thread-url'
   import { keyboard, setupKeyboardHandler } from '$lib/keyboard.svelte'
 
   type SyncData = {
@@ -552,7 +553,7 @@
       restoreListScrollTop(scrollTop)
     }
     if (threadedMode && message.threadId && (message.threadCount ?? 0) > 1) {
-      goto(resolve(`/${mailbox}/thread/${encodeURIComponent(message.threadId)}`), {
+      goto(resolve(`/${mailbox}/thread/${encodeThreadId(message.threadId)}`), {
         noScroll: true,
         keepFocus: true
       })

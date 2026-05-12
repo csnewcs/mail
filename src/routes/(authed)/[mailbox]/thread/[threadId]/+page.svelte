@@ -27,6 +27,7 @@
   import { openReply, openReplyAll } from '$lib/composer.svelte'
   import { setupKeyboardHandler } from '$lib/keyboard.svelte'
   import { notifyMailboxStateChanged } from '$lib/mailbox-state'
+  import { encodeThreadId } from '$lib/thread-url'
 
   type Message = {
     id: number
@@ -158,7 +159,7 @@
     splittingId = msg.id
     try {
       const response = await trackAppLoading(() =>
-        fetch(resolve(`/api/threads/${encodeURIComponent(data.threadId)}/split`), {
+        fetch(resolve(`/api/threads/${encodeThreadId(data.threadId)}/split`), {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ mailbox: page.params.mailbox, messageId: msg.id })
@@ -171,7 +172,7 @@
 
       const result = (await response.json()) as { threadKey: string }
       await goto(
-        resolve(`/${page.params.mailbox}/thread/${encodeURIComponent(result.threadKey)}`),
+        resolve(`/${page.params.mailbox}/thread/${encodeThreadId(result.threadKey)}`),
         {
           noScroll: true,
           keepFocus: true
