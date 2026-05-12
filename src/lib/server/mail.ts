@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { and, asc, count, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
+import { and, asc, count, desc, eq, ilike, inArray, notLike, or, sql } from 'drizzle-orm'
 import { ImapFlow } from 'imapflow'
 import { simpleParser } from 'mailparser'
 import { slugToPath } from '../mailbox'
@@ -806,13 +806,24 @@ async function syncOneMailbox(
               .from(mailMessage)
               .where(inArray(mailMessage.messageId, newlyStoredMessageIds))
               .limit(5)
+            const [unreadRow] = await db
+              .select({ count: sql<number>`count(*)` })
+              .from(mailMessageMailbox)
+              .where(
+                and(
+                  eq(mailMessageMailbox.mailbox, mailboxPath),
+                  notLike(mailMessageMailbox.flags, '%\\\\Seen%')
+                )
+              )
+            const unreadCount = Number(unreadRow?.count ?? 0)
             for (const msg of newMsgs) {
               const senderMatch = msg.from?.match(/^([^<]+)</)
               const sender = senderMatch ? senderMatch[1].trim() : (msg.from ?? 'Unknown')
               await sendPushToAll({
                 title: msg.subject ?? '(no subject)',
                 body: `From: ${sender}`,
-                url: `/${encodeURIComponent(mailboxPath)}`
+                url: `/${encodeURIComponent(mailboxPath)}`,
+                unreadCount
               })
             }
           } catch {

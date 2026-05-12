@@ -31,6 +31,7 @@ export async function sendPushToAll(payload: {
   title: string
   body: string
   url?: string
+  unreadCount?: number
 }): Promise<void> {
   const ready = await ensureInit()
   if (!ready) return

@@ -20,15 +20,21 @@ self.addEventListener('push', (event) => {
   } catch {
     data = { title: 'New mail', body: event.data.text() }
   }
+  const count = typeof data.unreadCount === 'number' ? data.unreadCount : undefined
   event.waitUntil(
-    self.registration.showNotification(data.title || 'New mail', {
-      body: data.body || '',
-      icon: '/icon-192.png',
-      badge: '/badge.png',
-      tag: data.tag || 'mail',
-      renotify: true,
-      data: { url: data.url || '/' }
-    })
+    Promise.all([
+      self.registration.showNotification(data.title || 'New mail', {
+        body: data.body || '',
+        icon: '/icon-192.png',
+        badge: '/badge.png',
+        tag: data.tag || 'mail',
+        renotify: true,
+        data: { url: data.url || '/' }
+      }),
+      count !== undefined
+        ? navigator.setAppBadge(count).catch(() => {})
+        : Promise.resolve()
+    ])
   )
 })
 
