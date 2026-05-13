@@ -40,15 +40,19 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
-  const url = event.notification.data?.url || '/'
+  const rawUrl = event.notification.data?.url || '/'
+  const url = new URL(rawUrl, self.location.origin).href
   event.waitUntil(
     clients
       .matchAll({ type: 'window', includeUncontrolled: true })
       .then((windowClients) => {
         for (const client of windowClients) {
-          if ('focus' in client) {
-            client.navigate(url)
-            return client.focus()
+          if ('navigate' in client) {
+            return client.navigate(url).then((navigatedClient) => {
+              if (navigatedClient && 'focus' in navigatedClient) return navigatedClient.focus()
+              if ('focus' in client) return client.focus()
+              return undefined
+            })
           }
         }
         return clients.openWindow(url)

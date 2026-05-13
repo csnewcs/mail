@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { and, asc, count, desc, eq, ilike, inArray, notLike, or, sql } from 'drizzle-orm'
 import { ImapFlow } from 'imapflow'
 import { simpleParser } from 'mailparser'
-import { slugToPath } from '../mailbox'
+import { pathToSlug, slugToPath } from '../mailbox'
 import { client, db } from './db'
 import {
   mailboxCatalog,
@@ -802,9 +802,19 @@ async function syncOneMailbox(
           try {
             const { sendPushToAll } = await import('./push')
             const newMsgs = await db
-              .select({ subject: mailMessage.subject, from: mailMessage.from })
-              .from(mailMessage)
-              .where(inArray(mailMessage.messageId, newlyStoredMessageIds))
+              .select({
+                id: mailMessageMailbox.id,
+                subject: mailMessage.subject,
+                from: mailMessage.from
+              })
+              .from(mailMessageMailbox)
+              .innerJoin(mailMessage, eq(mailMessageMailbox.messageId, mailMessage.messageId))
+              .where(
+                and(
+                  eq(mailMessageMailbox.mailbox, mailboxPath),
+                  inArray(mailMessage.messageId, newlyStoredMessageIds)
+                )
+              )
               .limit(5)
             const [unreadRow] = await db
               .select({ count: sql<number>`count(distinct ${mailMessage.threadKey})` })
@@ -823,7 +833,7 @@ async function syncOneMailbox(
               await sendPushToAll({
                 title: msg.subject ?? '(no subject)',
                 body: `From: ${sender}`,
-                url: `/${encodeURIComponent(mailboxPath)}`,
+                url: `/${pathToSlug(mailboxPath)}/${msg.id}`,
                 unreadCount
               })
             }
