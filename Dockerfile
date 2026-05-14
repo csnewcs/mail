@@ -14,7 +14,7 @@ COPY . .
 RUN DATABASE_URL=postgres://build:build@localhost:5432/build \
     BETTER_AUTH_SECRET=build-placeholder \
     BETTER_AUTH_URL=http://localhost \
-    pnpm build:web
+    pnpm build:web && pnpm build:worker
 
 
 # ── runtime stage ──────────────────────────────────────────────────────────────
@@ -25,6 +25,7 @@ COPY drizzle.config.ts ./
 COPY drizzle ./drizzle
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/build ./build
+COPY --from=build /app/build-worker ./build-worker
 COPY --from=build /app/src ./src
 
 ENV NODE_ENV=production \
@@ -33,3 +34,8 @@ ENV NODE_ENV=production \
 
 EXPOSE 3000
 CMD ["node", "build/index.js"]
+
+
+# ── worker runtime stage ───────────────────────────────────────────────────────
+FROM runtime AS worker
+CMD ["node", "build-worker/worker.js"]

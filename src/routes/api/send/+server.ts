@@ -1,12 +1,8 @@
 import { json, error } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
-import nodemailer from 'nodemailer'
-import { getSmtpConfig } from '$lib/server/config'
 import { parseComposerAttachments } from '$lib/mail-attachments'
-import { logServerError, logServerEvent } from '$lib/server/perf'
-import { withRetry } from '$lib/server/retry'
-import { parseAddressFields, upsertContacts } from '$lib/server/contacts'
 import { isDemoModeEnabled, sendDemoMessage } from '$lib/server/demo'
+import { enqueueSmtpSendJob } from '$lib/server/smtp-queue'
 
 export const POST: RequestHandler = async ({ request }) => {
   const {
@@ -40,68 +36,15 @@ export const POST: RequestHandler = async ({ request }) => {
     return json({ success: true, demo: true })
   }
 
-  const smtpConfig = await getSmtpConfig()
-  if ('missing' in smtpConfig) {
-    logServerEvent('api.send.POST.missingSmtpConfig', { missing: smtpConfig.missing })
-    return error(500, `Missing SMTP config: ${smtpConfig.missing.join(', ')}`)
-  }
-
-  const attachments = parsedAttachments.attachments.map((attachment) => {
-    const content = Buffer.from(attachment.contentBase64, 'base64')
-    if (content.byteLength !== attachment.size) {
-      throw error(400, `Attachment size mismatch for ${attachment.name}`)
-    }
-
-    return {
-      filename: attachment.name,
-      contentType: attachment.contentType,
-      content,
-      size: attachment.size
-    }
+  const jobId = await enqueueSmtpSendJob({
+    to,
+    cc: cc || null,
+    bcc: bcc || null,
+    subject,
+    html: html ?? null,
+    inReplyTo: inReplyTo || null,
+    attachments: parsedAttachments.attachments
   })
 
-  const transporter = nodemailer.createTransport({
-    host: smtpConfig.host,
-    port: smtpConfig.port,
-    secure: smtpConfig.secure,
-    auth: {
-      user: smtpConfig.user,
-      pass: smtpConfig.password
-    }
-  })
-
-  try {
-    await withRetry(
-      () =>
-        transporter.sendMail({
-          from: smtpConfig.from,
-          to,
-          cc: cc || undefined,
-          bcc: bcc || undefined,
-          subject,
-          html,
-          inReplyTo: inReplyTo || undefined,
-          attachments: attachments.length > 0 ? attachments : undefined
-        }),
-      { label: 'smtp sendMail', maxAttempts: 3, baseDelayMs: 1000 }
-    )
-    await upsertContacts(
-      parseAddressFields([to, cc, bcc]).map((contact) => ({
-        ...contact,
-        source: 'auto' as const,
-        useCount: 1,
-        lastUsedAt: new Date()
-      }))
-    )
-    return json({ success: true })
-  } catch (err) {
-    logServerError('api.send.POST.sendMail', err, {
-      hasCc: Boolean(cc),
-      hasBcc: Boolean(bcc),
-      attachmentCount: attachments.length,
-      inReplyTo: Boolean(inReplyTo)
-    })
-    const message = err instanceof Error ? err.message : String(err)
-    return error(500, `Failed to send: ${message}`)
-  }
+  return json({ success: true, queued: true, jobId })
 }

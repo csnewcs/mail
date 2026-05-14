@@ -56,6 +56,17 @@ docker -itp 3000:3000 --env-file=.env \
   ghcr.io/pmh-only/mail:latest
 ```
 
+Run the background worker as a separate container. The worker handles IMAP actions,
+SMTP sends, and periodic mailbox sync.
+
+```sh
+docker run --name worker --env-file=.env \
+  ghcr.io/pmh-only/mail:latest node build-worker/worker.js
+```
+
+For local container deployment, `docker compose up --build` starts both `web` and
+`worker` services.
+
 `.env` template is [here](./.env.example)
 
 ## Contributors

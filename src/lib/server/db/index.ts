@@ -15,13 +15,14 @@ function missingDatabaseError() {
   return new Error('DATABASE_URL is not set')
 }
 
-const client = demoMode || !databaseUrl
-  ? (null as never)
-  : postgres(databaseUrl!, {
-      max: Number(env.PG_POOL_MAX ?? 10),
-      idle_timeout: 20,
-      connect_timeout: 10
-    })
+const client =
+  demoMode || !databaseUrl
+    ? (null as never)
+    : postgres(databaseUrl!, {
+        max: Number(env.PG_POOL_MAX ?? 10),
+        idle_timeout: 20,
+        connect_timeout: 10
+      })
 
 const db = demoMode
   ? (null as never)
@@ -38,7 +39,12 @@ const db = demoMode
 
 export async function runMigrations() {
   if (demoMode || !databaseUrl) return
-  await migrate(db, { migrationsFolder: resolve('drizzle') })
+  await client`select pg_advisory_lock(hashtext('mail_drizzle_migrations'))`
+  try {
+    await migrate(db, { migrationsFolder: resolve('drizzle') })
+  } finally {
+    await client`select pg_advisory_unlock(hashtext('mail_drizzle_migrations'))`
+  }
 }
 
 export { db, client }

@@ -4,8 +4,7 @@ import { sequence } from '@sveltejs/kit/hooks'
 import { building } from '$app/environment'
 import { getAuth } from '$lib/server/auth'
 import { isOidcConfigured } from '$lib/server/config'
-import { startImapJobWorker } from '$lib/server/imap-queue'
-import { repairThreadKeys, startMailboxSync } from '$lib/server/mail'
+import { repairThreadKeys } from '$lib/server/mail'
 import { logServerError } from '$lib/server/perf'
 import { runMigrations } from '$lib/server/db'
 import { svelteKitHandler } from 'better-auth/svelte-kit'
@@ -26,8 +25,6 @@ if (!building) {
       .then(async () => {
         await repairThreadKeys()
         void getAuth()
-        startImapJobWorker()
-        void startMailboxSync()
       })
       .catch((err) => {
         console.error('[startup] migration failed, aborting startup:', err)

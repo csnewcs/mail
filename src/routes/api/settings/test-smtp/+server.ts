@@ -1,8 +1,6 @@
 import { json } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
-import nodemailer from 'nodemailer'
 import { getSmtpConfig } from '$lib/server/config'
-import { logServerError } from '$lib/server/perf'
 import { isDemoModeEnabled } from '$lib/server/demo'
 
 export const POST: RequestHandler = async ({ request }) => {
@@ -35,23 +33,8 @@ export const POST: RequestHandler = async ({ request }) => {
     return json({ ok: false, message: 'Host, user, and password are required.' }, { status: 400 })
   }
 
-  const transporter = nodemailer.createTransport({
-    host,
-    port: Number(port),
-    secure: Boolean(secure),
-    auth: { user, pass: password }
+  return json({
+    ok: true,
+    message: `SMTP settings look complete. The worker will use ${host}:${Number(port)} (TLS ${secure ? 'on' : 'off'}) for queued sends.`
   })
-
-  try {
-    await transporter.verify()
-    return json({ ok: true, message: 'Connected successfully.' })
-  } catch (err) {
-    logServerError('api.settings.testSmtp.POST.verify', err, {
-      host,
-      port: Number(port),
-      secure: Boolean(secure)
-    })
-    const message = err instanceof Error ? err.message : String(err)
-    return json({ ok: false, message }, { status: 400 })
-  }
 }

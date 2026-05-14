@@ -11,6 +11,7 @@ import {
 } from '$lib/server/mail'
 import { enqueueMarkRead, enqueueMarkUnread } from '$lib/server/imap-queue'
 import { isDemoModeEnabled, markDemoMessagesSeen } from '$lib/server/demo'
+import { isAlwaysReadMailbox } from '$lib/mailbox'
 
 const VALID_MOVE_ACTIONS = new Set<MessageAction>(['archive', 'trash', 'spam', 'inbox'])
 
@@ -31,6 +32,8 @@ async function markSeen(ids: number[], seen: boolean) {
   const touchedThreadKeysByMailbox = new Map<string, Set<string>>()
 
   for (const row of rows) {
+    if (!seen && isAlwaysReadMailbox(row.mailbox)) continue
+
     const flags: string[] = JSON.parse(row.flags)
     const isSeen = flags.includes('\\Seen')
     if (isSeen === seen) continue

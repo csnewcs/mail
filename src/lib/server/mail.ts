@@ -2,7 +2,13 @@ import { randomUUID } from 'node:crypto'
 import { and, asc, count, desc, eq, ilike, inArray, notLike, or, sql } from 'drizzle-orm'
 import { ImapFlow } from 'imapflow'
 import { simpleParser } from 'mailparser'
-import { pathToSlug, slugToPath } from '../mailbox'
+import {
+  ensureSeenFlag,
+  isAlwaysReadMailbox,
+  normalizeMailboxFlags,
+  pathToSlug,
+  slugToPath
+} from '../mailbox'
 import { client, db } from './db'
 import {
   mailboxCatalog,
@@ -110,13 +116,29 @@ export type SyncResult = {
 }
 
 type MailboxSyncRow = typeof mailboxSync.$inferSelect
+type SyncOptions = {
+  beforeMailbox?: () => Promise<void>
+}
 
 // Yield control back to the Node.js event loop so HTTP requests can be served
 // between sync chunks during large mailbox backfills.
 const yieldToEventLoop = () => new Promise<void>((resolve) => setImmediate(resolve))
 
+function mailboxFlagsJson(mailboxPath: string, flags: string[]) {
+  return JSON.stringify(normalizeMailboxFlags(mailboxPath, flags))
+}
+
+function normalizeMailRowFlags<T extends MailListRow>(row: T): T {
+  if (!isAlwaysReadMailbox(row.mailbox)) return row
+
+  const flags = JSON.parse(row.flags) as string[]
+  const normalizedFlags = ensureSeenFlag(flags)
+  if (normalizedFlags === flags) return row
+
+  return { ...row, flags: JSON.stringify(normalizedFlags) } as T
+}
+
 let activeSync: Promise<void> | null = null
-let syncTimer: ReturnType<typeof setInterval> | null = null
 
 function summarizeAddresses(input: unknown) {
   if (!input || typeof input !== 'object' || !('value' in input)) return ''
@@ -551,7 +573,7 @@ async function storeMailboxEntry(
       messageId: sanitizedMessageId,
       mailbox: sanitizedMailbox,
       uid,
-      flags: JSON.stringify(flags),
+      flags: mailboxFlagsJson(sanitizedMailbox, flags),
       receivedAt: receivedAt ?? null,
       syncedAt: new Date()
     })
@@ -559,7 +581,7 @@ async function storeMailboxEntry(
       target: [mailMessageMailbox.mailbox, mailMessageMailbox.uid],
       set: {
         messageId: sanitizedMessageId,
-        flags: JSON.stringify(flags),
+        flags: mailboxFlagsJson(sanitizedMailbox, flags),
         receivedAt: receivedAt ?? null,
         syncedAt: new Date()
       }
@@ -629,7 +651,7 @@ async function syncOneMailbox(
           (item.envelope as { messageId?: string } | undefined)?.messageId?.trim() ?? ''
         )
         const effectiveMessageId = msgId || `synthetic:${sanitizePgText(mailboxPath)}:${item.uid}`
-        const flags = Array.from(item.flags ?? []).map(String)
+        const flags = normalizeMailboxFlags(mailboxPath, Array.from(item.flags ?? []).map(String))
         const internalDate =
           item.internalDate instanceof Date
             ? item.internalDate
@@ -704,7 +726,7 @@ async function syncOneMailbox(
                     messageId: item.effectiveMessageId,
                     mailbox: mailboxPath,
                     uid: item.uid,
-                    flags: JSON.stringify(item.flags),
+                    flags: mailboxFlagsJson(mailboxPath, item.flags),
                     receivedAt: item.internalDate ?? null,
                     syncedAt: new Date()
                   })
@@ -712,7 +734,7 @@ async function syncOneMailbox(
                     target: [mailMessageMailbox.mailbox, mailMessageMailbox.uid],
                     set: {
                       messageId: item.effectiveMessageId,
-                      flags: JSON.stringify(item.flags),
+                      flags: mailboxFlagsJson(mailboxPath, item.flags),
                       receivedAt: item.internalDate ?? null,
                       syncedAt: new Date()
                     }
@@ -798,7 +820,7 @@ async function syncOneMailbox(
         }
 
         // Send push notifications for new messages
-        if (newlyStoredMessageIds.length > 0) {
+        if (newlyStoredMessageIds.length > 0 && !isAlwaysReadMailbox(mailboxPath)) {
           try {
             const { sendPushToAll } = await import('./push')
             const newMsgs = await db
@@ -902,7 +924,7 @@ async function syncOneMailbox(
   }
 }
 
-async function runSyncAll(config: ImapConfig): Promise<void> {
+async function runSyncAll(config: ImapConfig, options: SyncOptions = {}): Promise<void> {
   const pollMs = config.pollSeconds * 1000
   let listed: { path: string; name: string; delimiter?: string; flags?: Set<string> }[]
 
@@ -942,8 +964,9 @@ async function runSyncAll(config: ImapConfig): Promise<void> {
       }
     }
 
-    for (const mb of listed) {
+    for (const mb of sortImapMailboxes(listed)) {
       if (mb.flags?.has('\\Noselect')) continue
+      await options.beforeMailbox?.()
       await syncOneMailbox(config, mb.path, pollMs)
     }
 
@@ -971,33 +994,24 @@ async function runSyncAll(config: ImapConfig): Promise<void> {
   }
 }
 
-function scheduleSyncTimer(pollMs: number) {
-  if (syncTimer) return
-  syncTimer = setInterval(async () => {
-    const cfg = await getImapConfig()
-    if ('missing' in cfg) return
-    if (!activeSync) {
-      activeSync = runSyncAll(cfg).finally(() => {
-        activeSync = null
-      })
-    }
-  }, pollMs)
+export async function getMailboxSyncPollMs() {
+  if (isDemoModeEnabled()) return null
+  const config = await getImapConfig()
+  if ('missing' in config) return null
+  return config.pollSeconds * 1000
 }
 
-export async function startMailboxSync() {
-  if (isDemoModeEnabled()) return
-  startMailboxCacheRefresh()
-
+export async function runMailboxSyncOnce(options: SyncOptions = {}) {
+  if (isDemoModeEnabled()) return false
   const config = await getImapConfig()
-  if ('missing' in config) return
-
+  if ('missing' in config) return false
   if (!activeSync) {
-    activeSync = runSyncAll(config).finally(() => {
+    activeSync = runSyncAll(config, options).finally(() => {
       activeSync = null
     })
   }
-
-  scheduleSyncTimer(config.pollSeconds * 1000)
+  await activeSync
+  return true
 }
 
 export async function getSyncSummary(): Promise<{
@@ -1142,49 +1156,6 @@ export type ImapMailbox = {
 }
 
 let cachedMailboxes: ImapMailbox[] | null = null
-const MAILBOX_REFRESH_MS = 10 * 60 * 1000
-let mailboxRefreshTimer: ReturnType<typeof setInterval> | null = null
-let mailboxRefreshPromise: Promise<ImapMailbox[]> | null = null
-
-async function refreshMailboxCache(): Promise<ImapMailbox[]> {
-  if (mailboxRefreshPromise) return mailboxRefreshPromise
-
-  mailboxRefreshPromise = (async () => {
-    const config = await getImapConfig()
-    if ('missing' in config) return cachedMailboxes ?? []
-
-    try {
-      const client = await connectImap(config, 'mailbox cache refresh')
-      const tree = await client.list()
-      await client.logout()
-
-      cachedMailboxes = sortImapMailboxes(
-        tree.map((mb) => ({
-          path: mb.path,
-          name: mb.name,
-          delimiter: mb.delimiter ?? '/'
-        }))
-      )
-      await replaceMailboxCatalog(cachedMailboxes)
-    } catch {
-      // keep existing cache on failure — retries exhausted or auth failure
-    }
-
-    return cachedMailboxes ?? []
-  })().finally(() => {
-    mailboxRefreshPromise = null
-  })
-
-  return mailboxRefreshPromise
-}
-
-function startMailboxCacheRefresh() {
-  if (mailboxRefreshTimer) return
-  void refreshMailboxCache()
-  mailboxRefreshTimer = setInterval(() => {
-    void refreshMailboxCache()
-  }, MAILBOX_REFRESH_MS)
-}
 
 export function listImapMailboxes(): ImapMailbox[] {
   return cachedMailboxes ?? []
@@ -1195,9 +1166,9 @@ export async function getImapMailboxes(options?: {
 }): Promise<ImapMailbox[]> {
   if (isDemoModeEnabled()) return getDemoImapMailboxes()
   const rows = await readMailboxCatalogRows()
-  if (rows.length > 0) return rows
-  if (!options?.waitForCache) return rows
-  return refreshMailboxCache()
+  cachedMailboxes = rows
+  void options
+  return rows
 }
 
 export async function resolveMailboxPath(
@@ -1429,11 +1400,16 @@ export async function listStoredMessages(
   unreadOnly = false
 ) {
   if (isDemoModeEnabled()) return listDemoStoredMessages(mailboxPath, limit, offset, unreadOnly)
+  if (unreadOnly && isAlwaysReadMailbox(mailboxPath)) return []
+
   const startedAt = perfNow()
 
   try {
     const whereClause = unreadOnly
-      ? and(eq(mailMessageMailbox.mailbox, mailboxPath), notLike(mailMessageMailbox.flags, '%\\\\Seen%'))
+      ? and(
+          eq(mailMessageMailbox.mailbox, mailboxPath),
+          notLike(mailMessageMailbox.flags, '%\\\\Seen%')
+        )
       : eq(mailMessageMailbox.mailbox, mailboxPath)
 
     const rows = await db
@@ -1454,10 +1430,12 @@ export async function listStoredMessages(
       ms: perfMs(startedAt)
     })
 
-    return rows.map((row) => ({
-      ...row,
-      receivedAt: row.receivedAt != null ? new Date(row.receivedAt) : null
-    }))
+    return rows.map((row) =>
+      normalizeMailRowFlags({
+        ...row,
+        receivedAt: row.receivedAt != null ? new Date(row.receivedAt) : null
+      })
+    )
   } catch (error) {
     perfLog('mail.listStoredMessages', {
       mailbox: mailboxPath,
@@ -1472,13 +1450,15 @@ export async function listStoredMessages(
 
 export async function countStoredMessages(mailboxPath: string, unreadOnly = false) {
   if (isDemoModeEnabled()) return countDemoStoredMessages(mailboxPath, unreadOnly)
+  if (unreadOnly && isAlwaysReadMailbox(mailboxPath)) return 0
+
   const whereClause = unreadOnly
-    ? and(eq(mailMessageMailbox.mailbox, mailboxPath), notLike(mailMessageMailbox.flags, '%\\\\Seen%'))
+    ? and(
+        eq(mailMessageMailbox.mailbox, mailboxPath),
+        notLike(mailMessageMailbox.flags, '%\\\\Seen%')
+      )
     : eq(mailMessageMailbox.mailbox, mailboxPath)
-  const [row] = await db
-    .select({ value: count() })
-    .from(mailMessageMailbox)
-    .where(whereClause)
+  const [row] = await db.select({ value: count() }).from(mailMessageMailbox).where(whereClause)
 
   return Number(row?.value ?? 0)
 }
@@ -1491,7 +1471,10 @@ export async function listStoredThreads(
   unreadOnly = false
 ): Promise<ThreadRow[]> {
   if (isDemoModeEnabled()) return listDemoStoredThreads(mailboxPath, limit, offset, unreadOnly)
+  if (unreadOnly && isAlwaysReadMailbox(mailboxPath)) return []
+
   const startedAt = perfNow()
+  const alwaysReadMailbox = isAlwaysReadMailbox(mailboxPath)
 
   try {
     const rows = await db
@@ -1555,12 +1538,16 @@ export async function listStoredThreads(
       ms: perfMs(startedAt)
     })
 
-    return rows.map((row) => ({
-      ...row,
-      threadCount: Number(row.threadCount),
-      hasUnread: Boolean((row as typeof row & { hasUnread: boolean | null }).hasUnread),
-      receivedAt: row.receivedAt != null ? new Date(row.receivedAt) : null
-    })) as unknown as ThreadRow[]
+    return rows.map((row) =>
+      normalizeMailRowFlags({
+        ...row,
+        threadCount: Number(row.threadCount),
+        hasUnread: alwaysReadMailbox
+          ? false
+          : Boolean((row as typeof row & { hasUnread: boolean | null }).hasUnread),
+        receivedAt: row.receivedAt != null ? new Date(row.receivedAt) : null
+      })
+    ) as unknown as ThreadRow[]
   } catch (error) {
     perfLog('mail.listStoredThreads', {
       mailbox: mailboxPath,
@@ -1575,6 +1562,8 @@ export async function listStoredThreads(
 
 export async function countStoredThreads(mailboxPath: string, unreadOnly = false) {
   if (isDemoModeEnabled()) return countDemoStoredThreads(mailboxPath, unreadOnly)
+  if (unreadOnly && isAlwaysReadMailbox(mailboxPath)) return 0
+
   const [row] = await db
     .select({ value: count() })
     .from(mailThreadSummary)
@@ -1646,6 +1635,7 @@ export async function getMessagesInThread(
     const rows = threadMessages
       .map((message) => rowByMessageId.get(message.messageId))
       .filter((row): row is MailRow => Boolean(row))
+      .map(normalizeMailRowFlags)
 
     perfLog('mail.getMessagesInThread', {
       mailbox: mailboxPath,
@@ -1780,7 +1770,7 @@ export async function searchMessages(query: string, limit: number, offset: numbe
     ms: perfMs(startedAt)
   })
 
-  return deduped
+  return deduped.map(normalizeMailRowFlags)
 }
 
 export async function countSearchMessages(query: string) {
@@ -1815,7 +1805,7 @@ export async function getStoredMessageById(id: string | number): Promise<MailRow
     .where(eq(mailMessageMailbox.id, numericId))
     .limit(1)
 
-  return message ?? null
+  return message ? normalizeMailRowFlags(message) : null
 }
 
 export async function markMessageAsRead(message: MailRow) {
@@ -1853,6 +1843,8 @@ export async function markMessageAsRead(message: MailRow) {
 }
 
 export async function markMessageAsUnread(message: MailRow) {
+  if (isAlwaysReadMailbox(message.mailbox)) return
+
   if (isDemoModeEnabled()) {
     markDemoMessageAsUnread(message)
     return

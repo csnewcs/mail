@@ -4,6 +4,7 @@ import { db } from '$lib/server/db'
 import { mailMessageMailbox } from '$lib/server/db/schema'
 import { and, eq, notLike, sql } from 'drizzle-orm'
 import { getImapConfig } from '$lib/server/config'
+import { isAlwaysReadMailbox } from '$lib/mailbox'
 import { perfLog, perfMs, perfNow } from '$lib/server/perf'
 import { getDemoUnreadCount, isDemoModeEnabled } from '$lib/server/demo'
 
@@ -19,6 +20,16 @@ export const GET: RequestHandler = async () => {
   if ('missing' in config) {
     perfLog('api.unreadCount.GET', {
       configured: false,
+      count: 0,
+      ms: perfMs(startedAt)
+    })
+    return json({ count: 0 })
+  }
+
+  if (isAlwaysReadMailbox(config.mailbox)) {
+    perfLog('api.unreadCount.GET', {
+      configured: true,
+      mailbox: config.mailbox,
       count: 0,
       ms: perfMs(startedAt)
     })

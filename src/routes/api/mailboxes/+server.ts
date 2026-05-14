@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types'
 import { db } from '$lib/server/db'
 import { mailMessage, mailMessageMailbox } from '$lib/server/db/schema'
 import { getImapMailboxes } from '$lib/server/mail'
+import { isAlwaysReadMailbox } from '$lib/mailbox'
 import { payloadBytes, perfLog, perfMs, perfNow } from '$lib/server/perf'
 import { eq, notLike, sql } from 'drizzle-orm'
 import { getDemoUnreadCounts, isDemoModeEnabled } from '$lib/server/demo'
@@ -37,7 +38,9 @@ export const GET: RequestHandler = async () => {
       .groupBy(mailMessageMailbox.mailbox)
   ])
   const unreadCounts = Object.fromEntries(
-    unreadRows.map((row) => [row.mailbox, Number(row.count ?? 0)])
+    unreadRows
+      .filter((row) => !isAlwaysReadMailbox(row.mailbox))
+      .map((row) => [row.mailbox, Number(row.count ?? 0)])
   ) as Record<string, number>
   const body = { mailboxes, unreadCounts }
 

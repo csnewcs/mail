@@ -22,6 +22,13 @@
       "when": 1777375541000,
       "tag": "0002_address_book",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1778724072123,
+      "tag": "0003_smtp_worker_queue",
+      "breakpoints": true
     }
   ]
 }

@@ -17,3 +17,17 @@ export function slugToPath(slug: string, mailboxes: { path: string }[]): string 
     slug
   )
 }
+
+const ALWAYS_READ_MAILBOX_RE = /\b(drafts?|sent)\b/i
+
+export function isAlwaysReadMailbox(path: string) {
+  return ALWAYS_READ_MAILBOX_RE.test(path)
+}
+
+export function ensureSeenFlag(flags: string[]) {
+  return flags.includes('\\Seen') ? flags : [...flags, '\\Seen']
+}
+
+export function normalizeMailboxFlags(mailboxPath: string, flags: string[]) {
+  return isAlwaysReadMailbox(mailboxPath) ? ensureSeenFlag(flags) : flags
+}

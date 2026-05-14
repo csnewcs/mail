@@ -2,6 +2,7 @@ import type { LayoutServerLoad } from './$types'
 import { db } from '$lib/server/db'
 import { mailMessage, mailMessageMailbox } from '$lib/server/db/schema'
 import { getImapMailboxes } from '$lib/server/mail'
+import { isAlwaysReadMailbox } from '$lib/mailbox'
 import { getSimplifiedViewEnabled, getTranslationTargetLanguage } from '$lib/server/preferences'
 import { eq, notLike, sql } from 'drizzle-orm'
 import { getDemoUnreadCounts, isDemoModeEnabled } from '$lib/server/demo'
@@ -33,7 +34,9 @@ export const load: LayoutServerLoad = async ({ locals, cookies }) => {
   return {
     imapMailboxes,
     unreadCounts: Object.fromEntries(
-      unreadRows.map((row) => [row.mailbox, Number(row.count ?? 0)])
+      unreadRows
+        .filter((row) => !isAlwaysReadMailbox(row.mailbox))
+        .map((row) => [row.mailbox, Number(row.count ?? 0)])
     ) as Record<string, number>,
     user: locals.user ?? null,
     simplifiedView: getSimplifiedViewEnabled(cookies),

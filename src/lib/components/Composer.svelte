@@ -502,7 +502,7 @@
 
   {#if !composer.minimized}
     <!-- Fields -->
-    <div class="shrink-0 border-b border-white/8">
+    <div class="max-h-48 shrink-0 overflow-y-auto border-b border-white/8">
       <!-- To -->
       <div class="flex flex-wrap items-start gap-2 border-b border-white/8 px-4 py-2">
         <AddressInput
@@ -783,7 +783,7 @@
     {/if}
 
     <!-- Editor -->
-    <div class="composer-editor-wrap flex-1 overflow-y-auto">
+    <div class="composer-editor-wrap min-h-0 flex-1 overflow-y-auto">
       <div bind:this={editorEl}></div>
     </div>
 

@@ -95,6 +95,24 @@ export const imapJob = pgTable(
   ]
 )
 
+export const smtpJob = pgTable(
+  'smtp_job',
+  {
+    id: serial('id').primaryKey(),
+    payload: text('payload').notNull(),
+    status: text('status').notNull().default('pending'),
+    attemptCount: integer('attempt_count').notNull().default(0),
+    availableAt: timestamp('available_at', { withTimezone: true, mode: 'date' }).notNull(),
+    lastError: text('last_error'),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' })
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull()
+  },
+  (table) => [index('smtp_job_status_available_at_idx').on(table.status, table.availableAt)]
+)
+
 export const mailMessage = pgTable(
   'mail_message',
   {

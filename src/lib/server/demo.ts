@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { env } from '$env/dynamic/private'
+import { ensureSeenFlag, isAlwaysReadMailbox } from '../mailbox'
 import { contactDisplay, normalizeEmail, parseAddressFields, type ContactInput } from './contacts'
 
 type DemoUser = {
@@ -64,6 +65,20 @@ export type DemoMailRow = {
   replyTo: string | null
   inReplyTo: string | null
   references: string | null
+}
+
+function isUnreadDemoMessage(message: Pick<DemoMailRow, 'mailbox' | 'flags'>) {
+  return !isAlwaysReadMailbox(message.mailbox) && !JSON.parse(message.flags).includes('\\Seen')
+}
+
+function normalizeDemoMailRowFlags<T extends DemoMailRow>(message: T): T {
+  if (!isAlwaysReadMailbox(message.mailbox)) return message
+
+  const flags = JSON.parse(message.flags) as string[]
+  const normalizedFlags = ensureSeenFlag(flags)
+  if (normalizedFlags === flags) return message
+
+  return { ...message, flags: JSON.stringify(normalizedFlags) } as T
 }
 
 type DemoAttachment = {
@@ -682,16 +697,20 @@ export function getDemoUnreadCounts() {
   return Object.fromEntries(
     demoMailboxes.map((mailbox) => [
       mailbox.path,
-      demoMessages.filter(
-        (message) => message.mailbox === mailbox.path && !JSON.parse(message.flags).includes('\\Seen')
-      ).length
+      isAlwaysReadMailbox(mailbox.path)
+        ? 0
+        : demoMessages.filter(
+            (message) => message.mailbox === mailbox.path && isUnreadDemoMessage(message)
+          ).length
     ])
   ) as Record<string, number>
 }
 
 export function getDemoUnreadCount(mailbox = demoConfig.imap.mailbox) {
+  if (isAlwaysReadMailbox(mailbox)) return 0
+
   return demoMessages.filter(
-    (message) => message.mailbox === mailbox && !JSON.parse(message.flags).includes('\\Seen')
+    (message) => message.mailbox === mailbox && isUnreadDemoMessage(message)
   ).length
 }
 
@@ -727,23 +746,30 @@ export function listDemoStoredMessages(
   offset = 0,
   unreadOnly = false
 ) {
+  if (unreadOnly && isAlwaysReadMailbox(mailboxPath)) return []
+
   const msgs = demoMessages.filter(
     (message) =>
       message.mailbox === mailboxPath &&
-      (!unreadOnly || !(JSON.parse(message.flags) as string[]).includes('\\Seen'))
+      (!unreadOnly || isUnreadDemoMessage(message))
   )
-  return sortedMessages(msgs).slice(offset, offset + limit)
+  return sortedMessages(msgs).slice(offset, offset + limit).map(normalizeDemoMailRowFlags)
 }
 
 export function countDemoStoredMessages(mailboxPath: string, unreadOnly = false) {
+  if (unreadOnly && isAlwaysReadMailbox(mailboxPath)) return 0
+
   return demoMessages.filter(
     (message) =>
       message.mailbox === mailboxPath &&
-      (!unreadOnly || !(JSON.parse(message.flags) as string[]).includes('\\Seen'))
+      (!unreadOnly || isUnreadDemoMessage(message))
   ).length
 }
 
 export function listDemoStoredThreads(mailboxPath: string, limit = 100, offset = 0, unreadOnly = false) {
+  if (unreadOnly && isAlwaysReadMailbox(mailboxPath)) return []
+
+  const alwaysReadMailbox = isAlwaysReadMailbox(mailboxPath)
   const mailboxMessages = demoMessages.filter((message) => message.mailbox === mailboxPath)
   const byThread = new Map<string, DemoMailRow[]>()
   for (const message of mailboxMessages) {
@@ -758,11 +784,11 @@ export function listDemoStoredThreads(mailboxPath: string, limit = 100, offset =
       sortedMessages(messages)[0]
     )
   ).map((message) => ({
-    ...message,
+    ...normalizeDemoMailRowFlags(message),
     threadCount: byThread.get(message.threadId ?? message.messageId)?.length ?? 1,
-    hasUnread: (byThread.get(message.threadId ?? message.messageId) ?? [message]).some(
-      (m) => !(JSON.parse(m.flags) as string[]).includes('\\Seen')
-    )
+    hasUnread: alwaysReadMailbox
+      ? false
+      : (byThread.get(message.threadId ?? message.messageId) ?? [message]).some(isUnreadDemoMessage)
   }))
 
   const filtered = unreadOnly ? rows.filter((r) => r.hasUnread) : rows
@@ -774,6 +800,8 @@ export function countDemoStoredThreads(mailboxPath: string, unreadOnly = false) 
   if (!unreadOnly) {
     return new Set(mailboxMessages.map((message) => message.threadId ?? message.messageId)).size
   }
+  if (isAlwaysReadMailbox(mailboxPath)) return 0
+
   const byThread = new Map<string, typeof mailboxMessages>()
   for (const message of mailboxMessages) {
     const key = message.threadId ?? message.messageId
@@ -783,21 +811,23 @@ export function countDemoStoredThreads(mailboxPath: string, unreadOnly = false) 
   }
   let unreadThreads = 0
   for (const messages of byThread.values()) {
-    if (messages.some((m) => !(JSON.parse(m.flags) as string[]).includes('\\Seen'))) unreadThreads++
+    if (messages.some(isUnreadDemoMessage)) unreadThreads++
   }
   return unreadThreads
 }
 
 export function getDemoMessagesInThread(threadKey: string, mailboxPath: string) {
   const threadMessages = demoMessages.filter((message) => (message.threadId ?? message.messageId) === threadKey)
-  return [...threadMessages].sort((left, right) => {
-    const leftTime = left.receivedAt?.getTime() ?? 0
-    const rightTime = right.receivedAt?.getTime() ?? 0
-    if (leftTime !== rightTime) return leftTime - rightTime
-    if (left.mailbox === mailboxPath && right.mailbox !== mailboxPath) return -1
-    if (right.mailbox === mailboxPath && left.mailbox !== mailboxPath) return 1
-    return left.uid - right.uid
-  })
+  return [...threadMessages]
+    .sort((left, right) => {
+      const leftTime = left.receivedAt?.getTime() ?? 0
+      const rightTime = right.receivedAt?.getTime() ?? 0
+      if (leftTime !== rightTime) return leftTime - rightTime
+      if (left.mailbox === mailboxPath && right.mailbox !== mailboxPath) return -1
+      if (right.mailbox === mailboxPath && left.mailbox !== mailboxPath) return 1
+      return left.uid - right.uid
+    })
+    .map(normalizeDemoMailRowFlags)
 }
 
 export function splitDemoThreadFromMessage(threadKey: string, mailboxPath: string, mailboxEntryId: number) {
@@ -841,7 +871,7 @@ export function searchDemoMessages(query: string, limit: number, offset: number)
     return true
   })
 
-  return deduped.slice(offset, offset + limit)
+  return deduped.slice(offset, offset + limit).map(normalizeDemoMailRowFlags)
 }
 
 export function countDemoSearchMessages(query: string) {
@@ -850,20 +880,24 @@ export function countDemoSearchMessages(query: string) {
 
 export function getDemoStoredMessageById(id: string | number) {
   const numericId = typeof id === 'string' ? Number.parseInt(id, 10) : id
-  return demoMessages.find((message) => message.id === numericId) ?? null
+  const message = demoMessages.find((row) => row.id === numericId)
+  return message ? normalizeDemoMailRowFlags(message) : null
 }
 
 export function markDemoMessageAsRead(message: Pick<DemoMailRow, 'id'>) {
   demoMessages = demoMessages.map((row) => {
     if (row.id !== message.id) return row
     const flags = JSON.parse(row.flags) as string[]
-    return flags.includes('\\Seen') ? row : { ...row, flags: JSON.stringify([...flags, '\\Seen']) }
+    const normalizedFlags = ensureSeenFlag(flags)
+    return normalizedFlags === flags ? row : { ...row, flags: JSON.stringify(normalizedFlags) }
   })
 }
 
 export function markDemoMessageAsUnread(message: Pick<DemoMailRow, 'id'>) {
   demoMessages = demoMessages.map((row) => {
     if (row.id !== message.id) return row
+    if (isAlwaysReadMailbox(row.mailbox)) return row
+
     const flags = JSON.parse(row.flags) as string[]
     return { ...row, flags: JSON.stringify(flags.filter((flag) => flag !== '\\Seen')) }
   })
@@ -874,6 +908,8 @@ export function markDemoMessagesSeen(ids: number[], seen: boolean) {
   for (const id of ids) {
     const message = getDemoStoredMessageById(id)
     if (!message) continue
+    if (!seen && isAlwaysReadMailbox(message.mailbox)) continue
+
     const flags = JSON.parse(message.flags) as string[]
     const hasSeen = flags.includes('\\Seen')
     if (hasSeen === seen) continue
