@@ -19,9 +19,11 @@ jobs:
       fail-fast: false
       matrix:
         image:
-          - name: mail
+          - id: web
+            name: mail
             target: runtime
-          - name: mail-worker
+          - id: worker
+            name: mail-worker
             target: worker
         platform:
           - name: linux/amd64
@@ -54,20 +56,20 @@ jobs:
           platforms: ${{ matrix.platform.name }}
           push: true
           outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/${{ matrix.image.name }},push-by-digest=true,name-canonical=true
-          cache-from: type=gha,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }}
+          cache-from: type=gha,scope=${{ matrix.image.id }}-${{ matrix.platform.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.id }}-${{ matrix.platform.arch }}
 
       - name: Export digest
         run: |
-          mkdir -p /tmp/digests/${{ matrix.image.name }}
+          mkdir -p /tmp/digests/${{ matrix.image.id }}
           digest="${{ steps.build.outputs.digest }}"
-          touch "/tmp/digests/${{ matrix.image.name }}/${digest#sha256:}"
+          touch "/tmp/digests/${{ matrix.image.id }}/${digest#sha256:}"
 
       - name: Upload digest
         uses: actions/upload-artifact@v4
         with:
-          name: digest-${{ matrix.image.name }}-${{ matrix.platform.arch }}
-          path: /tmp/digests/${{ matrix.image.name }}/*
+          name: digest-${{ matrix.image.id }}-${{ matrix.platform.arch }}
+          path: /tmp/digests/${{ matrix.image.id }}/*
           if-no-files-found: error
           retention-days: 1
 
@@ -80,15 +82,17 @@ jobs:
       fail-fast: false
       matrix:
         image:
-          - mail
-          - mail-worker
+          - id: web
+            name: mail
+          - id: worker
+            name: mail-worker
 
     steps:
       - name: Download digests
         uses: actions/download-artifact@v4
         with:
-          path: /tmp/digests/${{ matrix.image }}
-          pattern: digest-${{ matrix.image }}-*
+          path: /tmp/digests/${{ matrix.image.id }}
+          pattern: digest-${{ matrix.image.id }}-*
           merge-multiple: true
 
       - name: Set up Docker Buildx
@@ -102,8 +106,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create and push manifest
-        working-directory: /tmp/digests/${{ matrix.image }}
+        working-directory: /tmp/digests/${{ matrix.image.id }}
         run: |
           docker buildx imagetools create \
-            --tag ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:latest \
-            $(printf 'ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}@sha256:%s ' *)
+            --tag ghcr.io/${{ github.repository_owner }}/${{ matrix.image.name }}:latest \
+            $(printf 'ghcr.io/${{ github.repository_owner }}/${{ matrix.image.name }}@sha256:%s ' *)
