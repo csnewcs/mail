@@ -225,9 +225,11 @@
   let viewportWidth = $state(1024)
   let simplifiedCardIndex = $state(0)
   let simplifiedDragOffsetX = $state(0)
+  let simplifiedDragOffsetY = $state(0)
   let simplifiedDragPointerId = $state<number | null>(null)
   let simplifiedDragging = $state(false)
   let simplifiedDragStartX = 0
+  let simplifiedDragStartY = 0
   let simplifiedDragLastX = 0
   let simplifiedDragLastAt = 0
   let simplifiedDragVelocityX = $state(0)
@@ -256,6 +258,29 @@
   })
   const simplifiedSwipeProgress = $derived(
     Math.min(Math.abs(simplifiedDragOffsetX) / (simplifiedCardWidthEstimate * 0.35), 1)
+  )
+  const activeSimplifiedMessageUnread = $derived(
+    activeSimplifiedMessage
+      ? isUnread(activeSimplifiedMessage.flags, activeSimplifiedMessage.hasUnread)
+      : false
+  )
+  const simplifiedMarkReadThreshold = $derived(
+    Math.min(Math.max(simplifiedCardWidthEstimate * 0.16, 72), 112)
+  )
+  const simplifiedMarkReadDragDistance = $derived(Math.abs(Math.min(simplifiedDragOffsetY, 0)))
+  const simplifiedMarkReadDragDominates = $derived(
+    simplifiedMarkReadDragDistance > Math.abs(simplifiedDragOffsetX) * 1.25
+  )
+  const simplifiedMarkReadGestureReady = $derived(
+    simplifiedMarkReadDragDistance >= simplifiedMarkReadThreshold && simplifiedMarkReadDragDominates
+  )
+  const simplifiedMarkReadProgress = $derived.by(() => {
+    if (!activeSimplifiedMessageUnread || !simplifiedMarkReadDragDominates) return 0
+
+    return Math.min(simplifiedMarkReadDragDistance / simplifiedMarkReadThreshold, 1)
+  })
+  const simplifiedMarkReadReady = $derived(
+    activeSimplifiedMessageUnread && simplifiedMarkReadGestureReady
   )
 
   $effect(() => {
@@ -317,6 +342,7 @@
     simplifiedModeOverride = null
     simplifiedCardIndex = 0
     simplifiedDragOffsetX = 0
+    simplifiedDragOffsetY = 0
     simplifiedDragging = false
     simplifiedDragPointerId = null
     simplifiedDragVelocityX = 0
@@ -326,6 +352,7 @@
   $effect(() => {
     if (!showSimplifiedMailboxView) {
       simplifiedDragOffsetX = 0
+      simplifiedDragOffsetY = 0
       simplifiedDragging = false
       simplifiedDragPointerId = null
       simplifiedDragVelocityX = 0
@@ -606,22 +633,26 @@
   function showPreviousSimplifiedCard() {
     if (simplifiedSwipeAnimating || !canShowPreviousCard) {
       simplifiedDragOffsetX = 0
+      simplifiedDragOffsetY = 0
       return
     }
 
     simplifiedCardIndex -= 1
     simplifiedDragOffsetX = 0
+    simplifiedDragOffsetY = 0
     simplifiedDragVelocityX = 0
   }
 
   function showNextSimplifiedCard() {
     if (simplifiedSwipeAnimating || !canShowNextCard) {
       simplifiedDragOffsetX = 0
+      simplifiedDragOffsetY = 0
       return
     }
 
     simplifiedCardIndex += 1
     simplifiedDragOffsetX = 0
+    simplifiedDragOffsetY = 0
     simplifiedDragVelocityX = 0
   }
 
@@ -634,6 +665,7 @@
     clearSelection()
     simplifiedCardIndex = 0
     simplifiedDragOffsetX = 0
+    simplifiedDragOffsetY = 0
     simplifiedModeOverride = true
   }
 
@@ -653,6 +685,7 @@
   function disableSimplifiedMode() {
     clearSelection()
     simplifiedDragOffsetX = 0
+    simplifiedDragOffsetY = 0
     simplifiedModeOverride = false
   }
 
@@ -675,7 +708,7 @@
   }
 
   function handleSimplifiedCardPointerDown(event: PointerEvent) {
-    if (!activeSimplifiedMessage || simplifiedCards.length <= 1) return
+    if (!activeSimplifiedMessage) return
     if (!shouldStartSimplifiedCardDrag(event)) return
 
     const card = event.currentTarget as HTMLElement
@@ -683,10 +716,12 @@
     simplifiedDragging = true
     simplifiedSwipeAnimating = false
     simplifiedDragStartX = event.clientX
+    simplifiedDragStartY = event.clientY
     simplifiedDragLastX = event.clientX
     simplifiedDragLastAt = event.timeStamp
     simplifiedDragVelocityX = 0
     simplifiedDragOffsetX = 0
+    simplifiedDragOffsetY = 0
     card.setPointerCapture(event.pointerId)
   }
 
@@ -698,10 +733,18 @@
     return softened * resistance
   }
 
+  function applySimplifiedVerticalDragResistance(deltaY: number) {
+    if (deltaY >= 0) return 0
+
+    return -Math.pow(Math.abs(deltaY), 0.92) * 0.75
+  }
+
   function handleSimplifiedCardPointerMove(event: PointerEvent) {
     if (!simplifiedDragging || simplifiedDragPointerId !== event.pointerId) return
     const deltaX = event.clientX - simplifiedDragStartX
+    const deltaY = event.clientY - simplifiedDragStartY
     simplifiedDragOffsetX = applySimplifiedDragResistance(deltaX)
+    simplifiedDragOffsetY = applySimplifiedVerticalDragResistance(deltaY)
 
     const elapsed = Math.max(event.timeStamp - simplifiedDragLastAt, 1)
     simplifiedDragVelocityX = (event.clientX - simplifiedDragLastX) / elapsed
@@ -715,11 +758,13 @@
     const movingToPrevious = direction === 'previous'
     if (movingToPrevious && !canShowPreviousCard) {
       simplifiedDragOffsetX = 0
+      simplifiedDragOffsetY = 0
       simplifiedDragVelocityX = 0
       return
     }
     if (!movingToPrevious && !canShowNextCard) {
       simplifiedDragOffsetX = 0
+      simplifiedDragOffsetY = 0
       simplifiedDragVelocityX = 0
       return
     }
@@ -727,6 +772,7 @@
     simplifiedSwipeAnimating = true
     simplifiedDragOffsetX =
       (movingToPrevious ? 1 : -1) * Math.max(simplifiedCardWidthEstimate * 1.08, 320)
+    simplifiedDragOffsetY = 0
     simplifiedDragVelocityX = 0
 
     window.setTimeout(() => {
@@ -737,6 +783,7 @@
       }
 
       simplifiedDragOffsetX = 0
+      simplifiedDragOffsetY = 0
       simplifiedSwipeAnimating = false
     }, 180)
   }
@@ -747,13 +794,23 @@
     const movingNext = simplifiedDragOffsetX < 0
     const canAdvanceByDistance = Math.abs(simplifiedDragOffsetX) >= swipeThreshold
     const canAdvanceByVelocity = Math.abs(simplifiedDragVelocityX) >= swipeVelocityThreshold
+    const shouldMarkReadByDrag = simplifiedMarkReadGestureReady
 
-    if ((canAdvanceByDistance || canAdvanceByVelocity) && movingNext) {
+    if (shouldMarkReadByDrag) {
+      const message = activeSimplifiedMessage
+      if (message && isUnread(message.flags, message.hasUnread)) {
+        markMessageRowRead(message)
+      }
+      simplifiedDragOffsetX = 0
+      simplifiedDragOffsetY = 0
+      simplifiedDragVelocityX = 0
+    } else if ((canAdvanceByDistance || canAdvanceByVelocity) && movingNext) {
       animateSimplifiedCardSwipe('next')
     } else if (canAdvanceByDistance || canAdvanceByVelocity) {
       animateSimplifiedCardSwipe('previous')
     } else {
       simplifiedDragOffsetX = 0
+      simplifiedDragOffsetY = 0
       simplifiedDragVelocityX = 0
     }
 
@@ -781,6 +838,7 @@
     }
 
     simplifiedDragOffsetX = 0
+    simplifiedDragOffsetY = 0
     simplifiedDragging = false
     simplifiedDragPointerId = null
     simplifiedDragVelocityX = 0
@@ -792,7 +850,7 @@
 
     if (offset === 0) {
       const rotate = simplifiedDragOffsetX / 36
-      return `translate3d(${simplifiedDragOffsetX}px, 0, 0) rotate(${rotate}deg) scale(1)`
+      return `translate3d(${simplifiedDragOffsetX}px, ${simplifiedDragOffsetY}px, 0) rotate(${rotate}deg) scale(1)`
     }
 
     const directionLift = offset === 1 ? 10 : 6
@@ -808,6 +866,27 @@
     if (offset === 0) return 1
     const progress = simplifiedSwipeProgress
     return 1 - offset * 0.18 + progress * (offset === 1 ? 0.16 : 0.08)
+  }
+
+  function simplifiedMarkReadGlowStyle() {
+    const opacity = simplifiedMarkReadReady ? 0.34 : simplifiedMarkReadProgress * 0.22
+    return `opacity: ${opacity};`
+  }
+
+  function simplifiedMarkReadPillStyle() {
+    const progress = simplifiedMarkReadProgress
+    const opacity = progress === 0 ? 0 : Math.min(0.2 + progress * 0.8, 1)
+    const lift = Math.round((1 - progress) * 10)
+    const scale = simplifiedMarkReadReady ? 1 : 0.96 + progress * 0.04
+    return `opacity: ${opacity}; transform: translateX(-50%) translateY(${lift}px) scale(${scale});`
+  }
+
+  function simplifiedMarkReadProgressStyle() {
+    return `opacity: ${simplifiedMarkReadProgress === 0 ? 0 : 1};`
+  }
+
+  function simplifiedMarkReadProgressBarStyle() {
+    return `transform: scaleX(${simplifiedMarkReadProgress});`
   }
 
   let lastSelectedIndex: number | null = null
@@ -1543,12 +1622,14 @@
               <article
                 class={[
                   'absolute inset-0 overflow-hidden rounded-3xl border border-white/10 bg-[#131319] p-6 text-left shadow-2xl shadow-black/30 lg:p-7',
+                  offset === 0 && simplifiedMarkReadProgress > 0 ? 'border-sky-400/20' : '',
+                  offset === 0 && simplifiedMarkReadReady ? 'ring-1 ring-sky-300/25' : '',
                   offset === 0
                     ? [
-                        'cursor-grab touch-pan-y will-change-transform active:cursor-grabbing',
+                        'cursor-grab touch-none will-change-transform active:cursor-grabbing',
                         simplifiedDragging
                           ? 'duration-0'
-                          : 'transition-[transform,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]'
+                          : 'transition-[transform,opacity,border-color,box-shadow] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]'
                       ]
                     : 'pointer-events-none'
                 ]}
@@ -1558,7 +1639,35 @@
                 onpointerup={offset === 0 ? handleSimplifiedCardPointerUp : undefined}
                 onpointercancel={offset === 0 ? handleSimplifiedCardPointerCancel : undefined}
               >
-                <div class="flex h-full flex-col">
+                {#if offset === 0 && activeSimplifiedMessageUnread}
+                  <div
+                    class="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-sky-400/18 via-sky-400/6 to-transparent transition-opacity duration-150"
+                    style={simplifiedMarkReadGlowStyle()}
+                  ></div>
+                  <div
+                    class={[
+                      'pointer-events-none absolute top-5 left-1/2 z-20 inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium shadow-lg backdrop-blur transition-[opacity,transform,border-color,background-color,color] duration-150',
+                      simplifiedMarkReadReady
+                        ? 'border-sky-300/30 bg-sky-400/10 text-sky-100 shadow-sky-950/30'
+                        : 'border-white/10 bg-zinc-950/70 text-zinc-300 shadow-black/20'
+                    ]}
+                    style={simplifiedMarkReadPillStyle()}
+                  >
+                    <MailOpen size={13} />
+                    {simplifiedMarkReadReady ? 'Release to mark read' : 'Drag up to mark read'}
+                  </div>
+                  <div
+                    class="pointer-events-none absolute inset-x-6 top-16 z-20 h-px overflow-hidden rounded-full bg-white/8"
+                    style={simplifiedMarkReadProgressStyle()}
+                  >
+                    <div
+                      class="h-full origin-left rounded-full bg-sky-300/80"
+                      style={simplifiedMarkReadProgressBarStyle()}
+                    ></div>
+                  </div>
+                {/if}
+
+                <div class="relative z-10 flex h-full flex-col">
                   <div class="flex items-start justify-between gap-4">
                     <div class="min-w-0 flex-1">
                       <div class="flex items-center gap-2">
