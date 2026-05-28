@@ -7,7 +7,18 @@ import { payloadBytes, perfLog, perfMs, perfNow } from '$lib/server/perf'
 import { eq } from 'drizzle-orm'
 import { isDemoModeEnabled, listDemoAttachmentsForMessage } from '$lib/server/demo'
 
-function serializeMessage(message: NonNullable<Awaited<ReturnType<typeof getStoredMessageById>>>) {
+function markReadAfterLoad(message: NonNullable<Awaited<ReturnType<typeof getStoredMessageById>>>) {
+  void markMessageAsRead(message).catch((error) => {
+    console.error('[message-open] failed to mark read:', error)
+  })
+}
+
+function serializeMessage(
+  message: NonNullable<Awaited<ReturnType<typeof getStoredMessageById>>>,
+  seen = false
+) {
+  const flags = JSON.parse(message.flags) as string[]
+
   return {
     id: message.id,
     uid: message.uid,
@@ -23,7 +34,7 @@ function serializeMessage(message: NonNullable<Awaited<ReturnType<typeof getStor
     htmlContent: message.htmlContent,
     inReplyTo: message.inReplyTo,
     references: message.references,
-    flags: JSON.parse(message.flags) as string[],
+    flags: seen && !flags.includes('\\Seen') ? [...flags, '\\Seen'] : flags,
     receivedAt: message.receivedAt?.toISOString() ?? null
   }
 }
@@ -36,7 +47,7 @@ export const load: PageServerLoad = async ({ params }) => {
     error(404, 'Message not found')
   }
 
-  await markMessageAsRead(message)
+  markReadAfterLoad(message)
 
   // Load attachment metadata (no content blobs — served via /api/attachments/[id])
   const attachments = isDemoModeEnabled()
@@ -52,7 +63,7 @@ export const load: PageServerLoad = async ({ params }) => {
         .where(eq(mailAttachment.messageId, message.messageId))
 
   const body = {
-    message: serializeMessage(message),
+    message: serializeMessage(message, true),
     mailboxRole: getMailboxRole(message.mailbox),
     attachments
   }

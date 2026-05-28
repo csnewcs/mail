@@ -13,7 +13,18 @@ import { payloadBytes, perfLog, perfMs, perfNow } from '$lib/server/perf'
 import { inArray } from 'drizzle-orm'
 import { isDemoModeEnabled, listDemoAttachmentsForMessages } from '$lib/server/demo'
 
-function serializeMessage(message: Awaited<ReturnType<typeof getMessagesInThread>>[number]) {
+function markReadAfterLoad(messages: Awaited<ReturnType<typeof getMessagesInThread>>) {
+  void Promise.all(messages.map((msg) => markMessageAsRead(msg))).catch((error) => {
+    console.error('[thread-open] failed to mark read:', error)
+  })
+}
+
+function serializeMessage(
+  message: Awaited<ReturnType<typeof getMessagesInThread>>[number],
+  seen = false
+) {
+  const flags = JSON.parse(message.flags) as string[]
+
   return {
     id: message.id,
     uid: message.uid,
@@ -28,7 +39,7 @@ function serializeMessage(message: Awaited<ReturnType<typeof getMessagesInThread
     htmlContent: message.htmlContent,
     inReplyTo: message.inReplyTo,
     references: message.references,
-    flags: JSON.parse(message.flags) as string[],
+    flags: seen && !flags.includes('\\Seen') ? [...flags, '\\Seen'] : flags,
     receivedAt: message.receivedAt?.toISOString() ?? null
   }
 }
@@ -51,7 +62,7 @@ export const load: PageServerLoad = async ({ params }) => {
     const flags: string[] = JSON.parse(msg.flags)
     return !flags.includes('\\Seen')
   })
-  await Promise.all(unreadMessages.map((msg) => markMessageAsRead(msg)))
+  markReadAfterLoad(unreadMessages)
 
   const messageIds = messages.map((m) => m.messageId)
 
@@ -77,7 +88,7 @@ export const load: PageServerLoad = async ({ params }) => {
   const body = {
     threadId,
     mailbox: mailboxPath,
-    messages: messages.map(serializeMessage),
+    messages: messages.map((message) => serializeMessage(message, true)),
     attachments,
     mailboxRole
   }
