@@ -5,7 +5,7 @@
   "type": "module",
   "packageManager": "pnpm@10.33.0",
   "scripts": {
-    "dev": "vite dev",
+    "dev": "node scripts/dev.mjs",
     "dev:web": "vite dev",
     "dev:worker": "dotenv run node scripts/dev-worker.mjs",
     "dev:worker:build": "vite build --config vite.worker.config.ts --watch",
