@@ -16,6 +16,7 @@
     Settings,
     BookOpen,
     Users,
+    ServerCog,
     RefreshCw,
     PanelLeft,
     Layers,
@@ -263,6 +264,7 @@
   let draftsError = $state<string | null>(null)
   let unreadCount = $state(0)
   let mobileNavOpen = $state(false)
+  let utilityNavOpen = $state(false)
   let sidebarSimplifiedModeAction = $state<((enabled: boolean) => Promise<void>) | null>(null)
   let simplifiedViewEnabled = $state(false)
   let savingSimplifiedView = $state(false)
@@ -272,6 +274,9 @@
   const isMobile = $derived(viewportWidth < 768)
   const activeMailboxLabel = $derived(
     imapMailboxes.find((candidate) => pathToSlug(candidate.path) === mailbox)?.name ?? 'Mail'
+  )
+  const utilityNavActive = $derived(
+    ['/contacts', '/settings', '/queue-status', '/manual'].includes(page.url.pathname)
   )
 
   function toggleMailboxExpanded(key: string) {
@@ -518,6 +523,7 @@
 
   afterNavigate(() => {
     mobileNavOpen = false
+    utilityNavOpen = false
   })
 
   $effect(() => {
@@ -790,7 +796,6 @@
             {/each}
           </div>
         {/if}
-
       </div>
 
       <p
@@ -911,45 +916,111 @@
             ></span>
           </span>
         </button>
-        <a
-          href={resolve('/contacts')}
-          onclick={() => (mobileNavOpen = false)}
-          class={[
-            'flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm transition',
-            page.url.pathname === '/contacts'
-              ? 'bg-white/8 font-medium text-white'
-              : 'text-zinc-400 hover:bg-white/4 hover:text-zinc-200'
-          ]}
-        >
-          <Users size={15} />
-          Contacts
-        </a>
-        <a
-          href={resolve('/settings')}
-          onclick={() => (mobileNavOpen = false)}
-          class={[
-            'flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm transition',
-            page.url.pathname === '/settings'
-              ? 'bg-white/8 font-medium text-white'
-              : 'text-zinc-400 hover:bg-white/4 hover:text-zinc-200'
-          ]}
-        >
-          <Settings size={15} />
-          Settings
-        </a>
-        <a
-          href={resolve('/manual')}
-          onclick={() => (mobileNavOpen = false)}
-          class={[
-            'flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm transition',
-            page.url.pathname === '/manual'
-              ? 'bg-white/8 font-medium text-white'
-              : 'text-zinc-400 hover:bg-white/4 hover:text-zinc-200'
-          ]}
-        >
-          <BookOpen size={15} />
-          Manual
-        </a>
+        <div class="relative">
+          <button
+            type="button"
+            onclick={() => (utilityNavOpen = !utilityNavOpen)}
+            aria-expanded={utilityNavOpen}
+            aria-haspopup="menu"
+            class={[
+              'flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-sm transition',
+              utilityNavActive
+                ? 'bg-white/8 font-medium text-white'
+                : 'text-zinc-400 hover:bg-white/4 hover:text-zinc-200'
+            ]}
+          >
+            <span class="flex items-center gap-2.5">
+              <Settings size={15} />
+              Menu
+            </span>
+            <ChevronDown
+              size={14}
+              class={utilityNavOpen ? 'rotate-180 transition-transform' : 'transition-transform'}
+            />
+          </button>
+
+          {#if utilityNavOpen}
+            <button
+              type="button"
+              class="fixed inset-0 z-20 cursor-default"
+              aria-label="Close menu"
+              onclick={() => (utilityNavOpen = false)}
+            ></button>
+            <div
+              role="menu"
+              class="absolute bottom-full left-0 z-30 mb-2 w-full overflow-hidden rounded-2xl border border-white/10 bg-zinc-950/95 p-1.5 shadow-2xl ring-1 shadow-black/50 ring-black/20 backdrop-blur-xl"
+            >
+              <a
+                href={resolve('/contacts')}
+                role="menuitem"
+                onclick={() => {
+                  mobileNavOpen = false
+                  utilityNavOpen = false
+                }}
+                class={[
+                  'flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm transition',
+                  page.url.pathname === '/contacts'
+                    ? 'bg-white/8 font-medium text-white'
+                    : 'text-zinc-400 hover:bg-white/6 hover:text-zinc-100'
+                ]}
+              >
+                <Users size={14} />
+                Contacts
+              </a>
+              <a
+                href={resolve('/settings')}
+                role="menuitem"
+                onclick={() => {
+                  mobileNavOpen = false
+                  utilityNavOpen = false
+                }}
+                class={[
+                  'flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm transition',
+                  page.url.pathname === '/settings'
+                    ? 'bg-white/8 font-medium text-white'
+                    : 'text-zinc-400 hover:bg-white/6 hover:text-zinc-100'
+                ]}
+              >
+                <Settings size={14} />
+                Settings
+              </a>
+              <a
+                href={resolve('/queue-status')}
+                role="menuitem"
+                onclick={() => {
+                  mobileNavOpen = false
+                  utilityNavOpen = false
+                }}
+                class={[
+                  'flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm transition',
+                  page.url.pathname === '/queue-status'
+                    ? 'bg-white/8 font-medium text-white'
+                    : 'text-zinc-400 hover:bg-white/6 hover:text-zinc-100'
+                ]}
+              >
+                <ServerCog size={14} />
+                Queue status
+              </a>
+              <a
+                href={resolve('/manual')}
+                role="menuitem"
+                onclick={() => {
+                  mobileNavOpen = false
+                  utilityNavOpen = false
+                }}
+                class={[
+                  'flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm transition',
+                  page.url.pathname === '/manual'
+                    ? 'bg-white/8 font-medium text-white'
+                    : 'text-zinc-400 hover:bg-white/6 hover:text-zinc-100'
+                ]}
+              >
+                <BookOpen size={14} />
+                Manual
+              </a>
+            </div>
+          {/if}
+        </div>
 
         <!-- Footer -->
         <div class="border-t border-white/6 pt-3">
@@ -1042,14 +1113,14 @@
                       <div class="border-t border-white/8 pt-2">
                         <p class="text-zinc-500">Error</p>
                         <p class="mt-1 break-words text-red-300">{sync.errorMessage}</p>
-  </div>
-{/if}
+                      </div>
+                    {/if}
 
-<ErrorDialog
-  message={draftsError}
-  title="Mail error"
-  onclose={() => (draftsError = null)}
-/>
+                    <ErrorDialog
+                      message={draftsError}
+                      title="Mail error"
+                      onclose={() => (draftsError = null)}
+                    />
                   </div>
                 </div>
               </div>
