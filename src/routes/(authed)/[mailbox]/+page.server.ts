@@ -17,7 +17,8 @@ function serializeMessage(message: Awaited<ReturnType<typeof listStoredThreads>>
     flags: JSON.parse(message.flags) as string[],
     receivedAt: message.receivedAt?.toISOString() ?? null,
     threadId: message.threadId ?? null,
-    threadCount: message.threadCount
+    threadCount: message.threadCount,
+    hasUnread: message.hasUnread
   }
 }
 

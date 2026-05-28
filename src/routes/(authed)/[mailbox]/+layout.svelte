@@ -545,15 +545,54 @@
     }
   }
 
+  function markMessageRowRead(message: Message) {
+    const shouldMarkThread = threadedMode && message.threadId && (message.threadCount ?? 0) > 1
+    const shouldMarkMessage = !message.flags.includes('\\Seen')
+
+    if (!shouldMarkThread && !shouldMarkMessage && message.hasUnread !== true) return
+
+    const scrollTop = captureListScrollTop()
+    const markRead = (m: Message) =>
+      m.id === message.id
+        ? {
+            ...m,
+            flags: m.flags.includes('\\Seen') ? m.flags : [...m.flags, '\\Seen'],
+            ...(m.hasUnread !== undefined ? { hasUnread: false } : {})
+          }
+        : m
+
+    messages = messages.map(markRead)
+    searchResults = searchResults.map(markRead)
+    restoreListScrollTop(scrollTop)
+
+    const request = shouldMarkThread
+      ? fetch(`/api/threads/${encodeThreadId(message.threadId ?? '')}/read`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ mailbox })
+        })
+      : fetch('/api/messages/bulk', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ ids: [message.id], action: 'mark_read' })
+        })
+
+    void request
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(await readErrorMessage(response, 'Failed to mark message read.'))
+        }
+
+        notifyMailboxStateChanged('message-opened:mark-read')
+      })
+      .catch((error) => {
+        errorDialogMessage = errorMessageFromUnknown(error, 'Failed to mark message read.')
+      })
+  }
+
   function selectMessage(message: Message) {
     closeContextMenu()
-    if (!message.flags.includes('\\Seen')) {
-      const scrollTop = captureListScrollTop()
-      messages = messages.map((m) =>
-        m.id === message.id ? { ...m, flags: [...m.flags, '\\Seen'] } : m
-      )
-      restoreListScrollTop(scrollTop)
-    }
+    markMessageRowRead(message)
     if (threadedMode && message.threadId && (message.threadCount ?? 0) > 1) {
       goto(resolve(`/${mailbox}/thread/${encodeThreadId(message.threadId)}`), {
         noScroll: true,
@@ -1878,7 +1917,9 @@
                           <p
                             class={[
                               'truncate text-sm',
-                              isUnread(message.flags, message.hasUnread) ? 'font-semibold text-white' : 'text-zinc-300'
+                              isUnread(message.flags, message.hasUnread)
+                                ? 'font-semibold text-white'
+                                : 'text-zinc-300'
                             ]}
                           >
                             {senderName(message.from)}
@@ -1964,7 +2005,9 @@
                         <p
                           class={[
                             'truncate text-sm',
-                            isUnread(message.flags, message.hasUnread) ? 'font-semibold text-white' : 'text-zinc-300'
+                            isUnread(message.flags, message.hasUnread)
+                              ? 'font-semibold text-white'
+                              : 'text-zinc-300'
                           ]}
                         >
                           {senderName(message.from)}
