@@ -7,6 +7,7 @@ import {
   getStoredMessageById,
   moveMessage,
   refreshThreadSummaries,
+  snoozeMessages,
   type MessageAction
 } from '$lib/server/mail'
 import { enqueueMarkRead, enqueueMarkUnread } from '$lib/server/imap-queue'
@@ -14,6 +15,15 @@ import { isDemoModeEnabled, markDemoMessagesSeen } from '$lib/server/demo'
 import { isAlwaysReadMailbox } from '$lib/mailbox'
 
 const VALID_MOVE_ACTIONS = new Set<MessageAction>(['archive', 'trash', 'spam', 'inbox'])
+
+function parseSnoozedUntil(value: unknown) {
+  if (value === null) return null
+  if (typeof value !== 'string') return undefined
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return undefined
+  return date
+}
 
 async function markSeen(ids: number[], seen: boolean) {
   const rows = await db
@@ -78,6 +88,17 @@ export const POST: RequestHandler = async ({ request }) => {
       return json({ ok: true, count })
     }
     const count = await markSeen(ids, action === 'mark_read')
+    return json({ ok: true, count })
+  }
+
+  if (action === 'snooze' || action === 'unsnooze') {
+    const snoozedUntil = action === 'unsnooze' ? null : parseSnoozedUntil(body.snoozedUntil)
+    if (snoozedUntil === undefined) return error(400, 'snoozedUntil must be a valid date')
+    if (snoozedUntil !== null && snoozedUntil.getTime() <= Date.now()) {
+      return error(400, 'snoozedUntil must be in the future')
+    }
+
+    const count = await snoozeMessages(ids, snoozedUntil)
     return json({ ok: true, count })
   }
 

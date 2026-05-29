@@ -18,18 +18,33 @@
     X,
     ChevronLeft,
     ChevronRight,
-    Languages
+    Languages,
+    Clock,
+    Sparkles,
+    WifiOff
   } from 'lucide-svelte'
   import { goto } from '$app/navigation'
   import { resolve } from '$app/paths'
   import { page } from '$app/state'
+  import ActionModal from '$lib/components/ActionModal.svelte'
   import ErrorDialog from '$lib/components/ErrorDialog.svelte'
+  import AttachmentSummary from '$lib/components/AttachmentSummary.svelte'
   import { errorMessageFromUnknown, readErrorMessage } from '$lib/http'
   import { trackAppLoading } from '$lib/loading.svelte'
   import { onMount } from 'svelte'
+  import { SvelteDate } from 'svelte/reactivity'
   import { openReply, openReplyAll, openForward } from '$lib/composer.svelte'
   import { setupKeyboardHandler } from '$lib/keyboard.svelte'
   import { notifyMailboxStateChanged } from '$lib/mailbox-state'
+  import {
+    normalizeAllowedSenders,
+    normalizeSenderAddress,
+    prepareRemoteContent
+  } from '$lib/remote-content'
+  import { scoreAttachmentSafety, type AttachmentSafetyScore } from '$lib/mail-attachments'
+  import { readOfflineMessage, saveOfflineMessage } from '$lib/offline-cache'
+
+  type DensityPreference = 'comfortable' | 'compact' | 'condensed'
 
   type Message = {
     id: number
@@ -48,6 +63,7 @@
     references: string | null
     flags: string[]
     receivedAt: string | null
+    snoozedUntil: string | null
   }
 
   type Attachment = {
@@ -62,29 +78,80 @@
       message: Message
       mailboxRole: 'inbox' | 'archive' | 'trash' | 'spam' | null
       attachments: Attachment[]
+      density: DensityPreference
       translationTargetLanguage: string
+      remoteContent: {
+        blockRemoteContent: boolean
+        allowedSenders: string[]
+      }
+      user?: { name: string; email: string } | null
     }
   }
 
   let { data }: Props = $props()
 
   const role = $derived(data.mailboxRole)
+  const density = $derived(data.density ?? 'comfortable')
   const translationTargetLanguage = $derived(data.translationTargetLanguage || 'Korean')
+  const messageHeaderClass = $derived(
+    density === 'condensed'
+      ? 'p-3 sm:p-4 md:border-b md:border-white/8'
+      : 'p-4 sm:p-5 md:border-b md:border-white/8'
+  )
+  const messageMetaClass = $derived(
+    density === 'condensed'
+      ? 'mt-1 space-y-0.5 text-xs text-zinc-500'
+      : 'mt-2 space-y-1 text-xs text-zinc-500'
+  )
+  const messageBodyClass = $derived(
+    density === 'condensed'
+      ? 'space-y-3 p-3 text-[14px] leading-6 text-zinc-200 sm:p-4'
+      : 'space-y-5 p-4 text-[15px] leading-7 text-zinc-200 sm:p-5 sm:leading-8'
+  )
+  const messageSectionClass = $derived(
+    density === 'condensed'
+      ? 'border-b border-white/8 bg-[#101116] p-3 sm:p-4'
+      : 'border-b border-white/8 bg-[#101116] p-4 sm:p-5'
+  )
+  const attachmentsClass = $derived(
+    density === 'condensed'
+      ? 'p-3 sm:p-4 md:border-t md:border-white/8'
+      : 'p-4 sm:p-5 md:border-t md:border-white/8'
+  )
 
   let acting = $state(false)
   let sharing = $state(false)
   let shareCopied = $state(false)
   let metadataOpen = $state(false)
   let translating = $state(false)
+  let draftingReply = $state(false)
   let translationText = $state<string | null>(null)
   let translatedHtmlSegments = $state<string[] | null>(null)
   let errorDialogMessage = $state<string | null>(null)
+  let actionModal = $state<{
+    title: string
+    message?: string
+    confirmLabel?: string
+    cancelLabel?: string
+    tone?: 'default' | 'danger'
+    inputLabel?: string
+    inputValue?: string
+    inputType?: string
+    resolve: (value: string | boolean | null) => void
+  } | null>(null)
+  let showRemoteContent = $state(false)
+  let trustingRemoteSender = $state(false)
+  let allowedRemoteSenders = $state<string[]>([])
   let translationResolvedCount = $state(0)
   let translationSegmentCount = $state(0)
   let activeMessageId = $state<number | null>(null)
   let translationAbortController: AbortController | null = null
   let translationRequestId = 0
   let messageFrame = $state<HTMLIFrameElement | undefined>(undefined)
+  let online = $state(true)
+  let cachedMessageSavedAt = $state<number | null>(null)
+
+  const offlineUserKey = $derived(data.user?.email ?? null)
 
   type TranslationStreamPayload = {
     translations?: string[]
@@ -169,6 +236,10 @@
     translationAbortController = null
     resetTranslationState()
   }
+
+  $effect(() => {
+    allowedRemoteSenders = data.remoteContent.allowedSenders
+  })
 
   $effect(() => {
     if (activeMessageId === null) {
@@ -315,6 +386,70 @@
     }
   }
 
+  function defaultSnoozeInputValue() {
+    const date = new SvelteDate(Date.now() + 60 * 60 * 1000)
+    date.setMinutes(date.getMinutes() - date.getTimezoneOffset())
+    return date.toISOString().slice(0, 16)
+  }
+
+  function requestModal(options: Omit<NonNullable<typeof actionModal>, 'resolve'>) {
+    return new Promise<string | boolean | null>((resolve) => {
+      actionModal = { ...options, resolve }
+    })
+  }
+
+  function closeActionModal(value: string | boolean | null) {
+    actionModal?.resolve(value)
+    actionModal = null
+  }
+
+  async function promptForSnoozeDate() {
+    const value = await requestModal({
+      title: 'Snooze message',
+      inputLabel: 'Snooze until',
+      inputValue: defaultSnoozeInputValue(),
+      inputType: 'datetime-local',
+      confirmLabel: 'Snooze'
+    })
+    if (value === null || typeof value === 'boolean') return null
+
+    const trimmed = value.trim()
+    const date = trimmed ? new Date(trimmed) : null
+    if (!date || Number.isNaN(date.getTime()) || date.getTime() <= Date.now()) {
+      errorDialogMessage = 'Choose a future date and time to snooze this message.'
+      return null
+    }
+
+    return date
+  }
+
+  async function snoozeMessage() {
+    if (acting) return
+    const snoozedUntil = await promptForSnoozeDate()
+    if (!snoozedUntil) return
+
+    acting = true
+    try {
+      const res = await trackAppLoading(() =>
+        fetch(`/api/messages/${data.message.id}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'snooze', snoozedUntil: snoozedUntil.toISOString() })
+        })
+      )
+      if (!res.ok) {
+        throw new Error(await readErrorMessage(res, 'Failed to snooze message.'))
+      }
+
+      notifyMailboxStateChanged('message-action:snooze')
+      await gotoMailbox()
+    } catch (error) {
+      errorDialogMessage = errorMessageFromUnknown(error, 'Failed to snooze message.')
+    } finally {
+      acting = false
+    }
+  }
+
   async function translateMessage() {
     if (translating) return
     const requestId = ++translationRequestId
@@ -387,6 +522,40 @@
         translationAbortController = null
         translating = false
       }
+    }
+  }
+
+  async function generateReplyDraft(replyAll = false) {
+    if (draftingReply) return
+    draftingReply = true
+
+    try {
+      const response = await fetch('/api/ai/reply-draft', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          mailbox: page.params.mailbox ?? 'inbox',
+          messageId: data.message.id,
+          replyAll
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, 'Failed to generate reply draft.'))
+      }
+
+      const draft = (await response.json()) as { html?: string }
+      if (!draft.html) throw new Error('Reply draft was empty.')
+
+      if (replyAll) {
+        openReplyAll(message, draft.html)
+      } else {
+        openReply(message, draft.html)
+      }
+    } catch (error) {
+      errorDialogMessage = errorMessageFromUnknown(error, 'Failed to generate reply draft.')
+    } finally {
+      draftingReply = false
     }
   }
 
@@ -506,17 +675,104 @@
     return SCROLLBAR_STYLE + LINK_SCRIPT + html
   }
 
-  const srcdoc = $derived.by(() => {
-    const html = message.htmlContent
-    return html ? injectScrollbarStyle(html) : null
+  const remoteContentSettings = $derived({
+    blockRemoteContent: data.remoteContent.blockRemoteContent,
+    allowedSenders: allowedRemoteSenders
   })
 
+  const remoteContentBody = $derived.by(() => {
+    const html = message.htmlContent
+    if (!html) return { html: '', blockedCount: 0 }
+    return prepareRemoteContent(html, message.from, remoteContentSettings, showRemoteContent)
+  })
+
+  const srcdoc = $derived.by(() => {
+    const html = message.htmlContent
+    if (!html) return null
+    return injectScrollbarStyle(remoteContentBody.html)
+  })
+
+  const remoteContentSender = $derived(normalizeSenderAddress(message.from))
+
+  async function trustRemoteContentSender() {
+    if (!remoteContentSender || trustingRemoteSender) return
+    trustingRemoteSender = true
+    try {
+      const nextAllowedSenders = normalizeAllowedSenders([
+        ...allowedRemoteSenders,
+        remoteContentSender
+      ])
+      const response = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          remoteContent: {
+            blockRemoteContent: data.remoteContent.blockRemoteContent,
+            allowedSenders: nextAllowedSenders
+          }
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, 'Failed to trust sender.'))
+      }
+
+      allowedRemoteSenders = nextAllowedSenders
+      showRemoteContent = true
+    } catch (error) {
+      errorDialogMessage = errorMessageFromUnknown(error, 'Failed to trust sender.')
+    } finally {
+      trustingRemoteSender = false
+    }
+  }
+
   const attachments = $derived(data.attachments)
+
+  async function cacheOpenedMessage() {
+    if (!offlineUserKey) return
+    await saveOfflineMessage({
+      userKey: offlineUserKey,
+      message: data.message,
+      mailboxRole: data.mailboxRole,
+      attachments: data.attachments
+    })
+  }
+
+  async function refreshCachedMessageStatus() {
+    if (!offlineUserKey) return
+    const cached = await readOfflineMessage(offlineUserKey, data.message.id)
+    cachedMessageSavedAt = cached?.savedAt ?? null
+  }
 
   function formatBytes(bytes: number): string {
     if (bytes < 1024) return `${bytes} B`
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  }
+
+  function attachmentSafety(att: Attachment) {
+    return scoreAttachmentSafety(att)
+  }
+
+  function attachmentSafetyClass(safety: AttachmentSafetyScore) {
+    return safety.level === 'high'
+      ? 'border-amber-400/30 bg-amber-400/10 text-amber-200'
+      : 'border-white/10 bg-white/5 text-zinc-300'
+  }
+
+  async function confirmHighRiskDownload(event: MouseEvent, att: Attachment) {
+    const safety = attachmentSafety(att)
+    if (safety.level !== 'high') return
+
+    event.preventDefault()
+    const reasonText = safety.reasons.length ? `\n\n${safety.reasons.join('\n')}` : ''
+    const confirmed = await requestModal({
+      title: 'Download risky attachment?',
+      message: `This attachment has traits often abused in phishing or unsafe downloads. Only download it if you expected it.${reasonText}`,
+      confirmLabel: 'Download',
+      tone: 'danger'
+    })
+    if (confirmed) window.location.href = resolve(`/api/attachments/${att.id}`)
   }
 
   function isImage(contentType: string) {
@@ -586,6 +842,16 @@
   }
 
   onMount(() => {
+    online = navigator.onLine
+    void cacheOpenedMessage().then(refreshCachedMessageStatus)
+
+    const updateOnline = () => {
+      online = navigator.onLine
+      void refreshCachedMessageStatus()
+    }
+    window.addEventListener('online', updateOnline)
+    window.addEventListener('offline', updateOnline)
+
     setTimeout(() => notifyMailboxStateChanged('message-opened'), 0)
 
     const teardown = setupKeyboardHandler('message', {
@@ -601,7 +867,11 @@
       ArrowUp: () => scrollEmail(-60)
     })
 
-    return teardown
+    return () => {
+      window.removeEventListener('online', updateOnline)
+      window.removeEventListener('offline', updateOnline)
+      teardown()
+    }
   })
 </script>
 
@@ -610,7 +880,15 @@
 </svelte:head>
 
 <div class="flex h-full flex-col">
-  <div class="p-4 sm:p-5 md:border-b md:border-white/8">
+  <div class={messageHeaderClass}>
+    {#if !online}
+      <div
+        class="mb-3 inline-flex items-center gap-2 rounded-full border border-amber-400/15 bg-amber-400/8 px-3 py-1.5 text-xs text-amber-200"
+      >
+        <WifiOff size={13} />
+        <span>Offline</span>
+      </div>
+    {/if}
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div class="flex flex-wrap items-center gap-1">
         <button
@@ -724,6 +1002,15 @@
         </button>
         <button
           type="button"
+          aria-label="Draft reply with AI"
+          disabled={draftingReply}
+          onclick={() => void generateReplyDraft()}
+          class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-sky-300 disabled:cursor-wait disabled:opacity-60 md:hidden"
+        >
+          <Sparkles size={16} class={draftingReply ? 'animate-pulse' : ''} />
+        </button>
+        <button
+          type="button"
           aria-label="Forward"
           onclick={() => openForward(message)}
           class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-zinc-200 md:hidden"
@@ -769,6 +1056,15 @@
         </button>
         <button
           type="button"
+          aria-label="Snooze"
+          disabled={acting}
+          onclick={() => void snoozeMessage()}
+          class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-40 md:border-white/8"
+        >
+          <Clock size={16} />
+        </button>
+        <button
+          type="button"
           aria-label={shareCopied ? 'Copied' : 'Share'}
           disabled={sharing}
           onclick={() => void shareMessage()}
@@ -811,6 +1107,22 @@
             class="pointer-events-none absolute top-full left-1/2 mt-2 -translate-x-1/2 rounded-md bg-zinc-800 px-2 py-1 text-xs whitespace-nowrap text-zinc-200 opacity-0 transition-opacity group-hover:opacity-100"
           >
             Reply all
+          </span>
+        </div>
+        <div class="group relative">
+          <button
+            type="button"
+            aria-label="Draft reply with AI"
+            disabled={draftingReply}
+            onclick={() => void generateReplyDraft()}
+            class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-sky-300 disabled:cursor-wait disabled:opacity-60 md:border-white/8"
+          >
+            <Sparkles size={16} class={draftingReply ? 'animate-pulse' : ''} />
+          </button>
+          <span
+            class="pointer-events-none absolute top-full left-1/2 mt-2 -translate-x-1/2 rounded-md bg-zinc-800 px-2 py-1 text-xs whitespace-nowrap text-zinc-200 opacity-0 transition-opacity group-hover:opacity-100"
+          >
+            AI reply draft
           </span>
         </div>
         <div class="group relative">
@@ -863,7 +1175,7 @@
     </div>
   </div>
 
-  <div class="p-4 sm:p-5 md:border-b md:border-white/8">
+  <div class={messageHeaderClass}>
     <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
       <div class="flex min-w-0 gap-3">
         <div
@@ -882,7 +1194,7 @@
               <p class="truncate text-sm text-zinc-500">&lt;{senderAddress(message.from)}&gt;</p>
             {/if}
           </div>
-          <div class="mt-2 space-y-1 text-xs text-zinc-500">
+          <div class={messageMetaClass}>
             {#if compactAddress(message.to)}
               <p class="truncate">
                 <span class="mr-1 font-medium text-zinc-400">To</span>
@@ -913,7 +1225,7 @@
 
   <div bind:this={scrollContainer} class="flex min-h-0 flex-1 flex-col overflow-y-auto">
     {#if translationText || translatedHtmlSegments || translating}
-      <section class="border-b border-white/8 bg-[#101116] p-4 sm:p-5">
+      <section class={messageSectionClass}>
         <div class="flex items-center justify-between gap-3">
           <div class="flex min-w-0 items-center gap-2">
             <Languages size={15} class="shrink-0 text-sky-300" />
@@ -948,6 +1260,41 @@
       </section>
     {/if}
 
+    {#if remoteContentBody.blockedCount > 0}
+      <section class="border-b border-amber-500/20 bg-amber-500/10 p-4 sm:p-5">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p class="text-sm font-semibold text-amber-100">Remote content blocked</p>
+            <p class="mt-1 text-sm text-amber-100/70">
+              {remoteContentBody.blockedCount} external resource{remoteContentBody.blockedCount ===
+              1
+                ? ''
+                : 's'} were blocked to protect your privacy.
+            </p>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onclick={() => (showRemoteContent = true)}
+              class="rounded-lg border border-amber-300/20 bg-amber-300/10 px-3 py-1.5 text-sm font-medium text-amber-50 transition hover:bg-amber-300/20"
+            >
+              Show this time
+            </button>
+            {#if remoteContentSender}
+              <button
+                type="button"
+                disabled={trustingRemoteSender}
+                onclick={() => void trustRemoteContentSender()}
+                class="rounded-lg bg-amber-300 px-3 py-1.5 text-sm font-medium text-zinc-950 transition hover:bg-amber-200 disabled:opacity-60"
+              >
+                {trustingRemoteSender ? 'Saving...' : 'Always trust sender'}
+              </button>
+            {/if}
+          </div>
+        </div>
+      </section>
+    {/if}
+
     {#if srcdoc}
       <iframe
         bind:this={messageFrame}
@@ -967,7 +1314,7 @@
         }}
       ></iframe>
     {:else}
-      <div class="space-y-5 p-4 text-[15px] leading-7 text-zinc-200 sm:p-5 sm:leading-8">
+      <div class={messageBodyClass}>
         {#each bodyText(message)
           .split(/\n{2,}/)
           .filter(Boolean) as paragraph, index (`${message.id}-${index}`)}
@@ -977,7 +1324,7 @@
     {/if}
 
     {#if attachments.length > 0}
-      <div class="p-4 sm:p-5 md:border-t md:border-white/8">
+      <div class={attachmentsClass}>
         <div class="mb-3 flex items-center gap-2">
           <Paperclip size={14} class="text-zinc-500" />
           <span class="text-xs font-semibold tracking-wide text-zinc-500 uppercase">
@@ -986,6 +1333,7 @@
         </div>
         <div class="flex flex-wrap gap-3">
           {#each attachments as att (att.id)}
+            {@const safety = attachmentSafety(att)}
             <div
               class="group relative flex w-full flex-col overflow-hidden rounded-xl border border-transparent bg-white/3 transition hover:border-white/20 sm:w-40 md:border-white/10"
             >
@@ -1034,16 +1382,27 @@
                 <div class="min-w-0 flex-1">
                   <p class="truncate text-xs font-medium text-zinc-200">{att.filename}</p>
                   <p class="text-xs text-zinc-500">{formatBytes(att.size)}</p>
+                  {#if safety.level !== 'low'}
+                    <span
+                      class={`mt-1 inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${attachmentSafetyClass(safety)}`}
+                      title={safety.reasons.join('; ')}
+                    >
+                      <ShieldAlert size={10} />
+                      {safety.label}
+                    </span>
+                  {/if}
                 </div>
                 <a
                   href={resolve(`/api/attachments/${att.id}`)}
                   download={att.filename}
+                  onclick={(event) => confirmHighRiskDownload(event, att)}
                   class="shrink-0 text-zinc-600 hover:text-zinc-300"
                   title="Download"
                 >
                   <Download size={13} />
                 </a>
               </div>
+              <AttachmentSummary attachment={att} />
             </div>
           {/each}
         </div>
@@ -1119,6 +1478,7 @@
 <!-- Preview lightbox -->
 {#if previewIndex !== null}
   {@const att = previewableAttachments[previewIndex]}
+  {@const safety = attachmentSafety(att)}
   <div
     role="dialog"
     aria-modal="true"
@@ -1186,9 +1546,19 @@
       <div class="flex flex-wrap items-center justify-center gap-3 px-4 text-center sm:px-0">
         <p class="text-sm text-zinc-300">{att.filename}</p>
         <span class="text-xs text-zinc-600">{formatBytes(att.size)}</span>
+        {#if safety.level !== 'low'}
+          <span
+            class={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs ${attachmentSafetyClass(safety)}`}
+            title={safety.reasons.join('; ')}
+          >
+            <ShieldAlert size={12} />
+            {safety.label}
+          </span>
+        {/if}
         <a
           href={resolve(`/api/attachments/${att.id}`)}
           download={att.filename}
+          onclick={(event) => confirmHighRiskDownload(event, att)}
           class="flex items-center gap-1 text-xs text-zinc-400 hover:text-white"
         >
           <Download size={13} /> Download
@@ -1203,3 +1573,18 @@
   title="Message error"
   onclose={() => (errorDialogMessage = null)}
 />
+
+{#if actionModal}
+  <ActionModal
+    title={actionModal.title}
+    message={actionModal.message}
+    confirmLabel={actionModal.confirmLabel}
+    cancelLabel={actionModal.cancelLabel}
+    tone={actionModal.tone}
+    inputLabel={actionModal.inputLabel}
+    inputValue={actionModal.inputValue}
+    inputType={actionModal.inputType}
+    onconfirm={(value) => closeActionModal(value ?? true)}
+    oncancel={() => closeActionModal(null)}
+  />
+{/if}

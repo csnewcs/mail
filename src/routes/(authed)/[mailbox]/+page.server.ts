@@ -1,5 +1,9 @@
 import type { PageServerLoad } from './$types'
-import { countStoredThreads, listStoredThreads, resolveMailboxPath } from '$lib/server/mail'
+import {
+  countStoredThreads,
+  listStoredThreads,
+  resolveMailboxPath
+} from '$lib/server/mail'
 import { payloadBytes, perfLog, perfMs, perfNow } from '$lib/server/perf'
 
 const PAGE_SIZE = 50
@@ -16,9 +20,13 @@ function serializeMessage(message: Awaited<ReturnType<typeof listStoredThreads>>
     preview: message.preview,
     flags: JSON.parse(message.flags) as string[],
     receivedAt: message.receivedAt?.toISOString() ?? null,
+    snoozedUntil: message.snoozedUntil?.toISOString() ?? null,
     threadId: message.threadId ?? null,
+    hasThreadNote: Boolean(message.hasThreadNote),
     threadCount: message.threadCount,
-    hasUnread: message.hasUnread
+    hasUnread: message.hasUnread,
+    threadStarred: message.threadStarred ?? false,
+    threadPinned: message.threadPinned ?? false
   }
 }
 

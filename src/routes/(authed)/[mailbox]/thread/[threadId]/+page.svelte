@@ -13,21 +13,35 @@
     Download,
     FileImage,
     FileText,
+    ListChecks,
     Sparkles,
-    X
+    X,
+    Clock,
+    Ban,
+    Star,
+    Pin,
+    StickyNote
   } from 'lucide-svelte'
   import { goto } from '$app/navigation'
   import { resolve } from '$app/paths'
   import { page } from '$app/state'
+  import ActionModal from '$lib/components/ActionModal.svelte'
   import ErrorDialog from '$lib/components/ErrorDialog.svelte'
+  import AttachmentSummary from '$lib/components/AttachmentSummary.svelte'
   import { errorMessageFromUnknown, readErrorMessage } from '$lib/http'
   import { trackAppLoading } from '$lib/loading.svelte'
   import { onMount, tick } from 'svelte'
-  import { SvelteSet } from 'svelte/reactivity'
+  import { SvelteDate, SvelteSet } from 'svelte/reactivity'
   import { openReply, openReplyAll } from '$lib/composer.svelte'
   import { setupKeyboardHandler } from '$lib/keyboard.svelte'
   import { notifyMailboxStateChanged } from '$lib/mailbox-state'
   import { encodeThreadId } from '$lib/thread-url'
+  import {
+    normalizeAllowedSenders,
+    normalizeSenderAddress,
+    prepareRemoteContent
+  } from '$lib/remote-content'
+  import { scoreAttachmentSafety, type AttachmentSafetyScore } from '$lib/mail-attachments'
 
   type Message = {
     id: number
@@ -45,6 +59,7 @@
     references: string | null
     flags: string[]
     receivedAt: string | null
+    snoozedUntil: string | null
   }
 
   type Attachment = {
@@ -55,13 +70,35 @@
     size: number
   }
 
+  type ThreadActionItem = {
+    title: string
+    description: string | null
+    owner: string | null
+    dueDate: string | null
+    priority: 'low' | 'medium' | 'high'
+    sourceMessageId: string | null
+  }
+
+  type ThreadNote = {
+    threadKey: string
+    body: string
+    createdAt: string
+    updatedAt: string
+  }
+
   type Props = {
     data: {
       threadId: string
       mailbox: string
       messages: Message[]
       attachments: Attachment[]
+      threadNote: ThreadNote | null
       mailboxRole: 'inbox' | 'archive' | 'trash' | 'spam' | null
+      remoteContent: {
+        blockRemoteContent: boolean
+        allowedSenders: string[]
+      }
+      metadata: { starred: boolean; pinned: boolean }
     }
   }
 
@@ -80,11 +117,38 @@
   let acting = $state(false)
   let splittingId = $state<number | null>(null)
   let errorDialogMessage = $state<string | null>(null)
+  let actionModal = $state<{
+    title: string
+    message?: string
+    confirmLabel?: string
+    cancelLabel?: string
+    tone?: 'default' | 'danger'
+    inputLabel?: string
+    inputValue?: string
+    inputType?: string
+    resolve: (value: string | boolean | null) => void
+  } | null>(null)
   let metadataMessage = $state<Message | null>(null)
   let scrollToLatestPending = $state(false)
   let threadSummary = $state<string | null>(null)
   let summarizingThread = $state(false)
   let threadSummaryAbort = $state<AbortController | null>(null)
+  let showRemoteContentIds = $state(new SvelteSet<number>())
+  let trustingRemoteSenderId = $state<number | null>(null)
+  let allowedRemoteSenders = $state<string[]>([])
+  let draftingReplyMessageId = $state<number | null>(null)
+  let threadActions = $state<ThreadActionItem[] | null>(null)
+  let extractingThreadActions = $state(false)
+  let activeAiPanel = $state<'summary' | 'actions' | null>(null)
+  let threadMetadata = $state({ starred: false, pinned: false })
+
+  $effect(() => {
+    threadMetadata = data.metadata
+  })
+  let noteDraft = $state('')
+  let savedNoteBody = $state('')
+  let savedNoteUpdatedAt = $state<string | null>(null)
+  let savingNote = $state(false)
 
   function gotoMailbox() {
     return goto(resolve(`/${page.params.mailbox}`), { noScroll: true, keepFocus: true })
@@ -154,6 +218,135 @@
     }
   }
 
+  function defaultSnoozeInputValue() {
+    const date = new SvelteDate(Date.now() + 60 * 60 * 1000)
+    date.setMinutes(date.getMinutes() - date.getTimezoneOffset())
+    return date.toISOString().slice(0, 16)
+  }
+
+  function requestModal(options: Omit<NonNullable<typeof actionModal>, 'resolve'>) {
+    return new Promise<string | boolean | null>((resolve) => {
+      actionModal = { ...options, resolve }
+    })
+  }
+
+  function closeActionModal(value: string | boolean | null) {
+    actionModal?.resolve(value)
+    actionModal = null
+  }
+
+  async function promptForSnoozeDate() {
+    const value = await requestModal({
+      title: 'Snooze thread',
+      inputLabel: 'Snooze until',
+      inputValue: defaultSnoozeInputValue(),
+      inputType: 'datetime-local',
+      confirmLabel: 'Snooze'
+    })
+    if (value === null || typeof value === 'boolean') return null
+
+    const trimmed = value.trim()
+    const date = trimmed ? new Date(trimmed) : null
+    if (!date || Number.isNaN(date.getTime()) || date.getTime() <= Date.now()) {
+      errorDialogMessage = 'Choose a future date and time to snooze this thread.'
+      return null
+    }
+
+    return date
+  }
+
+  async function snoozeThread() {
+    if (acting) return
+    const snoozedUntil = await promptForSnoozeDate()
+    if (!snoozedUntil) return
+
+    acting = true
+    try {
+      const ids = messages.filter((m) => m.mailbox === data.mailbox).map((m) => m.id)
+      await trackAppLoading(async () => {
+        const response = await fetch('/api/messages/bulk', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ ids, action: 'snooze', snoozedUntil: snoozedUntil.toISOString() })
+        })
+
+        if (!response.ok) {
+          throw new Error(await readErrorMessage(response, 'Failed to snooze thread.'))
+        }
+      })
+      notifyMailboxStateChanged('thread-action:snooze')
+      await gotoMailbox()
+    } catch (error) {
+      errorDialogMessage = errorMessageFromUnknown(error, 'Failed to snooze thread.')
+    } finally {
+      acting = false
+    }
+  }
+
+  async function blockSender(msg: Message) {
+    if (acting || !msg.from) return
+    acting = true
+    try {
+      const response = await fetch('/api/sender-rules', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ type: 'block', sender: msg.from })
+      })
+
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, 'Failed to block sender.'))
+      }
+
+      const ids = messages.filter((m) => m.mailbox === data.mailbox).map((m) => m.id)
+      const trashResponse = await fetch('/api/messages/bulk', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ids, action: 'trash' })
+      })
+
+      if (!trashResponse.ok) {
+        throw new Error(await readErrorMessage(trashResponse, 'Sender blocked, but trash failed.'))
+      }
+
+      notifyMailboxStateChanged('thread-action:block-sender')
+      await gotoMailbox()
+    } catch (error) {
+      errorDialogMessage = errorMessageFromUnknown(error, 'Failed to block sender.')
+    } finally {
+      acting = false
+    }
+  }
+
+  async function toggleThreadMetadata(field: 'starred' | 'pinned') {
+    if (acting) return
+    const nextValue = !threadMetadata[field]
+    threadMetadata = { ...threadMetadata, [field]: nextValue }
+
+    try {
+      const response = await fetch(
+        resolve(`/api/threads/${encodeThreadId(data.threadId)}/metadata`),
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ mailbox: page.params.mailbox, [field]: nextValue })
+        }
+      )
+
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, 'Failed to update thread metadata.'))
+      }
+
+      const payload = (await response.json()) as {
+        metadata: { starred: boolean; pinned: boolean }
+      }
+      threadMetadata = payload.metadata
+      notifyMailboxStateChanged('thread-metadata')
+    } catch (error) {
+      threadMetadata = { ...threadMetadata, [field]: !nextValue }
+      errorDialogMessage = errorMessageFromUnknown(error, 'Failed to update thread metadata.')
+    }
+  }
+
   async function splitThreadFrom(msg: Message) {
     if (splittingId !== null) return
     splittingId = msg.id
@@ -171,13 +364,10 @@
       }
 
       const result = (await response.json()) as { threadKey: string }
-      await goto(
-        resolve(`/${page.params.mailbox}/thread/${encodeThreadId(result.threadKey)}`),
-        {
-          noScroll: true,
-          keepFocus: true
-        }
-      )
+      await goto(resolve(`/${page.params.mailbox}/thread/${encodeThreadId(result.threadKey)}`), {
+        noScroll: true,
+        keepFocus: true
+      })
     } catch (error) {
       errorDialogMessage = errorMessageFromUnknown(error, 'Failed to split thread.')
     } finally {
@@ -211,6 +401,7 @@
     threadSummaryAbort = new AbortController()
     summarizingThread = true
     threadSummary = ''
+    activeAiPanel = 'summary'
 
     try {
       const params = new URLSearchParams({
@@ -235,6 +426,99 @@
     } finally {
       summarizingThread = false
       threadSummaryAbort = null
+    }
+  }
+
+  async function generateReplyDraft(msg: Message, replyAll = false) {
+    if (draftingReplyMessageId !== null) return
+    draftingReplyMessageId = msg.id
+
+    try {
+      const response = await fetch('/api/ai/reply-draft', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          mailbox: page.params.mailbox ?? 'inbox',
+          threadId: data.threadId,
+          messageId: msg.id,
+          replyAll
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, 'Failed to generate reply draft.'))
+      }
+
+      const draft = (await response.json()) as { html?: string }
+      if (!draft.html) throw new Error('Reply draft was empty.')
+
+      if (replyAll) {
+        openReplyAll(msg, draft.html)
+      } else {
+        openReply(msg, draft.html)
+      }
+    } catch (error) {
+      errorDialogMessage = errorMessageFromUnknown(error, 'Failed to generate reply draft.')
+    } finally {
+      draftingReplyMessageId = null
+    }
+  }
+
+  async function extractThreadActions() {
+    if (extractingThreadActions) return
+
+    extractingThreadActions = true
+    threadActions = null
+    activeAiPanel = 'actions'
+
+    try {
+      const params = new URLSearchParams({
+        mailbox: page.params.mailbox ?? 'inbox',
+        threadId: data.threadId
+      })
+      const response = await fetch(`/api/ai/thread-actions?${params.toString()}`)
+
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, 'Failed to extract thread actions.'))
+      }
+
+      const result = (await response.json()) as { actions?: ThreadActionItem[] }
+      threadActions = Array.isArray(result.actions) ? result.actions : []
+    } catch (error) {
+      errorDialogMessage = errorMessageFromUnknown(error, 'Failed to extract thread actions.')
+      threadActions = null
+    } finally {
+      extractingThreadActions = false
+    }
+  }
+
+  const hasSavedNote = $derived(savedNoteBody.trim().length > 0)
+  const noteDirty = $derived(noteDraft.trim() !== savedNoteBody.trim())
+
+  async function saveNote() {
+    if (savingNote) return
+    savingNote = true
+
+    try {
+      const response = await fetch(resolve(`/api/threads/${encodeThreadId(data.threadId)}/note`), {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ body: noteDraft })
+      })
+
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, 'Failed to save thread note.'))
+      }
+
+      const payload = (await response.json()) as { note: ThreadNote | null }
+      savedNoteBody = payload.note?.body ?? ''
+      savedNoteUpdatedAt = payload.note?.updatedAt ?? null
+      noteDraft = savedNoteBody
+      notifyMailboxStateChanged('thread-note-saved')
+    } catch (error) {
+      errorDialogMessage = errorMessageFromUnknown(error, 'Failed to save thread note.')
+    } finally {
+      savingNote = false
     }
   }
 
@@ -281,6 +565,37 @@
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   }
 
+  function priorityTone(priority: ThreadActionItem['priority']) {
+    if (priority === 'high') return 'border-rose-400/30 bg-rose-400/10 text-rose-200'
+    if (priority === 'low') return 'border-zinc-500/30 bg-zinc-500/10 text-zinc-300'
+    return 'border-sky-400/30 bg-sky-400/10 text-sky-200'
+  }
+
+  function attachmentSafety(att: Attachment) {
+    return scoreAttachmentSafety(att)
+  }
+
+  function attachmentSafetyClass(safety: AttachmentSafetyScore) {
+    return safety.level === 'high'
+      ? 'border-amber-400/30 bg-amber-400/10 text-amber-200'
+      : 'border-white/10 bg-white/5 text-zinc-300'
+  }
+
+  async function confirmHighRiskDownload(event: MouseEvent, att: Attachment) {
+    const safety = attachmentSafety(att)
+    if (safety.level !== 'high') return
+
+    event.preventDefault()
+    const reasonText = safety.reasons.length ? `\n\n${safety.reasons.join('\n')}` : ''
+    const confirmed = await requestModal({
+      title: 'Download risky attachment?',
+      message: `This attachment has traits often abused in phishing or unsafe downloads. Only download it if you expected it.${reasonText}`,
+      confirmLabel: 'Download',
+      tone: 'danger'
+    })
+    if (confirmed) window.location.href = resolve(`/api/attachments/${att.id}`)
+  }
+
   function hasValue(value: string | null | undefined) {
     return Boolean(value && value.trim())
   }
@@ -315,6 +630,50 @@
     if (headClose !== -1)
       return html.slice(0, headClose) + LINK_TARGET_BASE + SCROLLBAR_STYLE + html.slice(headClose)
     return LINK_TARGET_BASE + SCROLLBAR_STYLE + html
+  }
+
+  const remoteContentSettings = $derived({
+    blockRemoteContent: data.remoteContent.blockRemoteContent,
+    allowedSenders: allowedRemoteSenders
+  })
+
+  function remoteContentForMessage(msg: Message) {
+    return prepareRemoteContent(
+      msg.htmlContent ?? '',
+      msg.from,
+      remoteContentSettings,
+      showRemoteContentIds.has(msg.id)
+    )
+  }
+
+  async function trustRemoteContentSender(msg: Message) {
+    const sender = normalizeSenderAddress(msg.from)
+    if (!sender || trustingRemoteSenderId !== null) return
+    trustingRemoteSenderId = msg.id
+    try {
+      const nextAllowedSenders = normalizeAllowedSenders([...allowedRemoteSenders, sender])
+      const response = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          remoteContent: {
+            blockRemoteContent: data.remoteContent.blockRemoteContent,
+            allowedSenders: nextAllowedSenders
+          }
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, 'Failed to trust sender.'))
+      }
+
+      allowedRemoteSenders = nextAllowedSenders
+      showRemoteContentIds.add(msg.id)
+    } catch (error) {
+      errorDialogMessage = errorMessageFromUnknown(error, 'Failed to trust sender.')
+    } finally {
+      trustingRemoteSenderId = null
+    }
   }
 
   function closestEmailLink(target: EventTarget | null) {
@@ -413,6 +772,10 @@
   }
 
   $effect(() => {
+    allowedRemoteSenders = data.remoteContent.allowedSenders
+  })
+
+  $effect(() => {
     if (initializedThreadId === data.threadId) return
 
     expandedIds = new SvelteSet<number>()
@@ -421,6 +784,14 @@
     threadSummaryAbort = null
     threadSummary = null
     summarizingThread = false
+    showRemoteContentIds = new SvelteSet<number>()
+    threadActions = null
+    extractingThreadActions = false
+    activeAiPanel = null
+    noteDraft = data.threadNote?.body ?? ''
+    savedNoteBody = data.threadNote?.body ?? ''
+    savedNoteUpdatedAt = data.threadNote?.updatedAt ?? null
+    savingNote = false
     initializedThreadId = data.threadId
     void settleThreadScrollAtBottom()
   })
@@ -509,6 +880,43 @@
         >
           <Mail size={16} />
         </button>
+        {#if lastMessage}
+          <button
+            type="button"
+            aria-label="Block sender"
+            disabled={acting || !lastMessage.from}
+            onclick={() => blockSender(lastMessage)}
+            class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-rose-400 disabled:cursor-not-allowed disabled:opacity-40 md:border-white/8"
+          >
+            <Ban size={16} />
+          </button>
+        {/if}
+        <button
+          type="button"
+          aria-label={threadMetadata.starred ? 'Unstar thread' : 'Star thread'}
+          title={threadMetadata.starred ? 'Unstar thread' : 'Star thread'}
+          disabled={acting}
+          onclick={() => toggleThreadMetadata('starred')}
+          class={[
+            'rounded-lg border border-transparent bg-white/3 p-2 transition hover:bg-white/6 disabled:cursor-not-allowed disabled:opacity-40 md:border-white/8',
+            threadMetadata.starred ? 'text-amber-300' : 'text-zinc-400 hover:text-zinc-200'
+          ]}
+        >
+          <Star size={16} fill={threadMetadata.starred ? 'currentColor' : 'none'} />
+        </button>
+        <button
+          type="button"
+          aria-label={threadMetadata.pinned ? 'Unpin thread' : 'Pin thread'}
+          title={threadMetadata.pinned ? 'Unpin thread' : 'Pin thread'}
+          disabled={acting}
+          onclick={() => toggleThreadMetadata('pinned')}
+          class={[
+            'rounded-lg border border-transparent bg-white/3 p-2 transition hover:bg-white/6 disabled:cursor-not-allowed disabled:opacity-40 md:border-white/8',
+            threadMetadata.pinned ? 'text-sky-300' : 'text-zinc-400 hover:text-zinc-200'
+          ]}
+        >
+          <Pin size={16} fill={threadMetadata.pinned ? 'currentColor' : 'none'} />
+        </button>
         <button
           type="button"
           aria-label="Summarize thread"
@@ -518,6 +926,36 @@
         >
           <Sparkles size={16} class={summarizingThread ? 'animate-pulse' : ''} />
         </button>
+        <button
+          type="button"
+          aria-label="Snooze thread"
+          disabled={acting}
+          onclick={() => snoozeThread()}
+          class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-40 md:border-white/8"
+        >
+          <Clock size={16} />
+        </button>
+        <button
+          type="button"
+          aria-label="Extract thread actions"
+          disabled={extractingThreadActions}
+          onclick={() => extractThreadActions()}
+          class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-emerald-300 disabled:cursor-wait disabled:opacity-60 md:border-white/8"
+        >
+          <ListChecks size={16} class={extractingThreadActions ? 'animate-pulse' : ''} />
+        </button>
+        <span
+          class={[
+            'inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs',
+            hasSavedNote
+              ? 'border-amber-300/20 bg-amber-400/10 text-amber-200'
+              : 'border-white/8 bg-white/3 text-zinc-500'
+          ].join(' ')}
+          title={hasSavedNote ? 'Thread has a private note' : 'No private note yet'}
+        >
+          <StickyNote size={13} />
+          Note
+        </span>
         {#if lastMessage}
           <button
             type="button"
@@ -534,6 +972,18 @@
             class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-zinc-200 md:hidden"
           >
             <ReplyAll size={16} />
+          </button>
+          <button
+            type="button"
+            aria-label="Draft reply with AI"
+            disabled={draftingReplyMessageId !== null}
+            onclick={() => void generateReplyDraft(lastMessage)}
+            class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-sky-300 disabled:cursor-wait disabled:opacity-60 md:hidden"
+          >
+            <Sparkles
+              size={16}
+              class={draftingReplyMessageId === lastMessage.id ? 'animate-pulse' : ''}
+            />
           </button>
         {/if}
       </div>
@@ -556,6 +1006,18 @@
           >
             <ReplyAll size={16} />
           </button>
+          <button
+            type="button"
+            aria-label="Draft reply with AI"
+            disabled={draftingReplyMessageId !== null}
+            onclick={() => void generateReplyDraft(lastMessage)}
+            class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-sky-300 disabled:cursor-wait disabled:opacity-60 md:border-white/8"
+          >
+            <Sparkles
+              size={16}
+              class={draftingReplyMessageId === lastMessage.id ? 'animate-pulse' : ''}
+            />
+          </button>
         {/if}
       </div>
     </div>
@@ -564,19 +1026,111 @@
     <p class="mt-0.5 text-sm text-zinc-500">
       {messages.length} message{messages.length === 1 ? '' : 's'}
     </p>
-    {#if threadSummary !== null}
+    {#if activeAiPanel || threadSummary !== null || threadActions !== null}
       <div class="mt-3 rounded-lg border border-white/8 bg-white/[0.03] p-3">
         <div class="mb-2 flex items-center justify-between gap-3">
-          <p class="text-xs font-medium tracking-wide text-zinc-400 uppercase">Thread Summary</p>
-          {#if summarizingThread}
+          <div class="flex items-center gap-1 rounded-lg bg-black/20 p-1">
+            <button
+              type="button"
+              onclick={() => (activeAiPanel = 'summary')}
+              class="rounded-md px-2 py-1 text-xs font-medium transition {activeAiPanel ===
+              'summary'
+                ? 'bg-white/10 text-zinc-100'
+                : 'text-zinc-500 hover:text-zinc-300'}"
+            >
+              Summary
+            </button>
+            <button
+              type="button"
+              onclick={() => (activeAiPanel = 'actions')}
+              class="rounded-md px-2 py-1 text-xs font-medium transition {activeAiPanel ===
+              'actions'
+                ? 'bg-white/10 text-zinc-100'
+                : 'text-zinc-500 hover:text-zinc-300'}"
+            >
+              Actions
+            </button>
+          </div>
+          {#if activeAiPanel === 'summary' && summarizingThread}
             <p class="text-xs text-sky-300">Summarizing...</p>
+          {:else if activeAiPanel === 'actions' && extractingThreadActions}
+            <p class="text-xs text-emerald-300">Extracting...</p>
           {/if}
         </div>
-        <p class="text-sm leading-6 whitespace-pre-wrap text-zinc-200">
-          {threadSummary || 'Generating summary...'}
-        </p>
+        {#if activeAiPanel === 'actions'}
+          {#if extractingThreadActions && threadActions === null}
+            <p class="text-sm text-zinc-400">Finding action items...</p>
+          {:else if threadActions && threadActions.length > 0}
+            <div class="space-y-2">
+              {#each threadActions as action, index (`${action.title}-${index}`)}
+                <div class="rounded-lg border border-white/8 bg-black/15 p-3">
+                  <div class="flex flex-wrap items-start justify-between gap-2">
+                    <p class="text-sm font-medium text-zinc-100">{action.title}</p>
+                    <span
+                      class="rounded-full border px-2 py-0.5 text-[11px] font-medium capitalize {priorityTone(
+                        action.priority
+                      )}"
+                    >
+                      {action.priority}
+                    </span>
+                  </div>
+                  {#if action.description}
+                    <p class="mt-1 text-sm leading-5 text-zinc-400">{action.description}</p>
+                  {/if}
+                  <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500">
+                    {#if action.owner}
+                      <span>Owner: {action.owner}</span>
+                    {/if}
+                    {#if action.dueDate}
+                      <span>Due: {action.dueDate}</span>
+                    {/if}
+                    {#if action.sourceMessageId}
+                      <span class="truncate">Source: {action.sourceMessageId}</span>
+                    {/if}
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {:else}
+            <p class="text-sm text-zinc-400">No explicit action items found in this thread.</p>
+          {/if}
+        {:else}
+          <p class="text-sm leading-6 whitespace-pre-wrap text-zinc-200">
+            {threadSummary || 'Generating summary...'}
+          </p>
+        {/if}
       </div>
     {/if}
+    <div class="mt-3 rounded-lg border border-white/8 bg-white/[0.03] p-3">
+      <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div class="flex items-center gap-2">
+          <StickyNote size={14} class={hasSavedNote ? 'text-amber-300' : 'text-zinc-500'} />
+          <p class="text-xs font-medium tracking-wide text-zinc-400 uppercase">Private Notes</p>
+        </div>
+        <div class="flex items-center gap-2">
+          {#if savedNoteUpdatedAt && !noteDirty}
+            <p class="text-xs text-zinc-500">Saved {formatFullDate(savedNoteUpdatedAt)}</p>
+          {:else if noteDirty}
+            <p class="text-xs text-amber-300">Unsaved changes</p>
+          {/if}
+          <button
+            type="button"
+            disabled={savingNote || !noteDirty}
+            onclick={() => saveNote()}
+            class="rounded-lg bg-amber-500/15 px-3 py-1.5 text-xs font-medium text-amber-100 transition hover:bg-amber-500/25 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {savingNote ? 'Saving...' : noteDraft.trim() ? 'Save note' : 'Clear note'}
+          </button>
+        </div>
+      </div>
+      <textarea
+        bind:value={noteDraft}
+        rows="3"
+        maxlength="10000"
+        placeholder="Add a private note for this thread. It stays in this mail app and is never sent."
+        class="w-full resize-y rounded-lg border border-white/8 bg-black/20 px-3 py-2 text-sm leading-6 text-zinc-200 transition outline-none placeholder:text-zinc-600 focus:border-amber-300/40 focus:ring-2 focus:ring-amber-300/10"
+      ></textarea>
+    </div>
   </div>
 
   <!-- Thread messages accordion -->
@@ -585,7 +1139,8 @@
       {#each messages as msg, index (msg.id)}
         {@const isExpanded = isMessageExpanded(msg.id)}
         {@const msgAttachments = getMessageAttachments(msg.messageId)}
-        {@const srcdoc = msg.htmlContent ? injectScrollbarStyle(msg.htmlContent) : null}
+        {@const remoteContentBody = remoteContentForMessage(msg)}
+        {@const srcdoc = msg.htmlContent ? injectScrollbarStyle(remoteContentBody.html) : null}
 
         <div
           class={[
@@ -622,15 +1177,8 @@
                   {/if}
                   {#if isUnread(msg.flags)}
                     <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400"></span>
-  {/if}
-</div>
-
-<ErrorDialog
-  message={errorDialogMessage}
-  title="Thread error"
-  onclose={() => (errorDialogMessage = null)}
-/>
-
+                  {/if}
+                </div>
                 {#if !isExpanded}
                   <p class="mt-0.5 truncate text-xs text-zinc-500">
                     {msg.preview || msg.textContent?.slice(0, 120) || ''}
@@ -662,6 +1210,40 @@
           <!-- Expanded content -->
           {#if isExpanded}
             <div class="px-4 pb-4 sm:px-5">
+              {#if remoteContentBody.blockedCount > 0}
+                <div
+                  class="mb-3 rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-sm text-amber-100"
+                >
+                  <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <p>
+                      {remoteContentBody.blockedCount} external resource{remoteContentBody.blockedCount ===
+                      1
+                        ? ''
+                        : 's'} blocked to protect your privacy.
+                    </p>
+                    <div class="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onclick={() => showRemoteContentIds.add(msg.id)}
+                        class="rounded-lg border border-amber-300/20 bg-amber-300/10 px-3 py-1.5 text-xs font-medium text-amber-50 transition hover:bg-amber-300/20"
+                      >
+                        Show this time
+                      </button>
+                      {#if normalizeSenderAddress(msg.from)}
+                        <button
+                          type="button"
+                          disabled={trustingRemoteSenderId !== null}
+                          onclick={() => void trustRemoteContentSender(msg)}
+                          class="rounded-lg bg-amber-300 px-3 py-1.5 text-xs font-medium text-zinc-950 transition hover:bg-amber-200 disabled:opacity-60"
+                        >
+                          {trustingRemoteSenderId === msg.id ? 'Saving...' : 'Always trust sender'}
+                        </button>
+                      {/if}
+                    </div>
+                  </div>
+                </div>
+              {/if}
+
               {#if srcdoc}
                 <iframe
                   title="Message body"
@@ -690,28 +1272,42 @@
                   </p>
                   <div class="flex flex-wrap gap-2">
                     {#each msgAttachments as att (att.id)}
+                      {@const safety = attachmentSafety(att)}
                       <div
-                        class="flex items-center gap-2 rounded-lg border border-transparent bg-white/3 px-3 py-2 md:border-white/8"
+                        class="flex max-w-full flex-col rounded-lg border border-transparent bg-white/3 px-3 py-2 md:border-white/8"
                       >
-                        {#if isImage(att.contentType)}
-                          <FileImage size={14} class="shrink-0 text-zinc-400" />
-                        {:else}
-                          <Paperclip size={14} class="shrink-0 text-zinc-400" />
-                        {/if}
-                        <div class="min-w-0">
-                          <p class="max-w-[160px] truncate text-xs font-medium text-zinc-200">
-                            {att.filename || 'Attachment'}
-                          </p>
-                          <p class="text-xs text-zinc-500">{formatBytes(att.size)}</p>
+                        <div class="flex items-center gap-2">
+                          {#if isImage(att.contentType)}
+                            <FileImage size={14} class="shrink-0 text-zinc-400" />
+                          {:else}
+                            <Paperclip size={14} class="shrink-0 text-zinc-400" />
+                          {/if}
+                          <div class="min-w-0">
+                            <p class="max-w-[160px] truncate text-xs font-medium text-zinc-200">
+                              {att.filename || 'Attachment'}
+                            </p>
+                            <p class="text-xs text-zinc-500">{formatBytes(att.size)}</p>
+                            {#if safety.level !== 'low'}
+                              <span
+                                class={`mt-1 inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${attachmentSafetyClass(safety)}`}
+                                title={safety.reasons.join('; ')}
+                              >
+                                <ShieldAlert size={10} />
+                                {safety.label}
+                              </span>
+                            {/if}
+                          </div>
+                          <a
+                            href={resolve(`/api/attachments/${att.id}`)}
+                            download={att.filename || 'attachment'}
+                            onclick={(event) => confirmHighRiskDownload(event, att)}
+                            class="ml-1 shrink-0 text-zinc-500 transition hover:text-zinc-300"
+                            aria-label="Download {att.filename}"
+                          >
+                            <Download size={14} />
+                          </a>
                         </div>
-                        <a
-                          href={resolve(`/api/attachments/${att.id}`)}
-                          download={att.filename || 'attachment'}
-                          class="ml-1 shrink-0 text-zinc-500 transition hover:text-zinc-300"
-                          aria-label="Download {att.filename}"
-                        >
-                          <Download size={14} />
-                        </a>
+                        <AttachmentSummary attachment={att} compact />
                       </div>
                     {/each}
                   </div>
@@ -733,6 +1329,18 @@
                   class="flex items-center gap-1.5 rounded-lg border border-transparent bg-white/3 px-3 py-1.5 text-xs text-zinc-400 transition hover:bg-white/6 hover:text-zinc-200 md:border-white/8"
                 >
                   <ReplyAll size={13} /> Reply all
+                </button>
+                <button
+                  type="button"
+                  disabled={draftingReplyMessageId !== null}
+                  onclick={() => void generateReplyDraft(msg)}
+                  class="flex items-center gap-1.5 rounded-lg border border-transparent bg-white/3 px-3 py-1.5 text-xs text-zinc-400 transition hover:bg-white/6 hover:text-sky-300 disabled:cursor-wait disabled:opacity-60 md:border-white/8"
+                >
+                  <Sparkles
+                    size={13}
+                    class={draftingReplyMessageId === msg.id ? 'animate-pulse' : ''}
+                  />
+                  {draftingReplyMessageId === msg.id ? 'Drafting...' : 'AI draft'}
                 </button>
                 {#if index > 0}
                   <button
@@ -810,4 +1418,25 @@
       </div>
     </div>
   </div>
+{/if}
+
+<ErrorDialog
+  message={errorDialogMessage}
+  title="Thread error"
+  onclose={() => (errorDialogMessage = null)}
+/>
+
+{#if actionModal}
+  <ActionModal
+    title={actionModal.title}
+    message={actionModal.message}
+    confirmLabel={actionModal.confirmLabel}
+    cancelLabel={actionModal.cancelLabel}
+    tone={actionModal.tone}
+    inputLabel={actionModal.inputLabel}
+    inputValue={actionModal.inputValue}
+    inputType={actionModal.inputType}
+    onconfirm={(value) => closeActionModal(value ?? true)}
+    oncancel={() => closeActionModal(null)}
+  />
 {/if}

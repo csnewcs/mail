@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { env } from '$env/dynamic/private'
 import { ensureSeenFlag, isAlwaysReadMailbox } from '../mailbox'
 import { contactDisplay, normalizeEmail, parseAddressFields, type ContactInput } from './contacts'
+import { normalizeFilterConditions, type FilterConditionSet } from '$lib/filter-conditions'
+import { DEFAULT_QUIET_HOURS, type QuietHoursConfig } from './quiet-hours'
 
 type DemoUser = {
   id: string
@@ -37,14 +39,25 @@ export type DemoConfigSection = {
 
 type DemoDisplayConfig = {
   signature: string
+  signatureProfiles: DemoSignature[]
   imap: DemoConfigSection & { mailbox: string; pollSeconds: number }
-  smtp: DemoConfigSection & { from: string }
+  smtp: DemoConfigSection & { from: string; undoSendSeconds: number }
   oidc: {
     discoveryUrl: string
     clientId: string
     clientSecret: string
     source: string
   }
+  quietHours: QuietHoursConfig
+}
+
+type DemoSignature = {
+  id: number
+  name: string
+  html: string
+  isDefault: boolean
+  createdAt: Date
+  updatedAt: Date
 }
 
 export type DemoMailRow = {
@@ -59,6 +72,7 @@ export type DemoMailRow = {
   cc: string
   preview: string
   receivedAt: Date | null
+  snoozedUntil?: Date | null
   threadId: string | null
   textContent: string
   htmlContent: string | null
@@ -81,6 +95,10 @@ function normalizeDemoMailRowFlags<T extends DemoMailRow>(message: T): T {
   return { ...message, flags: JSON.stringify(normalizedFlags) } as T
 }
 
+function isActiveDemoMessage(message: Pick<DemoMailRow, 'snoozedUntil'>) {
+  return !message.snoozedUntil || message.snoozedUntil.getTime() <= Date.now()
+}
+
 type DemoAttachment = {
   id: number
   messageId: string
@@ -97,6 +115,14 @@ type DemoContact = {
   source: 'auto' | 'manual'
   useCount: number
   lastUsedAt: Date | null
+  updatedAt: Date
+}
+
+type DemoContactGroup = {
+  id: number
+  name: string
+  description: string
+  contactIds: number[]
   updatedAt: Date
 }
 
@@ -118,10 +144,29 @@ type DemoFilter = {
   field: string
   operator: string
   value: string
+  conditions: FilterConditionSet | null
   action: string
   target: string | null
   enabled: boolean
   sortOrder: number
+}
+
+type DemoMessageTemplate = {
+  id: number
+  name: string
+  subject: string
+  html: string
+  isSnippet: boolean
+  createdAt: Date
+  updatedAt: Date
+}
+
+type DemoSenderRule = {
+  id: number
+  type: 'block' | 'allow'
+  sender: string
+  normalizedSender: string
+  createdAt: Date
 }
 
 type DemoMailbox = {
@@ -135,6 +180,16 @@ const DEMO_RESET_MS = 10 * 60 * 1000
 
 const demoConfig: DemoDisplayConfig = {
   signature: '<p>Best,<br />Demo User</p>',
+  signatureProfiles: [
+    {
+      id: 1,
+      name: 'Default',
+      html: '<p>Best,<br />Demo User</p>',
+      isDefault: true,
+      createdAt: new Date(now),
+      updatedAt: new Date(now)
+    }
+  ],
   imap: {
     host: 'demo-imap.local',
     port: 993,
@@ -152,6 +207,7 @@ const demoConfig: DemoDisplayConfig = {
     user: 'demo@example.com',
     password: 'demo-password',
     from: 'Demo User <demo@example.com>',
+    undoSendSeconds: 0,
     source: 'demo'
   },
   oidc: {
@@ -159,7 +215,8 @@ const demoConfig: DemoDisplayConfig = {
     clientId: 'demo-client',
     clientSecret: 'demo-secret',
     source: 'demo'
-  }
+  },
+  quietHours: { ...DEFAULT_QUIET_HOURS }
 }
 
 const demoMailboxes: DemoMailbox[] = [
@@ -181,7 +238,8 @@ let demoMessages: DemoMailRow[] = [
     from: 'Product Team <team@example.com>',
     to: 'Demo User <demo@example.com>',
     cc: '',
-    preview: 'This inbox runs entirely in memory so you can explore compose, drafts, contacts, filters, threads, sharing, and attachments safely.',
+    preview:
+      'This inbox runs entirely in memory so you can explore compose, drafts, contacts, filters, threads, sharing, and attachments safely.',
     receivedAt: new Date(now - 45 * 60 * 1000),
     threadId: 'thread-demo-welcome',
     textContent:
@@ -226,8 +284,7 @@ let demoMessages: DemoMailRow[] = [
     preview: 'Added the final screenshots and attached the rollout brief for the demo meeting.',
     receivedAt: new Date(now - 2 * 60 * 60 * 1000),
     threadId: 'thread-demo-launch',
-    textContent:
-      'Added the final screenshots and attached the rollout brief for the demo meeting.',
+    textContent: 'Added the final screenshots and attached the rollout brief for the demo meeting.',
     htmlContent:
       '<p>Added the final screenshots and attached the rollout brief for the demo meeting.</p>',
     replyTo: 'nina@example.com',
@@ -282,7 +339,8 @@ let demoMessages: DemoMailRow[] = [
     from: 'Maya Customer Success <maya@example.com>',
     to: 'Demo User <demo@example.com>',
     cc: 'Alex Founder <alex@example.com>',
-    preview: 'Three pilot users asked for faster search, clearer attachment previews, and keyboard shortcut hints.',
+    preview:
+      'Three pilot users asked for faster search, clearer attachment previews, and keyboard shortcut hints.',
     receivedAt: new Date(now - 70 * 60 * 1000),
     threadId: 'thread-demo-pilot',
     textContent:
@@ -303,7 +361,8 @@ let demoMessages: DemoMailRow[] = [
     from: 'Iris Design <iris@example.com>',
     to: 'Demo User <demo@example.com>',
     cc: '',
-    preview: 'Spacing in the message pane looks good, but the empty states need stronger copy and a clearer next step.',
+    preview:
+      'Spacing in the message pane looks good, but the empty states need stronger copy and a clearer next step.',
     receivedAt: new Date(now - 5 * 60 * 60 * 1000),
     threadId: 'thread-demo-design',
     textContent:
@@ -324,7 +383,8 @@ let demoMessages: DemoMailRow[] = [
     from: 'Demo User <demo@example.com>',
     to: 'Iris Design <iris@example.com>',
     cc: '',
-    preview: 'Agreed. I will tighten the empty state copy and keep the current layout density for the demo build.',
+    preview:
+      'Agreed. I will tighten the empty state copy and keep the current layout density for the demo build.',
     receivedAt: new Date(now - 4 * 60 * 60 * 1000),
     threadId: 'thread-demo-design',
     textContent:
@@ -345,7 +405,8 @@ let demoMessages: DemoMailRow[] = [
     from: 'Metrics Bot <metrics@example.com>',
     to: 'Demo User <demo@example.com>',
     cc: '',
-    preview: 'Inbox zero rate is up 12 percent, average response time is down 18 percent, and mobile usage continues to climb.',
+    preview:
+      'Inbox zero rate is up 12 percent, average response time is down 18 percent, and mobile usage continues to climb.',
     receivedAt: new Date(now - 8 * 60 * 60 * 1000),
     threadId: 'thread-demo-metrics',
     textContent:
@@ -366,7 +427,8 @@ let demoMessages: DemoMailRow[] = [
     from: 'Demo User <demo@example.com>',
     to: 'Board <board@example.com>',
     cc: '',
-    preview: 'Sharing the short product recap ahead of tomorrow morning so everyone can review the inbox demo flow.',
+    preview:
+      'Sharing the short product recap ahead of tomorrow morning so everyone can review the inbox demo flow.',
     receivedAt: new Date(now - 13 * 60 * 60 * 1000),
     threadId: 'thread-demo-investor',
     textContent:
@@ -387,7 +449,8 @@ let demoMessages: DemoMailRow[] = [
     from: 'Infra Alerts <infra@example.com>',
     to: 'Demo User <demo@example.com>',
     cc: '',
-    preview: 'Old alert retained in Trash so delete and restore related UI states have realistic content.',
+    preview:
+      'Old alert retained in Trash so delete and restore related UI states have realistic content.',
     receivedAt: new Date(now - 30 * 60 * 60 * 1000),
     threadId: 'thread-demo-alerts',
     textContent:
@@ -397,7 +460,7 @@ let demoMessages: DemoMailRow[] = [
     replyTo: 'infra@example.com',
     inReplyTo: null,
     references: null
-    }
+  }
 ]
 
 const demoAttachments: DemoAttachment[] = [
@@ -440,6 +503,8 @@ let demoContacts: DemoContact[] = [
   }
 ]
 
+let demoContactGroups: DemoContactGroup[] = []
+
 let demoDrafts: DemoDraft[] = [
   {
     id: 401,
@@ -461,6 +526,11 @@ let demoFilters: DemoFilter[] = [
     field: 'from',
     operator: 'contains',
     value: 'finance@example.com',
+    conditions: {
+      version: 1,
+      match: 'all',
+      conditions: [{ field: 'from', operator: 'contains', value: 'finance@example.com' }]
+    },
     action: 'move',
     target: 'Archive',
     enabled: true,
@@ -471,6 +541,11 @@ let demoFilters: DemoFilter[] = [
     field: 'subject',
     operator: 'contains',
     value: 'prize',
+    conditions: {
+      version: 1,
+      match: 'all',
+      conditions: [{ field: 'subject', operator: 'contains', value: 'prize' }]
+    },
     action: 'spam',
     target: null,
     enabled: true,
@@ -478,15 +553,40 @@ let demoFilters: DemoFilter[] = [
   }
 ]
 
+let demoMessageTemplates: DemoMessageTemplate[] = [
+  {
+    id: 601,
+    name: 'Quick follow-up',
+    subject: 'Following up',
+    html: '<p>Hi,</p><p>Just following up on this. Let me know if you need anything else from me.</p><p>Thanks,</p>',
+    isSnippet: false,
+    createdAt: new Date(now - 3 * 24 * 60 * 60 * 1000),
+    updatedAt: new Date(now - 3 * 24 * 60 * 60 * 1000)
+  },
+  {
+    id: 602,
+    name: 'Thanks snippet',
+    subject: '',
+    html: '<p>Thanks for the context. I will take a look and get back to you shortly.</p>',
+    isSnippet: true,
+    createdAt: new Date(now - 2 * 24 * 60 * 60 * 1000),
+    updatedAt: new Date(now - 2 * 24 * 60 * 60 * 1000)
+  }
+]
+let demoSenderRules: DemoSenderRule[] = []
+
 const demoShares = new Map<string, string>()
 let nextMessageId = 112
 let nextAttachmentId = 203
 let nextContactId = 303
 let nextDraftId = 402
 let nextFilterId = 503
+let nextMessageTemplateId = 603
+let nextSenderRuleId = 601
 
 const initialDemoConfig = {
   signature: demoConfig.signature,
+  signatureProfiles: demoConfig.signatureProfiles.map((signature) => ({ ...signature })),
   imap: { ...demoConfig.imap },
   smtp: { ...demoConfig.smtp },
   oidc: { ...demoConfig.oidc }
@@ -504,20 +604,36 @@ const initialDemoContacts = demoContacts.map((contact) => ({
   lastUsedAt: contact.lastUsedAt ? new Date(contact.lastUsedAt) : null,
   updatedAt: new Date(contact.updatedAt)
 }))
+const initialDemoContactGroups = demoContactGroups.map((group) => ({
+  ...group,
+  contactIds: [...group.contactIds],
+  updatedAt: new Date(group.updatedAt)
+}))
 const initialDemoDrafts = demoDrafts.map((draft) => ({
   ...draft,
   createdAt: new Date(draft.createdAt),
   updatedAt: new Date(draft.updatedAt)
 }))
 const initialDemoFilters = demoFilters.map((filter) => ({ ...filter }))
+const initialDemoMessageTemplates = demoMessageTemplates.map((template) => ({
+  ...template,
+  createdAt: new Date(template.createdAt),
+  updatedAt: new Date(template.updatedAt)
+}))
+const initialDemoSenderRules = demoSenderRules.map((rule) => ({ ...rule }))
 const initialNextMessageId = nextMessageId
 const initialNextAttachmentId = nextAttachmentId
 const initialNextContactId = nextContactId
 const initialNextDraftId = nextDraftId
 const initialNextFilterId = nextFilterId
+const initialNextMessageTemplateId = nextMessageTemplateId
+const initialNextSenderRuleId = nextSenderRuleId
 
 function resetDemoState() {
   demoConfig.signature = initialDemoConfig.signature
+  demoConfig.signatureProfiles = initialDemoConfig.signatureProfiles.map((signature) => ({
+    ...signature
+  }))
   Object.assign(demoConfig.imap, initialDemoConfig.imap)
   Object.assign(demoConfig.smtp, initialDemoConfig.smtp)
   Object.assign(demoConfig.oidc, initialDemoConfig.oidc)
@@ -538,12 +654,23 @@ function resetDemoState() {
     lastUsedAt: contact.lastUsedAt ? new Date(contact.lastUsedAt) : null,
     updatedAt: new Date(contact.updatedAt)
   }))
+  demoContactGroups = initialDemoContactGroups.map((group) => ({
+    ...group,
+    contactIds: [...group.contactIds],
+    updatedAt: new Date(group.updatedAt)
+  }))
   demoDrafts = initialDemoDrafts.map((draft) => ({
     ...draft,
     createdAt: new Date(draft.createdAt),
     updatedAt: new Date(draft.updatedAt)
   }))
   demoFilters = initialDemoFilters.map((filter) => ({ ...filter }))
+  demoMessageTemplates = initialDemoMessageTemplates.map((template) => ({
+    ...template,
+    createdAt: new Date(template.createdAt),
+    updatedAt: new Date(template.updatedAt)
+  }))
+  demoSenderRules = initialDemoSenderRules.map((rule) => ({ ...rule }))
   demoShares.clear()
 
   nextMessageId = initialNextMessageId
@@ -551,6 +678,8 @@ function resetDemoState() {
   nextContactId = initialNextContactId
   nextDraftId = initialNextDraftId
   nextFilterId = initialNextFilterId
+  nextMessageTemplateId = initialNextMessageTemplateId
+  nextSenderRuleId = initialNextSenderRuleId
 }
 
 if (isDemoModeEnabled()) {
@@ -581,7 +710,10 @@ function escapeRegExp(value: string) {
 }
 
 function stripHtml(html: string) {
-  return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+  return html
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 function looksKorean(value: string) {
@@ -615,6 +747,22 @@ function serializeContactRow(contact: DemoContact) {
   }
 }
 
+function serializeContactGroupRow(group: DemoContactGroup) {
+  const members = group.contactIds
+    .map((id) => demoContacts.find((contact) => contact.id === id))
+    .filter((contact): contact is DemoContact => Boolean(contact))
+    .map(serializeContactRow)
+
+  return {
+    id: group.id,
+    name: group.name,
+    description: group.description,
+    display: `${group.name} (${members.length})`,
+    members,
+    updatedAt: group.updatedAt.toISOString()
+  }
+}
+
 export function getDemoAuthSession() {
   return { user: demoUser, session: demoSession }
 }
@@ -622,10 +770,16 @@ export function getDemoAuthSession() {
 export function getDemoDisplayConfig() {
   return {
     signature: demoConfig.signature,
+    signatureProfiles: demoConfig.signatureProfiles.map((signature) => ({ ...signature })),
     imap: { ...demoConfig.imap, password: '••••••••' },
     smtp: { ...demoConfig.smtp, password: '••••••••' },
-    oidc: { ...demoConfig.oidc, clientSecret: '••••••••' }
+    oidc: { ...demoConfig.oidc, clientSecret: '••••••••' },
+    quietHours: { ...demoConfig.quietHours }
   }
+}
+
+export function getDemoSignatureProfiles() {
+  return demoConfig.signatureProfiles.map((signature) => ({ ...signature }))
 }
 
 export function getDemoImapConfig() {
@@ -642,16 +796,43 @@ export function getDemoOidcConfig() {
 
 export function saveDemoSettings(body: Record<string, unknown>) {
   if (typeof body.signature === 'string') demoConfig.signature = body.signature
+  if (Array.isArray(body.signatureProfiles)) {
+    const signatures = body.signatureProfiles
+      .filter(
+        (signature): signature is Record<string, unknown> =>
+          Boolean(signature) && typeof signature === 'object'
+      )
+      .map((signature, index) => ({
+        id: typeof signature.id === 'number' && signature.id > 0 ? signature.id : index + 1,
+        name:
+          typeof signature.name === 'string' && signature.name.trim()
+            ? signature.name.trim()
+            : `Signature ${index + 1}`,
+        html: typeof signature.html === 'string' ? signature.html : '',
+        isDefault: signature.isDefault === true,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }))
+    if (signatures.length > 0 && !signatures.some((signature) => signature.isDefault)) {
+      signatures[0].isDefault = true
+    }
+    demoConfig.signatureProfiles = signatures
+    demoConfig.signature =
+      signatures.find((signature) => signature.isDefault)?.html ?? signatures[0]?.html ?? ''
+  }
   if (body.imap && typeof body.imap === 'object') {
     const imap = body.imap as Record<string, unknown>
-    if (typeof imap.host === 'string') demoConfig.imap.host = imap.host.trim() || demoConfig.imap.host
+    if (typeof imap.host === 'string')
+      demoConfig.imap.host = imap.host.trim() || demoConfig.imap.host
     if (typeof imap.port === 'number' && imap.port > 0) demoConfig.imap.port = imap.port
     if (typeof imap.secure === 'boolean') demoConfig.imap.secure = imap.secure
-    if (typeof imap.user === 'string') demoConfig.imap.user = imap.user.trim() || demoConfig.imap.user
+    if (typeof imap.user === 'string')
+      demoConfig.imap.user = imap.user.trim() || demoConfig.imap.user
     if (typeof imap.password === 'string' && imap.password.trim() && imap.password !== '••••••••') {
       demoConfig.imap.password = imap.password
     }
-    if (typeof imap.mailbox === 'string') demoConfig.imap.mailbox = imap.mailbox.trim() || demoConfig.imap.mailbox
+    if (typeof imap.mailbox === 'string')
+      demoConfig.imap.mailbox = imap.mailbox.trim() || demoConfig.imap.mailbox
     if (typeof imap.pollSeconds === 'number' && imap.pollSeconds > 0) {
       demoConfig.imap.pollSeconds = imap.pollSeconds
     }
@@ -659,14 +840,20 @@ export function saveDemoSettings(body: Record<string, unknown>) {
 
   if (body.smtp && typeof body.smtp === 'object') {
     const smtp = body.smtp as Record<string, unknown>
-    if (typeof smtp.host === 'string') demoConfig.smtp.host = smtp.host.trim() || demoConfig.smtp.host
+    if (typeof smtp.host === 'string')
+      demoConfig.smtp.host = smtp.host.trim() || demoConfig.smtp.host
     if (typeof smtp.port === 'number' && smtp.port > 0) demoConfig.smtp.port = smtp.port
     if (typeof smtp.secure === 'boolean') demoConfig.smtp.secure = smtp.secure
-    if (typeof smtp.user === 'string') demoConfig.smtp.user = smtp.user.trim() || demoConfig.smtp.user
+    if (typeof smtp.user === 'string')
+      demoConfig.smtp.user = smtp.user.trim() || demoConfig.smtp.user
     if (typeof smtp.password === 'string' && smtp.password.trim() && smtp.password !== '••••••••') {
       demoConfig.smtp.password = smtp.password
     }
-    if (typeof smtp.from === 'string') demoConfig.smtp.from = smtp.from.trim() || demoConfig.smtp.from
+    if (typeof smtp.from === 'string')
+      demoConfig.smtp.from = smtp.from.trim() || demoConfig.smtp.from
+    if (typeof smtp.undoSendSeconds === 'number') {
+      demoConfig.smtp.undoSendSeconds = Math.min(30, Math.max(0, Math.floor(smtp.undoSendSeconds)))
+    }
   }
 
   if (body.oidc && typeof body.oidc === 'object') {
@@ -674,7 +861,8 @@ export function saveDemoSettings(body: Record<string, unknown>) {
     if (typeof oidc.discoveryUrl === 'string') {
       demoConfig.oidc.discoveryUrl = oidc.discoveryUrl.trim() || demoConfig.oidc.discoveryUrl
     }
-    if (typeof oidc.clientId === 'string') demoConfig.oidc.clientId = oidc.clientId.trim() || demoConfig.oidc.clientId
+    if (typeof oidc.clientId === 'string')
+      demoConfig.oidc.clientId = oidc.clientId.trim() || demoConfig.oidc.clientId
     if (
       typeof oidc.clientSecret === 'string' &&
       oidc.clientSecret.trim() &&
@@ -682,6 +870,15 @@ export function saveDemoSettings(body: Record<string, unknown>) {
     ) {
       demoConfig.oidc.clientSecret = oidc.clientSecret
     }
+  }
+
+  if (body.quietHours && typeof body.quietHours === 'object') {
+    const quietHours = body.quietHours as Record<string, unknown>
+    if (typeof quietHours.enabled === 'boolean') demoConfig.quietHours.enabled = quietHours.enabled
+    if (typeof quietHours.start === 'string') demoConfig.quietHours.start = quietHours.start
+    if (typeof quietHours.end === 'string') demoConfig.quietHours.end = quietHours.end
+    if (typeof quietHours.timezone === 'string')
+      demoConfig.quietHours.timezone = quietHours.timezone
   }
 }
 
@@ -751,9 +948,12 @@ export function listDemoStoredMessages(
   const msgs = demoMessages.filter(
     (message) =>
       message.mailbox === mailboxPath &&
+      isActiveDemoMessage(message) &&
       (!unreadOnly || isUnreadDemoMessage(message))
   )
-  return sortedMessages(msgs).slice(offset, offset + limit).map(normalizeDemoMailRowFlags)
+  return sortedMessages(msgs)
+    .slice(offset, offset + limit)
+    .map(normalizeDemoMailRowFlags)
 }
 
 export function countDemoStoredMessages(mailboxPath: string, unreadOnly = false) {
@@ -762,15 +962,23 @@ export function countDemoStoredMessages(mailboxPath: string, unreadOnly = false)
   return demoMessages.filter(
     (message) =>
       message.mailbox === mailboxPath &&
+      isActiveDemoMessage(message) &&
       (!unreadOnly || isUnreadDemoMessage(message))
   ).length
 }
 
-export function listDemoStoredThreads(mailboxPath: string, limit = 100, offset = 0, unreadOnly = false) {
+export function listDemoStoredThreads(
+  mailboxPath: string,
+  limit = 100,
+  offset = 0,
+  unreadOnly = false
+) {
   if (unreadOnly && isAlwaysReadMailbox(mailboxPath)) return []
 
   const alwaysReadMailbox = isAlwaysReadMailbox(mailboxPath)
-  const mailboxMessages = demoMessages.filter((message) => message.mailbox === mailboxPath)
+  const mailboxMessages = demoMessages.filter(
+    (message) => message.mailbox === mailboxPath && isActiveDemoMessage(message)
+  )
   const byThread = new Map<string, DemoMailRow[]>()
   for (const message of mailboxMessages) {
     const key = message.threadId ?? message.messageId
@@ -780,9 +988,7 @@ export function listDemoStoredThreads(mailboxPath: string, limit = 100, offset =
   }
 
   const rows = sortedMessages(
-    [...byThread.values()].map((messages) =>
-      sortedMessages(messages)[0]
-    )
+    [...byThread.values()].map((messages) => sortedMessages(messages)[0])
   ).map((message) => ({
     ...normalizeDemoMailRowFlags(message),
     threadCount: byThread.get(message.threadId ?? message.messageId)?.length ?? 1,
@@ -796,7 +1002,9 @@ export function listDemoStoredThreads(mailboxPath: string, limit = 100, offset =
 }
 
 export function countDemoStoredThreads(mailboxPath: string, unreadOnly = false) {
-  const mailboxMessages = demoMessages.filter((message) => message.mailbox === mailboxPath)
+  const mailboxMessages = demoMessages.filter(
+    (message) => message.mailbox === mailboxPath && isActiveDemoMessage(message)
+  )
   if (!unreadOnly) {
     return new Set(mailboxMessages.map((message) => message.threadId ?? message.messageId)).size
   }
@@ -817,7 +1025,9 @@ export function countDemoStoredThreads(mailboxPath: string, unreadOnly = false) 
 }
 
 export function getDemoMessagesInThread(threadKey: string, mailboxPath: string) {
-  const threadMessages = demoMessages.filter((message) => (message.threadId ?? message.messageId) === threadKey)
+  const threadMessages = demoMessages.filter(
+    (message) => (message.threadId ?? message.messageId) === threadKey
+  )
   return [...threadMessages]
     .sort((left, right) => {
       const leftTime = left.receivedAt?.getTime() ?? 0
@@ -830,7 +1040,11 @@ export function getDemoMessagesInThread(threadKey: string, mailboxPath: string) 
     .map(normalizeDemoMailRowFlags)
 }
 
-export function splitDemoThreadFromMessage(threadKey: string, mailboxPath: string, mailboxEntryId: number) {
+export function splitDemoThreadFromMessage(
+  threadKey: string,
+  mailboxPath: string,
+  mailboxEntryId: number
+) {
   const current = getDemoMessagesInThread(threadKey, mailboxPath).filter(
     (message) => message.mailbox === mailboxPath
   )
@@ -920,9 +1134,29 @@ export function markDemoMessagesSeen(ids: number[], seen: boolean) {
   return count
 }
 
-export function moveDemoMessage(message: Pick<DemoMailRow, 'id' | 'mailbox'>, action: 'archive' | 'trash' | 'spam' | 'inbox') {
+export function snoozeDemoMessages(ids: number[], snoozedUntil: Date | null) {
+  let count = 0
+  const selectedIds = new Set(ids)
+  demoMessages = demoMessages.map((message) => {
+    if (!selectedIds.has(message.id)) return message
+    count++
+    return { ...message, snoozedUntil }
+  })
+  return count
+}
+
+export function moveDemoMessage(
+  message: Pick<DemoMailRow, 'id' | 'mailbox'>,
+  action: 'archive' | 'trash' | 'spam' | 'inbox'
+) {
   const targetMailbox =
-    action === 'archive' ? 'Archive' : action === 'trash' ? 'Trash' : action === 'spam' ? 'Spam' : 'Inbox'
+    action === 'archive'
+      ? 'Archive'
+      : action === 'trash'
+        ? 'Trash'
+        : action === 'spam'
+          ? 'Spam'
+          : 'Inbox'
   if (targetMailbox === message.mailbox) return null
   demoMessages = demoMessages.map((row) =>
     row.id === message.id ? { ...row, mailbox: targetMailbox } : row
@@ -1029,6 +1263,82 @@ export function findDemoContactByEmail(email: string) {
   return contact ? serializeContactRow(contact) : null
 }
 
+export function getDemoContactById(id: number) {
+  const contact = demoContacts.find((row) => row.id === id)
+  return contact ? serializeContactRow(contact) : null
+}
+
+export function listDemoMessagesForContact(email: string, limit = 20) {
+  const q = normalizeEmail(email)
+  return sortedMessages(
+    demoMessages.filter((message) =>
+      [message.from, message.to, message.cc, message.replyTo ?? ''].some((field) =>
+        field.toLowerCase().includes(q)
+      )
+    )
+  )
+    .slice(0, limit)
+    .map((message) => ({
+      id: message.id,
+      messageId: message.messageId,
+      mailbox: message.mailbox,
+      uid: message.uid,
+      flags: JSON.parse(normalizeDemoMailRowFlags(message).flags) as string[],
+      subject: message.subject,
+      from: message.from,
+      to: message.to,
+      cc: message.cc,
+      preview: message.preview,
+      receivedAt: message.receivedAt?.toISOString() ?? null,
+      threadId: message.threadId
+    }))
+}
+
+export function listDemoContactGroups(query = '', limit = 50) {
+  const q = query.trim().toLowerCase()
+  return demoContactGroups
+    .filter(
+      (group) =>
+        !q || group.name.toLowerCase().includes(q) || group.description.toLowerCase().includes(q)
+    )
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .slice(0, limit)
+    .map(serializeContactGroupRow)
+}
+
+export function saveDemoContactGroup(input: {
+  id?: number | null
+  name: string
+  description?: string
+  contactIds: number[]
+}) {
+  const contactIds = [
+    ...new Set(input.contactIds.filter((id) => Number.isFinite(id) && id > 0))
+  ]
+  const existing = input.id ? demoContactGroups.find((group) => group.id === input.id) : null
+  if (existing) {
+    existing.name = input.name.trim()
+    existing.description = input.description?.trim() ?? ''
+    existing.contactIds = contactIds
+    existing.updatedAt = new Date()
+    return serializeContactGroupRow(existing)
+  }
+
+  const group: DemoContactGroup = {
+    id: nextContactId++,
+    name: input.name.trim(),
+    description: input.description?.trim() ?? '',
+    contactIds,
+    updatedAt: new Date()
+  }
+  demoContactGroups.push(group)
+  return serializeContactGroupRow(group)
+}
+
+export function deleteDemoContactGroup(id: number) {
+  demoContactGroups = demoContactGroups.filter((group) => group.id !== id)
+}
+
 export async function importDemoContactsFromMessages() {
   const contacts = demoMessages.flatMap((message) =>
     parseAddressFields([message.from, message.to, message.cc, message.replyTo]).map((contact) => ({
@@ -1099,11 +1409,18 @@ export function listDemoFilters() {
 }
 
 export function createDemoFilter(body: Record<string, unknown>) {
-  const filter: DemoFilter = {
-    id: nextFilterId++,
+  const conditionSet = normalizeFilterConditions(body.conditions, {
     field: String(body.field ?? ''),
     operator: String(body.operator ?? ''),
-    value: String(body.value ?? ''),
+    value: String(body.value ?? '')
+  })
+  const firstCondition = conditionSet.conditions[0] ?? { field: '', operator: '', value: '' }
+  const filter: DemoFilter = {
+    id: nextFilterId++,
+    field: firstCondition.field,
+    operator: firstCondition.operator,
+    value: firstCondition.value,
+    conditions: conditionSet,
     action: String(body.action ?? ''),
     target: typeof body.target === 'string' ? body.target : null,
     enabled: body.enabled !== false,
@@ -1113,14 +1430,46 @@ export function createDemoFilter(body: Record<string, unknown>) {
   return filter.id
 }
 
+export function createDemoFilters(
+  rows: Array<{
+    field: string
+    operator: string
+    value: string
+    action: string
+    target: string | null
+    enabled: boolean
+    sortOrder: number
+  }>
+) {
+  for (const row of rows) {
+    demoFilters.push({ id: nextFilterId++, conditions: null, ...row })
+  }
+}
+
 export function updateDemoFilter(id: number, body: Record<string, unknown>) {
   const filter = demoFilters.find((row) => row.id === id)
   if (!filter) return
-  if (typeof body.field === 'string') filter.field = body.field
-  if (typeof body.operator === 'string') filter.operator = body.operator
-  if (typeof body.value === 'string') filter.value = body.value
+  if (body.conditions !== undefined) {
+    const conditionSet = normalizeFilterConditions(body.conditions, {
+      field: String(body.field ?? ''),
+      operator: String(body.operator ?? ''),
+      value: String(body.value ?? '')
+    })
+    const firstCondition = conditionSet.conditions[0]
+    if (firstCondition) {
+      filter.field = firstCondition.field
+      filter.operator = firstCondition.operator
+      filter.value = firstCondition.value
+      filter.conditions = conditionSet
+    }
+  } else {
+    if (typeof body.field === 'string') filter.field = body.field
+    if (typeof body.operator === 'string') filter.operator = body.operator
+    if (typeof body.value === 'string') filter.value = body.value
+  }
   if (typeof body.action === 'string') filter.action = body.action
-  if (body.target !== undefined) filter.target = typeof body.target === 'string' ? body.target : null
+  if (body.target !== undefined)
+    filter.target = typeof body.target === 'string' ? body.target : null
   if (typeof body.enabled === 'boolean') filter.enabled = body.enabled
   if (typeof body.sort_order === 'number') filter.sortOrder = body.sort_order
 }
@@ -1134,6 +1483,83 @@ export function reorderDemoFilters(ids: number[]) {
     const filter = demoFilters.find((row) => row.id === ids[index])
     if (filter) filter.sortOrder = index
   }
+}
+
+export function listDemoMessageTemplates() {
+  return [...demoMessageTemplates].sort((left, right) => left.name.localeCompare(right.name))
+}
+
+export function createDemoMessageTemplate(body: Record<string, unknown>) {
+  const now = new Date()
+  const template: DemoMessageTemplate = {
+    id: nextMessageTemplateId++,
+    name: String(body.name ?? ''),
+    subject: String(body.subject ?? ''),
+    html: String(body.html ?? ''),
+    isSnippet: body.isSnippet === true,
+    createdAt: now,
+    updatedAt: now
+  }
+  demoMessageTemplates.push(template)
+  return template.id
+}
+
+export function updateDemoMessageTemplate(id: number, body: Record<string, unknown>) {
+  const template = demoMessageTemplates.find((row) => row.id === id)
+  if (!template) return
+  if (typeof body.name === 'string') template.name = body.name
+  if (typeof body.subject === 'string') template.subject = body.subject
+  if (typeof body.html === 'string') template.html = body.html
+  if (typeof body.isSnippet === 'boolean') template.isSnippet = body.isSnippet
+  template.updatedAt = new Date()
+}
+
+export function deleteDemoMessageTemplate(id: number) {
+  demoMessageTemplates = demoMessageTemplates.filter((template) => template.id !== id)
+}
+
+function normalizeDemoSender(sender: string) {
+  const trimmed = sender.trim().toLowerCase()
+  const bracketMatch = trimmed.match(/<([^>]+)>/)
+  const email =
+    bracketMatch?.[1] ?? trimmed.match(/[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9.-]+\.[a-z]{2,}/i)?.[0]
+  return (email ?? trimmed).trim().toLowerCase()
+}
+
+export function listDemoSenderRules() {
+  return [...demoSenderRules].sort(
+    (left, right) => right.createdAt.getTime() - left.createdAt.getTime()
+  )
+}
+
+export function createDemoSenderRule(body: Record<string, unknown>) {
+  const type = body.type === 'allow' ? 'allow' : 'block'
+  const sender = typeof body.sender === 'string' ? body.sender.trim() : ''
+  const normalizedSender = normalizeDemoSender(sender)
+  if (!normalizedSender) return null
+
+  const existing = demoSenderRules.find(
+    (rule) => rule.type === type && rule.normalizedSender === normalizedSender
+  )
+  if (existing) {
+    existing.sender = sender
+    existing.createdAt = new Date()
+    return existing.id
+  }
+
+  const rule: DemoSenderRule = {
+    id: nextSenderRuleId++,
+    type,
+    sender,
+    normalizedSender,
+    createdAt: new Date()
+  }
+  demoSenderRules.push(rule)
+  return rule.id
+}
+
+export function deleteDemoSenderRule(id: number) {
+  demoSenderRules = demoSenderRules.filter((rule) => rule.id !== id)
 }
 
 export async function sendDemoMessage(payload: {
@@ -1207,9 +1633,21 @@ export function generateDemoAiCompose(input: {
   subject: string
   html: string
   to: string
+  rewriteMode?: string
 }) {
   const subject = input.subject || 'Follow-up'
-  const body = textPreview(input.html, 'Thanks for the update. Here is a polished version for the demo.')
+  const body = textPreview(
+    input.html,
+    'Thanks for the update. Here is a polished version for the demo.'
+  )
+  const toneLead =
+    input.rewriteMode === 'concise'
+      ? 'Here is a shorter version:'
+      : input.rewriteMode === 'formal'
+        ? 'Here is a more formal version:'
+        : input.rewriteMode === 'friendly'
+        ? 'Here is a friendlier version:'
+        : ''
   const opener = /reply/i.test(input.mode)
     ? 'Thanks for the note.'
     : input.to
@@ -1218,13 +1656,38 @@ export function generateDemoAiCompose(input: {
 
   return [
     `<p>${opener}</p>`,
+    toneLead ? `<p>${toneLead}</p>` : '',
     `<p>${body}</p>`,
     `<p>To keep demo mode realistic, this draft is pre-generated and does not call a live AI service.</p>`,
     `<p>Please let me know if you would like any changes to <strong>${subject}</strong>.</p>`
   ].join('')
 }
 
-export function generateDemoRecentSummary(mailboxPath: string, targetLanguage: string, limit: number) {
+export function generateDemoAiReplyDraft(
+  messages: { from: string | null; preview: string | null; subject: string | null }[],
+  targetMessage: { from: string | null; preview: string | null; subject: string | null },
+  replyAll: boolean
+) {
+  const sender = targetMessage.from?.split('<')[0]?.trim() || 'there'
+  const latestContext = textPreview(
+    targetMessage.preview || messages[messages.length - 1]?.preview || '',
+    'Thanks for the context.'
+  )
+
+  return [
+    `<p>Hi ${sender},</p>`,
+    `<p>Thanks for the update. I reviewed the thread and the latest note about ${latestContext.toLowerCase()}</p>`,
+    '<p>This direction works for me. I will follow up with any specific questions after checking the remaining details.</p>',
+    `<p>${replyAll ? 'Looping everyone in for visibility.' : 'Please let me know if there is anything else you want me to cover.'}</p>`,
+    '<p><em>Demo mode generated this reply without calling a live AI service.</em></p>'
+  ].join('')
+}
+
+export function generateDemoRecentSummary(
+  mailboxPath: string,
+  targetLanguage: string,
+  limit: number
+) {
   const messages = listDemoStoredMessages(mailboxPath, limit, 0)
   if (messages.length === 0) return 'No recent mail to summarize.'
 
@@ -1279,6 +1742,25 @@ export function generateDemoThreadSummary(
     '- Follow-up: you can continue testing reply, forward, and split-thread actions in demo mode.',
     '- Note: this summary is pre-generated for the demo.'
   ].join('\n')
+}
+
+export function generateDemoThreadActions(mailboxPath: string, threadId: string) {
+  const messages = getDemoMessagesInThread(threadId, mailboxPath)
+  if (messages.length === 0) return null
+
+  const latest = messages[messages.length - 1]
+  return [
+    {
+      title: `Follow up on ${latest.subject || 'this thread'}`,
+      description:
+        latest.preview ||
+        'Review the latest message and decide whether a response or next step is needed.',
+      owner: 'You',
+      dueDate: null,
+      priority: 'medium' as const,
+      sourceMessageId: latest.messageId
+    }
+  ]
 }
 
 export function generateDemoTranslations(segments: string[], targetLanguage: string) {

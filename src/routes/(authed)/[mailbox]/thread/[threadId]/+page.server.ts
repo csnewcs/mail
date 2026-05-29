@@ -2,6 +2,7 @@ import { error, redirect } from '@sveltejs/kit'
 import type { PageServerLoad } from './$types'
 import {
   getMessagesInThread,
+  getThreadMetadata,
   markMessageAsRead,
   getMailboxRole,
   resolveMailboxPath
@@ -12,6 +13,11 @@ import { mailAttachment } from '$lib/server/db/schema'
 import { payloadBytes, perfLog, perfMs, perfNow } from '$lib/server/perf'
 import { inArray } from 'drizzle-orm'
 import { isDemoModeEnabled, listDemoAttachmentsForMessages } from '$lib/server/demo'
+import {
+  getBlockRemoteContentEnabled,
+  getRemoteContentAllowedSenders
+} from '$lib/server/preferences'
+import { getThreadNote, serializeThreadNote } from '$lib/server/thread-notes'
 
 function markReadAfterLoad(messages: Awaited<ReturnType<typeof getMessagesInThread>>) {
   void Promise.all(messages.map((msg) => markMessageAsRead(msg))).catch((error) => {
@@ -40,11 +46,12 @@ function serializeMessage(
     inReplyTo: message.inReplyTo,
     references: message.references,
     flags: seen && !flags.includes('\\Seen') ? [...flags, '\\Seen'] : flags,
-    receivedAt: message.receivedAt?.toISOString() ?? null
+    receivedAt: message.receivedAt?.toISOString() ?? null,
+    snoozedUntil: message.snoozedUntil?.toISOString() ?? null
   }
 }
 
-export const load: PageServerLoad = async ({ params }) => {
+export const load: PageServerLoad = async ({ params, cookies }) => {
   const startedAt = perfNow()
   const threadId = decodeThreadId(params.threadId)
   const mailboxPath = await resolveMailboxPath(params.mailbox)
@@ -83,14 +90,24 @@ export const load: PageServerLoad = async ({ params }) => {
             .where(inArray(mailAttachment.messageId, messageIds))
       : []
 
-  const mailboxRole = getMailboxRole(mailboxPath)
+  const [mailboxRole, metadata, threadNote] = await Promise.all([
+    Promise.resolve(getMailboxRole(mailboxPath)),
+    getThreadMetadata(mailboxPath, threadId),
+    getThreadNote(threadId)
+  ])
 
   const body = {
     threadId,
     mailbox: mailboxPath,
     messages: messages.map((message) => serializeMessage(message, true)),
     attachments,
-    mailboxRole
+    mailboxRole,
+    remoteContent: {
+      blockRemoteContent: getBlockRemoteContentEnabled(cookies),
+      allowedSenders: getRemoteContentAllowedSenders(cookies)
+    },
+    threadNote: serializeThreadNote(threadNote),
+    metadata
   }
 
   perfLog('load.threadPage', {

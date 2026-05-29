@@ -6,6 +6,11 @@ import { mailAttachment } from '$lib/server/db/schema'
 import { payloadBytes, perfLog, perfMs, perfNow } from '$lib/server/perf'
 import { eq } from 'drizzle-orm'
 import { isDemoModeEnabled, listDemoAttachmentsForMessage } from '$lib/server/demo'
+import {
+  getBlockRemoteContentEnabled,
+  getDensityPreference,
+  getRemoteContentAllowedSenders
+} from '$lib/server/preferences'
 
 function markReadAfterLoad(message: NonNullable<Awaited<ReturnType<typeof getStoredMessageById>>>) {
   void markMessageAsRead(message).catch((error) => {
@@ -35,11 +40,12 @@ function serializeMessage(
     inReplyTo: message.inReplyTo,
     references: message.references,
     flags: seen && !flags.includes('\\Seen') ? [...flags, '\\Seen'] : flags,
-    receivedAt: message.receivedAt?.toISOString() ?? null
+    receivedAt: message.receivedAt?.toISOString() ?? null,
+    snoozedUntil: message.snoozedUntil?.toISOString() ?? null
   }
 }
 
-export const load: PageServerLoad = async ({ params }) => {
+export const load: PageServerLoad = async ({ params, cookies }) => {
   const startedAt = perfNow()
   const message = await getStoredMessageById(params.id)
 
@@ -65,7 +71,12 @@ export const load: PageServerLoad = async ({ params }) => {
   const body = {
     message: serializeMessage(message, true),
     mailboxRole: getMailboxRole(message.mailbox),
-    attachments
+    density: getDensityPreference(cookies),
+    attachments,
+    remoteContent: {
+      blockRemoteContent: getBlockRemoteContentEnabled(cookies),
+      allowedSenders: getRemoteContentAllowedSenders(cookies)
+    }
   }
 
   perfLog('load.messagePage', {

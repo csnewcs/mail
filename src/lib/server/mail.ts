@@ -1,5 +1,18 @@
 import { randomUUID } from 'node:crypto'
-import { and, asc, count, desc, eq, ilike, inArray, notLike, or, sql } from 'drizzle-orm'
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  ilike,
+  inArray,
+  isNull,
+  lte,
+  notLike,
+  or,
+  sql
+} from 'drizzle-orm'
 import { ImapFlow } from 'imapflow'
 import { simpleParser } from 'mailparser'
 import {
@@ -16,12 +29,14 @@ import {
   mailMessage,
   mailMessageMailbox,
   mailThreadSummary,
+  mailThreadMetadata,
+  mailThreadNote,
   mailShare,
   mailAttachment,
   syncRuntime
 } from './db/schema'
 import { enqueueMarkRead, enqueueMarkUnread, enqueueMoveMessage } from './imap-queue'
-import { getImapConfig, type ImapConfig } from './config'
+import { getImapConfig, getSmtpConfig, type ImapConfig } from './config'
 import { logServerError, perfError, perfLog, perfMs, perfNow } from './perf'
 import { withRetry } from './retry'
 import { parseAddressFields, upsertContacts } from './contacts'
@@ -43,6 +58,7 @@ import {
   markDemoMessageAsUnread,
   moveDemoMessage,
   searchDemoMessages,
+  snoozeDemoMessages,
   splitDemoThreadFromMessage
 } from './demo'
 
@@ -89,7 +105,11 @@ export type MailListRow = {
   cc: string
   preview: string
   receivedAt: Date | null
+  snoozedUntil?: Date | null
   threadId: string | null
+  threadStarred?: boolean
+  threadPinned?: boolean
+  hasThreadNote?: boolean
 }
 
 // Joined row returned by detail queries
@@ -102,6 +122,14 @@ export type MailRow = MailListRow & {
 }
 
 export type ThreadRow = MailListRow & { threadCount: number; hasUnread?: boolean }
+
+export function normalizeSenderAddress(from: string | null | undefined) {
+  if (!from) return ''
+  const angleAddress = from.match(/<([^<>]+)>/)?.[1]
+  return (angleAddress ?? from).trim().toLowerCase()
+}
+
+export type ThreadMetadataFilter = 'starred' | 'pinned'
 
 export type SyncResult = {
   mailbox: string
@@ -822,42 +850,48 @@ async function syncOneMailbox(
         // Send push notifications for new messages
         if (newlyStoredMessageIds.length > 0 && !isAlwaysReadMailbox(mailboxPath)) {
           try {
-            const { sendPushToAll } = await import('./push')
-            const newMsgs = await db
-              .select({
-                id: mailMessageMailbox.id,
-                subject: mailMessage.subject,
-                from: mailMessage.from
-              })
-              .from(mailMessageMailbox)
-              .innerJoin(mailMessage, eq(mailMessageMailbox.messageId, mailMessage.messageId))
-              .where(
-                and(
-                  eq(mailMessageMailbox.mailbox, mailboxPath),
-                  inArray(mailMessage.messageId, newlyStoredMessageIds)
+            const { shouldSendMailboxNotifications } = await import('./mailbox-notifications')
+            const shouldNotifyMailbox = await shouldSendMailboxNotifications(mailboxPath)
+
+            if (shouldNotifyMailbox) {
+              const { sendPushToAll } = await import('./push')
+              const newMsgs = await db
+                .select({
+                  id: mailMessageMailbox.id,
+                  subject: mailMessage.subject,
+                  from: mailMessage.from
+                })
+                .from(mailMessageMailbox)
+                .innerJoin(mailMessage, eq(mailMessageMailbox.messageId, mailMessage.messageId))
+                .where(
+                  and(
+                    eq(mailMessageMailbox.mailbox, mailboxPath),
+                    inArray(mailMessage.messageId, newlyStoredMessageIds)
+                  )
                 )
-              )
-              .limit(5)
-            const [unreadRow] = await db
-              .select({ count: sql<number>`count(distinct ${mailMessage.threadKey})` })
-              .from(mailMessageMailbox)
-              .innerJoin(mailMessage, eq(mailMessageMailbox.messageId, mailMessage.messageId))
-              .where(
-                and(
-                  eq(mailMessageMailbox.mailbox, mailboxPath),
-                  notLike(mailMessageMailbox.flags, '%\\\\Seen%')
+                .limit(5)
+              const [unreadRow] = await db
+                .select({ count: sql<number>`count(distinct ${mailMessage.threadKey})` })
+                .from(mailMessageMailbox)
+                .innerJoin(mailMessage, eq(mailMessageMailbox.messageId, mailMessage.messageId))
+                .where(
+                  and(
+                    eq(mailMessageMailbox.mailbox, mailboxPath),
+                    notLike(mailMessageMailbox.flags, '%\\\\Seen%')
+                  )
                 )
-              )
-            const unreadCount = Number(unreadRow?.count ?? 0)
-            for (const msg of newMsgs) {
-              const senderMatch = msg.from?.match(/^([^<]+)</)
-              const sender = senderMatch ? senderMatch[1].trim() : (msg.from ?? 'Unknown')
-              await sendPushToAll({
-                title: msg.subject ?? '(no subject)',
-                body: `From: ${sender}`,
-                url: `/${pathToSlug(mailboxPath)}/${msg.id}`,
-                unreadCount
-              })
+              const unreadCount = Number(unreadRow?.count ?? 0)
+              for (const msg of newMsgs) {
+                const senderMatch = msg.from?.match(/^([^<]+)</)
+                const sender = senderMatch ? senderMatch[1].trim() : (msg.from ?? 'Unknown')
+                await sendPushToAll({
+                  title: msg.subject ?? '(no subject)',
+                  body: `From: ${sender}`,
+                  url: `/${pathToSlug(mailboxPath)}/${msg.id}`,
+                  messageId: msg.id,
+                  unreadCount
+                })
+              }
             }
           } catch {
             // push is optional — never fail sync
@@ -1191,7 +1225,65 @@ const listSelect = {
   cc: mailMessage.cc,
   preview: mailMessage.preview,
   receivedAt: mailMessage.receivedAt,
-  threadId: mailMessage.threadKey
+  snoozedUntil: mailMessageMailbox.snoozedUntil,
+  threadId: mailMessage.threadKey,
+  threadStarred: sql<boolean>`exists (
+    select 1
+    from mail_thread_metadata
+    where mail_thread_metadata.mailbox = ${mailMessageMailbox.mailbox}
+    and mail_thread_metadata.thread_key = ${mailMessage.threadKey}
+    and mail_thread_metadata.starred = true
+  )`,
+  threadPinned: sql<boolean>`exists (
+      select 1
+      from mail_thread_metadata
+      where mail_thread_metadata.mailbox = ${mailMessageMailbox.mailbox}
+      and mail_thread_metadata.thread_key = ${mailMessage.threadKey}
+      and mail_thread_metadata.pinned = true
+    )`,
+  hasThreadNote: sql<boolean>`exists (
+    select 1
+    from ${mailThreadNote}
+    where ${mailThreadNote.threadKey} = ${mailMessage.threadKey}
+    and length(trim(${mailThreadNote.body})) > 0
+  )`
+}
+
+function threadMetadataWhere(mailboxPath: string, filter?: ThreadMetadataFilter) {
+  if (!filter) return eq(mailMessageMailbox.mailbox, mailboxPath)
+
+  return and(
+    eq(mailMessageMailbox.mailbox, mailboxPath),
+    sql`exists (
+      select 1
+      from mail_thread_metadata
+      where mail_thread_metadata.mailbox = ${mailMessageMailbox.mailbox}
+      and mail_thread_metadata.thread_key = ${mailMessage.threadKey}
+      and ${filter === 'starred' ? sql`mail_thread_metadata.starred = true` : sql`mail_thread_metadata.pinned = true`}
+    )`
+  )
+}
+
+function threadSummaryMetadataWhere(mailboxPath: string, filter?: ThreadMetadataFilter) {
+  if (!filter) return eq(mailThreadSummary.mailbox, mailboxPath)
+
+  return and(
+    eq(mailThreadSummary.mailbox, mailboxPath),
+    sql`exists (
+      select 1
+      from mail_thread_metadata
+      where mail_thread_metadata.mailbox = ${mailThreadSummary.mailbox}
+      and mail_thread_metadata.thread_key = ${mailThreadSummary.threadKey}
+      and ${filter === 'starred' ? sql`mail_thread_metadata.starred = true` : sql`mail_thread_metadata.pinned = true`}
+    )`
+  )
+}
+
+function activeSnoozeCondition() {
+  return or(
+    isNull(mailMessageMailbox.snoozedUntil),
+    lte(mailMessageMailbox.snoozedUntil, new Date())
+  )
 }
 
 const detailSelect = {
@@ -1267,6 +1359,45 @@ export async function refreshThreadSummaries(mailbox: string, threadKeys: Iterab
   if (ms >= 100) {
     console.log(`[sync] ${mailbox}: refreshThreadSummaries ${uniqueThreadKeys.length} keys ${ms}ms`)
   }
+}
+
+export async function getThreadMetadata(mailbox: string, threadKey: string) {
+  if (isDemoModeEnabled()) return { starred: false, pinned: false }
+
+  const [row] = await db
+    .select({ starred: mailThreadMetadata.starred, pinned: mailThreadMetadata.pinned })
+    .from(mailThreadMetadata)
+    .where(
+      and(eq(mailThreadMetadata.mailbox, mailbox), eq(mailThreadMetadata.threadKey, threadKey))
+    )
+    .limit(1)
+
+  return { starred: row?.starred ?? false, pinned: row?.pinned ?? false }
+}
+
+export async function setThreadMetadata(
+  mailbox: string,
+  threadKey: string,
+  values: { starred?: boolean; pinned?: boolean }
+) {
+  if (isDemoModeEnabled())
+    return { starred: values.starred ?? false, pinned: values.pinned ?? false }
+
+  const current = await getThreadMetadata(mailbox, threadKey)
+  const next = {
+    starred: values.starred ?? current.starred,
+    pinned: values.pinned ?? current.pinned
+  }
+
+  await db
+    .insert(mailThreadMetadata)
+    .values({ mailbox, threadKey, ...next })
+    .onConflictDoUpdate({
+      target: [mailThreadMetadata.mailbox, mailThreadMetadata.threadKey],
+      set: { ...next, updatedAt: new Date() }
+    })
+
+  return next
 }
 
 type ThreadRepairMessage = {
@@ -1397,9 +1528,13 @@ export async function listStoredMessages(
   mailboxPath: string,
   limit = 100,
   offset = 0,
-  unreadOnly = false
+  unreadOnly = false,
+  metadataFilter?: ThreadMetadataFilter
 ) {
-  if (isDemoModeEnabled()) return listDemoStoredMessages(mailboxPath, limit, offset, unreadOnly)
+  if (isDemoModeEnabled()) {
+    if (metadataFilter) return []
+    return listDemoStoredMessages(mailboxPath, limit, offset, unreadOnly)
+  }
   if (unreadOnly && isAlwaysReadMailbox(mailboxPath)) return []
 
   const startedAt = perfNow()
@@ -1407,17 +1542,28 @@ export async function listStoredMessages(
   try {
     const whereClause = unreadOnly
       ? and(
-          eq(mailMessageMailbox.mailbox, mailboxPath),
+          activeSnoozeCondition(),
+          threadMetadataWhere(mailboxPath, metadataFilter),
           notLike(mailMessageMailbox.flags, '%\\\\Seen%')
         )
-      : eq(mailMessageMailbox.mailbox, mailboxPath)
+      : and(activeSnoozeCondition(), threadMetadataWhere(mailboxPath, metadataFilter))
 
     const rows = await db
       .select(listSelect)
       .from(mailMessageMailbox)
       .innerJoin(mailMessage, eq(mailMessageMailbox.messageId, mailMessage.messageId))
       .where(whereClause)
-      .orderBy(desc(mailMessageMailbox.receivedAt), desc(mailMessageMailbox.uid))
+      .orderBy(
+        desc(sql`exists (
+          select 1
+          from mail_thread_metadata
+          where mail_thread_metadata.mailbox = ${mailMessageMailbox.mailbox}
+          and mail_thread_metadata.thread_key = ${mailMessage.threadKey}
+          and mail_thread_metadata.pinned = true
+        )`),
+        desc(mailMessageMailbox.receivedAt),
+        desc(mailMessageMailbox.uid)
+      )
       .limit(limit)
       .offset(offset)
 
@@ -1448,17 +1594,75 @@ export async function listStoredMessages(
   }
 }
 
-export async function countStoredMessages(mailboxPath: string, unreadOnly = false) {
-  if (isDemoModeEnabled()) return countDemoStoredMessages(mailboxPath, unreadOnly)
+export async function countStoredMessages(
+  mailboxPath: string,
+  unreadOnly = false,
+  metadataFilter?: ThreadMetadataFilter
+) {
+  if (isDemoModeEnabled())
+    return metadataFilter ? 0 : countDemoStoredMessages(mailboxPath, unreadOnly)
   if (unreadOnly && isAlwaysReadMailbox(mailboxPath)) return 0
 
   const whereClause = unreadOnly
     ? and(
-        eq(mailMessageMailbox.mailbox, mailboxPath),
+        activeSnoozeCondition(),
+        threadMetadataWhere(mailboxPath, metadataFilter),
         notLike(mailMessageMailbox.flags, '%\\\\Seen%')
       )
-    : eq(mailMessageMailbox.mailbox, mailboxPath)
-  const [row] = await db.select({ value: count() }).from(mailMessageMailbox).where(whereClause)
+    : and(activeSnoozeCondition(), threadMetadataWhere(mailboxPath, metadataFilter))
+  const [row] = await db
+    .select({ value: count() })
+    .from(mailMessageMailbox)
+    .innerJoin(mailMessage, eq(mailMessageMailbox.messageId, mailMessage.messageId))
+    .where(whereClause)
+
+  return Number(row?.value ?? 0)
+}
+
+function senderWhereClause(mailboxPath: string, normalizedSender: string) {
+  return and(
+    eq(mailMessageMailbox.mailbox, mailboxPath),
+    eq(
+      sql<string>`lower(trim(coalesce(nullif(substring(${mailMessage.from} from '<([^<>]+)>'), ''), ${mailMessage.from})))`,
+      normalizedSender
+    )
+  )
+}
+
+export async function listMessagesBySender(mailboxPath: string, sender: string) {
+  const normalizedSender = normalizeSenderAddress(sender)
+  if (!normalizedSender) return []
+  if (isDemoModeEnabled()) {
+    return listDemoStoredMessages(mailboxPath, Number.MAX_SAFE_INTEGER, 0).filter(
+      (message) => normalizeSenderAddress(message.from) === normalizedSender
+    )
+  }
+
+  const rows = await db
+    .select(detailSelect)
+    .from(mailMessageMailbox)
+    .innerJoin(mailMessage, eq(mailMessageMailbox.messageId, mailMessage.messageId))
+    .where(senderWhereClause(mailboxPath, normalizedSender))
+    .orderBy(desc(mailMessageMailbox.receivedAt), desc(mailMessageMailbox.uid))
+
+  return rows.map((row) =>
+    normalizeMailRowFlags({
+      ...row,
+      receivedAt: row.receivedAt != null ? new Date(row.receivedAt) : null
+    })
+  )
+}
+
+export async function countMessagesBySender(mailboxPath: string, sender: string) {
+  const normalizedSender = normalizeSenderAddress(sender)
+  if (!normalizedSender) return 0
+  if (isDemoModeEnabled()) return (await listMessagesBySender(mailboxPath, normalizedSender)).length
+
+  const [row] = await db
+    .select({ value: count() })
+    .from(mailMessageMailbox)
+    .innerJoin(mailMessage, eq(mailMessageMailbox.messageId, mailMessage.messageId))
+    .where(senderWhereClause(mailboxPath, normalizedSender))
 
   return Number(row?.value ?? 0)
 }
@@ -1468,9 +1672,13 @@ export async function listStoredThreads(
   mailboxPath: string,
   limit = 100,
   offset = 0,
-  unreadOnly = false
+  unreadOnly = false,
+  metadataFilter?: ThreadMetadataFilter
 ): Promise<ThreadRow[]> {
-  if (isDemoModeEnabled()) return listDemoStoredThreads(mailboxPath, limit, offset, unreadOnly)
+  if (isDemoModeEnabled()) {
+    if (metadataFilter) return []
+    return listDemoStoredThreads(mailboxPath, limit, offset, unreadOnly)
+  }
   if (unreadOnly && isAlwaysReadMailbox(mailboxPath)) return []
 
   const startedAt = perfNow()
@@ -1490,6 +1698,7 @@ export async function listStoredThreads(
         cc: mailMessage.cc,
         preview: mailMessage.preview,
         receivedAt: mailThreadSummary.latestReceivedAt,
+        snoozedUntil: mailMessageMailbox.snoozedUntil,
         threadId: mailThreadSummary.threadKey,
         threadCount: sql<number>`(
           select count(*)
@@ -1503,6 +1712,26 @@ export async function listStoredThreads(
           where unread_mm.thread_key = ${mailThreadSummary.threadKey}
           and unread_mmm.mailbox = ${mailThreadSummary.mailbox}
           and unread_mmm.flags not like ${'%\\\\Seen%'}
+        )`,
+        threadStarred: sql<boolean>`exists (
+          select 1
+          from mail_thread_metadata
+          where mail_thread_metadata.mailbox = ${mailThreadSummary.mailbox}
+          and mail_thread_metadata.thread_key = ${mailThreadSummary.threadKey}
+          and mail_thread_metadata.starred = true
+        )`,
+        threadPinned: sql<boolean>`exists (
+          select 1
+          from mail_thread_metadata
+          where mail_thread_metadata.mailbox = ${mailThreadSummary.mailbox}
+          and mail_thread_metadata.thread_key = ${mailThreadSummary.threadKey}
+          and mail_thread_metadata.pinned = true
+        )`,
+        hasThreadNote: sql<boolean>`exists (
+          select 1
+          from ${mailThreadNote}
+          where ${mailThreadNote.threadKey} = ${mailThreadSummary.threadKey}
+          and length(trim(${mailThreadNote.body})) > 0
         )`
       })
       .from(mailThreadSummary)
@@ -1514,7 +1743,8 @@ export async function listStoredThreads(
       .where(
         unreadOnly
           ? and(
-              eq(mailThreadSummary.mailbox, mailboxPath),
+              activeSnoozeCondition(),
+              threadSummaryMetadataWhere(mailboxPath, metadataFilter),
               sql`exists (
                 select 1
                 from mail_message_mailbox as unread_mmm
@@ -1524,9 +1754,19 @@ export async function listStoredThreads(
                 and unread_mmm.flags not like ${'%\\\\Seen%'}
               )`
             )
-          : eq(mailThreadSummary.mailbox, mailboxPath)
+          : and(activeSnoozeCondition(), threadSummaryMetadataWhere(mailboxPath, metadataFilter))
       )
-      .orderBy(desc(mailThreadSummary.latestReceivedAt), desc(mailThreadSummary.latestUid))
+      .orderBy(
+        desc(sql`exists (
+          select 1
+          from mail_thread_metadata
+          where mail_thread_metadata.mailbox = ${mailThreadSummary.mailbox}
+          and mail_thread_metadata.thread_key = ${mailThreadSummary.threadKey}
+          and mail_thread_metadata.pinned = true
+        )`),
+        desc(mailThreadSummary.latestReceivedAt),
+        desc(mailThreadSummary.latestUid)
+      )
       .limit(limit)
       .offset(offset)
 
@@ -1545,6 +1785,9 @@ export async function listStoredThreads(
         hasUnread: alwaysReadMailbox
           ? false
           : Boolean((row as typeof row & { hasUnread: boolean | null }).hasUnread),
+        hasThreadNote: Boolean(
+          (row as typeof row & { hasThreadNote: boolean | null }).hasThreadNote
+        ),
         receivedAt: row.receivedAt != null ? new Date(row.receivedAt) : null
       })
     ) as unknown as ThreadRow[]
@@ -1560,17 +1803,27 @@ export async function listStoredThreads(
   }
 }
 
-export async function countStoredThreads(mailboxPath: string, unreadOnly = false) {
-  if (isDemoModeEnabled()) return countDemoStoredThreads(mailboxPath, unreadOnly)
+export async function countStoredThreads(
+  mailboxPath: string,
+  unreadOnly = false,
+  metadataFilter?: ThreadMetadataFilter
+) {
+  if (isDemoModeEnabled())
+    return metadataFilter ? 0 : countDemoStoredThreads(mailboxPath, unreadOnly)
   if (unreadOnly && isAlwaysReadMailbox(mailboxPath)) return 0
 
   const [row] = await db
     .select({ value: count() })
     .from(mailThreadSummary)
+    .innerJoin(
+      mailMessageMailbox,
+      eq(mailMessageMailbox.id, mailThreadSummary.representativeMailboxEntryId)
+    )
     .where(
       unreadOnly
         ? and(
-            eq(mailThreadSummary.mailbox, mailboxPath),
+            activeSnoozeCondition(),
+            threadSummaryMetadataWhere(mailboxPath, metadataFilter),
             sql`exists (
               select 1
               from mail_message_mailbox as unread_mmm
@@ -1580,7 +1833,7 @@ export async function countStoredThreads(mailboxPath: string, unreadOnly = false
               and unread_mmm.flags not like ${'%\\\\Seen%'}
             )`
           )
-        : eq(mailThreadSummary.mailbox, mailboxPath)
+        : and(activeSnoozeCondition(), threadSummaryMetadataWhere(mailboxPath, metadataFilter))
     )
 
   return Number(row?.value ?? 0)
@@ -1742,7 +1995,7 @@ export async function searchMessages(query: string, limit: number, offset: numbe
     .select(listSelect)
     .from(mailMessage)
     .innerJoin(mailMessageMailbox, eq(mailMessageMailbox.messageId, mailMessage.messageId))
-    .where(where)
+    .where(and(where, activeSnoozeCondition()))
     .orderBy(desc(mailMessage.receivedAt))
     .limit(limit + offset)
 
@@ -1776,7 +2029,7 @@ export async function countSearchMessages(query: string) {
     .select({ value: sql<number>`count(distinct ${mailMessage.messageId})` })
     .from(mailMessage)
     .innerJoin(mailMessageMailbox, eq(mailMessageMailbox.messageId, mailMessage.messageId))
-    .where(where)
+    .where(and(where, activeSnoozeCondition()))
 
   return Number(row?.value ?? 0)
 }
@@ -1844,6 +2097,46 @@ export async function getStoredMessageById(id: string | number): Promise<MailRow
     .limit(1)
 
   return message ? normalizeMailRowFlags(message) : null
+}
+
+export async function snoozeMessages(ids: number[], snoozedUntil: Date | null) {
+  if (ids.length === 0) return 0
+  if (isDemoModeEnabled()) return snoozeDemoMessages(ids, snoozedUntil)
+
+  const rows = await db
+    .select({
+      id: mailMessageMailbox.id,
+      mailbox: mailMessageMailbox.mailbox,
+      threadKey: mailMessage.threadKey
+    })
+    .from(mailMessageMailbox)
+    .innerJoin(mailMessage, eq(mailMessageMailbox.messageId, mailMessage.messageId))
+    .where(inArray(mailMessageMailbox.id, ids))
+
+  if (rows.length === 0) return 0
+
+  await db
+    .update(mailMessageMailbox)
+    .set({ snoozedUntil })
+    .where(
+      inArray(
+        mailMessageMailbox.id,
+        rows.map((row) => row.id)
+      )
+    )
+
+  const touchedThreadKeysByMailbox = new Map<string, Set<string>>()
+  for (const row of rows) {
+    const touchedThreadKeys = touchedThreadKeysByMailbox.get(row.mailbox) ?? new Set<string>()
+    touchedThreadKeys.add(row.threadKey)
+    touchedThreadKeysByMailbox.set(row.mailbox, touchedThreadKeys)
+  }
+
+  for (const [mailbox, threadKeys] of touchedThreadKeysByMailbox) {
+    await refreshThreadSummaries(mailbox, threadKeys)
+  }
+
+  return rows.length
 }
 
 export async function markMessageAsRead(message: MailRow) {

@@ -5,13 +5,153 @@ export type ComposerAttachment = {
   contentBase64: string
 }
 
+export type AttachmentSafetyInput = {
+  filename?: string | null
+  contentType?: string | null
+  size?: number | null
+}
+
+export type AttachmentSafetyLevel = 'low' | 'medium' | 'high'
+
+export type AttachmentSafetyScore = {
+  level: AttachmentSafetyLevel
+  label: string
+  reasons: string[]
+}
+
 export const MAX_ATTACHMENT_COUNT = 10
 export const MAX_ATTACHMENT_SIZE_BYTES = 5 * 1024 * 1024
 export const MAX_TOTAL_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024
 
 const BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
 
+const HIGH_RISK_EXTENSIONS = new Set([
+  'app',
+  'bat',
+  'cmd',
+  'com',
+  'cpl',
+  'exe',
+  'hta',
+  'jar',
+  'js',
+  'jse',
+  'lnk',
+  'msi',
+  'pif',
+  'ps1',
+  'psm1',
+  'reg',
+  'scr',
+  'vbe',
+  'vbs',
+  'wsf'
+])
+
+const MACRO_OFFICE_EXTENSIONS = new Set(['docm', 'dotm', 'xlsm', 'xltm', 'pptm', 'potm', 'ppam'])
+const ARCHIVE_EXTENSIONS = new Set(['7z', 'gz', 'iso', 'rar', 'tar', 'zip'])
+const COMMON_DECOY_EXTENSIONS = new Set([
+  'doc',
+  'docx',
+  'gif',
+  'jpeg',
+  'jpg',
+  'pdf',
+  'png',
+  'ppt',
+  'pptx',
+  'txt',
+  'xls',
+  'xlsx'
+])
+
+const EXTENSION_MIME_PREFIXES: Record<string, string[]> = {
+  gif: ['image/gif'],
+  jpeg: ['image/jpeg'],
+  jpg: ['image/jpeg'],
+  pdf: ['application/pdf'],
+  png: ['image/png'],
+  svg: ['image/svg+xml'],
+  txt: ['text/'],
+  webp: ['image/webp']
+}
+
 export type ComposerAttachmentSummary = Omit<ComposerAttachment, 'contentBase64'>
+
+function filenameParts(filename: string): string[] {
+  return filename
+    .toLowerCase()
+    .split('.')
+    .map((part) => part.trim())
+    .filter(Boolean)
+}
+
+function addReason(reasons: string[], reason: string) {
+  if (!reasons.includes(reason)) reasons.push(reason)
+}
+
+export function scoreAttachmentSafety(attachment: AttachmentSafetyInput): AttachmentSafetyScore {
+  const filename = attachment.filename?.trim() ?? ''
+  const contentType = attachment.contentType?.trim().toLowerCase() ?? ''
+  const parts = filenameParts(filename)
+  const extension = parts.at(-1) ?? ''
+  const previousExtension = parts.at(-2) ?? ''
+  const reasons: string[] = []
+  let severity = 0
+
+  if (HIGH_RISK_EXTENSIONS.has(extension)) {
+    severity = Math.max(severity, 2)
+    addReason(reasons, 'Executable or script-like file extension')
+  } else if (MACRO_OFFICE_EXTENSIONS.has(extension)) {
+    severity = Math.max(severity, 2)
+    addReason(reasons, 'Macro-enabled Office document')
+  } else if (ARCHIVE_EXTENSIONS.has(extension)) {
+    severity = Math.max(severity, 1)
+    addReason(reasons, 'Archive files can hide their contents until opened')
+  }
+
+  if (parts.length >= 3 && COMMON_DECOY_EXTENSIONS.has(previousExtension)) {
+    severity = Math.max(severity, HIGH_RISK_EXTENSIONS.has(extension) ? 2 : 1)
+    addReason(reasons, 'Filename uses a double extension')
+  }
+
+  if (/\p{C}/u.test(filename)) {
+    severity = Math.max(severity, 2)
+    addReason(reasons, 'Filename contains hidden control characters')
+  }
+
+  if (!extension && contentType === 'application/octet-stream') {
+    severity = Math.max(severity, 1)
+    addReason(reasons, 'File type is not identified')
+  }
+
+  const expectedMimePrefixes = EXTENSION_MIME_PREFIXES[extension]
+  if (
+    expectedMimePrefixes &&
+    contentType &&
+    !expectedMimePrefixes.some((prefix) => contentType.startsWith(prefix))
+  ) {
+    severity = Math.max(severity, 1)
+    addReason(reasons, 'Filename extension and MIME type do not match')
+  }
+
+  if (typeof attachment.size === 'number') {
+    if (attachment.size === 0) {
+      severity = Math.max(severity, 1)
+      addReason(reasons, 'Attachment is empty')
+    } else if (
+      attachment.size > 25 * 1024 * 1024 &&
+      (HIGH_RISK_EXTENSIONS.has(extension) || MACRO_OFFICE_EXTENSIONS.has(extension))
+    ) {
+      severity = Math.max(severity, 2)
+      addReason(reasons, 'Unusually large executable or macro-enabled attachment')
+    }
+  }
+
+  if (severity >= 2) return { level: 'high', label: 'High-risk attachment', reasons }
+  if (severity === 1) return { level: 'medium', label: 'Review attachment', reasons }
+  return { level: 'low', label: 'No attachment warning', reasons }
+}
 
 export function attachmentSignature(attachments: ComposerAttachment[]): string {
   return attachments

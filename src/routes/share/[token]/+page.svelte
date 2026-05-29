@@ -1,6 +1,8 @@
 <script lang="ts">
   import { resolve } from '$app/paths'
-  import { Download, FileImage, FileText, FileVideo, Paperclip } from 'lucide-svelte'
+  import ActionModal from '$lib/components/ActionModal.svelte'
+  import { Download, FileImage, FileText, FileVideo, Paperclip, ShieldAlert } from 'lucide-svelte'
+  import { scoreAttachmentSafety, type AttachmentSafetyScore } from '$lib/mail-attachments'
 
   type Attachment = {
     id: number
@@ -24,6 +26,24 @@
   }
 
   let { data }: Props = $props()
+  let actionModal = $state<{
+    title: string
+    message?: string
+    confirmLabel?: string
+    tone?: 'default' | 'danger'
+    resolve: (value: boolean | null) => void
+  } | null>(null)
+
+  function requestConfirm(options: Omit<NonNullable<typeof actionModal>, 'resolve'>) {
+    return new Promise<boolean | null>((resolve) => {
+      actionModal = { ...options, resolve }
+    })
+  }
+
+  function closeActionModal(value: boolean | null) {
+    actionModal?.resolve(value)
+    actionModal = null
+  }
 
   const fullDateFormatter = new Intl.DateTimeFormat(undefined, {
     month: 'short',
@@ -75,6 +95,31 @@
     if (bytes < 1024) return `${bytes} B`
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  }
+
+  function attachmentSafety(att: Attachment) {
+    return scoreAttachmentSafety(att)
+  }
+
+  function attachmentSafetyClass(safety: AttachmentSafetyScore) {
+    return safety.level === 'high'
+      ? 'border-amber-400/30 bg-amber-400/10 text-amber-200'
+      : 'border-white/10 bg-white/5 text-zinc-300'
+  }
+
+  async function confirmHighRiskDownload(event: MouseEvent, att: Attachment) {
+    const safety = attachmentSafety(att)
+    if (safety.level !== 'high') return
+
+    event.preventDefault()
+    const reasonText = safety.reasons.length ? `\n\n${safety.reasons.join('\n')}` : ''
+    const confirmed = await requestConfirm({
+      title: 'Download risky attachment?',
+      message: `This attachment has traits often abused in phishing or unsafe downloads. Only download it if you expected it.${reasonText}`,
+      confirmLabel: 'Download',
+      tone: 'danger'
+    })
+    if (confirmed) window.location.href = attachmentUrl(att.id)
   }
 
   function isImage(contentType: string) {
@@ -173,6 +218,7 @@
 
         <div class="flex flex-wrap gap-3">
           {#each data.attachments as att (att.id)}
+            {@const safety = attachmentSafety(att)}
             <div
               class="group relative flex w-full flex-col overflow-hidden rounded-xl border border-white/10 bg-white/3 transition hover:border-white/20 sm:w-40"
             >
@@ -210,10 +256,20 @@
                     {att.filename || 'Attachment'}
                   </p>
                   <p class="text-xs text-zinc-500">{formatBytes(att.size)}</p>
+                  {#if safety.level !== 'low'}
+                    <span
+                      class={`mt-1 inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${attachmentSafetyClass(safety)}`}
+                      title={safety.reasons.join('; ')}
+                    >
+                      <ShieldAlert size={10} />
+                      {safety.label}
+                    </span>
+                  {/if}
                 </div>
                 <a
                   href={resolve(`/share/${data.token}/attachments/${att.id}`)}
                   download={att.filename || 'attachment'}
+                  onclick={(event) => confirmHighRiskDownload(event, att)}
                   class="shrink-0 text-zinc-500 hover:text-zinc-300"
                   title="Download"
                 >
@@ -227,3 +283,14 @@
     {/if}
   </div>
 </div>
+
+{#if actionModal}
+  <ActionModal
+    title={actionModal.title}
+    message={actionModal.message}
+    confirmLabel={actionModal.confirmLabel}
+    tone={actionModal.tone}
+    onconfirm={() => closeActionModal(true)}
+    oncancel={() => closeActionModal(null)}
+  />
+{/if}

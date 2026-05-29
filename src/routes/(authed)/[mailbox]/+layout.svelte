@@ -2,6 +2,7 @@
   import { dev } from '$app/environment'
   import { afterNavigate, beforeNavigate, goto } from '$app/navigation'
   import { resolve } from '$app/paths'
+  import ActionModal from '$lib/components/ActionModal.svelte'
   import ErrorDialog from '$lib/components/ErrorDialog.svelte'
   import { errorMessageFromUnknown, readErrorMessage } from '$lib/http'
   import { trackAppLoading } from '$lib/loading.svelte'
@@ -10,7 +11,7 @@
   import { getSimplifiedModeSidebarActionContext } from '$lib/simplified-mode-context'
   import { page } from '$app/state'
   import { onMount, tick, untrack } from 'svelte'
-  import { SvelteSet, SvelteURLSearchParams } from 'svelte/reactivity'
+  import { SvelteDate, SvelteSet, SvelteURLSearchParams } from 'svelte/reactivity'
   import {
     RefreshCw,
     CheckSquare,
@@ -26,11 +27,19 @@
     ChevronRight,
     Search,
     Sparkles,
-    Bookmark
+    Bookmark,
+    Clock,
+    WifiOff,
+    Star,
+    Pin,
+    StickyNote
   } from 'lucide-svelte'
   import { openCompose } from '$lib/composer.svelte'
   import { encodeThreadId } from '$lib/thread-url'
   import { keyboard, setupKeyboardHandler } from '$lib/keyboard.svelte'
+  import { readOfflineList, saveOfflineList, type OfflineListCache } from '$lib/offline-cache'
+
+  type DensityPreference = 'comfortable' | 'compact' | 'condensed'
 
   type SyncData = {
     mailbox: string
@@ -55,9 +64,13 @@
     flags: string[]
     hasUnread?: boolean
     receivedAt: string | null
+    snoozedUntil?: string | null
     mailbox?: string
     threadId?: string | null
     threadCount?: number
+    threadStarred?: boolean
+    threadPinned?: boolean
+    hasThreadNote?: boolean
   }
 
   type SavedSearch = {
@@ -101,7 +114,9 @@
       sync: SyncData
       imapMailboxes: ImapMailbox[]
       simplifiedView: boolean
+      density: DensityPreference
       compactMode: boolean
+      user?: { name: string; email: string } | null
     }
     children: import('svelte').Snippet
   }
@@ -128,8 +143,10 @@
 
   const sync = $derived(data.sync)
   const mailbox = $derived(page.params.mailbox ?? 'inbox')
+  const offlineUserKey = $derived(data.user?.email ?? null)
   const simplifiedViewEnabled = $derived(data.simplifiedView)
-  const compactModeEnabled = $derived(data.compactMode)
+  const density = $derived(data.density ?? (data.compactMode ? 'compact' : 'comfortable'))
+  const compactModeEnabled = $derived(density !== 'comfortable')
   const isMailboxRoot = $derived(!page.params.id && !page.params.threadId)
 
   function readRouteListSeed() {
@@ -186,7 +203,7 @@
   let errorDialogMessage = $state<string | null>(null)
   let searchQuery = $state('')
   let mobileSearchOpen = $state(false)
-  let activeFilter = $state<'all' | 'unread'>('all')
+  let activeFilter = $state<'all' | 'unread' | 'starred' | 'pinned'>('all')
   let sentinel = $state<HTMLDivElement | null>(null)
   let loadedCount = initialRouteListSeed?.messages.length ?? 0
   let totalCount = $state(initialRouteListSeed?.total ?? 0)
@@ -206,15 +223,46 @@
   let searchInputFocused = $state(false)
   let searchRequestId = 0
   let searchTimer: ReturnType<typeof setTimeout> | null = null
+  let lastRouteSearchQuery = ''
   let contactSearchRequestId = 0
   let contactSearchTimer: ReturnType<typeof setTimeout> | null = null
   let pendingMailboxNavigationScrollTop: number | null = null
   let viewportHeight = $state(768)
+  let online = $state(true)
+  let cachedListSavedAt = $state<number | null>(null)
 
   // Bulk selection
   let selectedIds = new SvelteSet<number>()
   const selectionMode = $derived(selectedIds.size > 0)
   let bulkActionPending = $state(false)
+  let bulkSenderPending = $state(false)
+  type ModalState = {
+    title: string
+    message?: string
+    confirmLabel?: string
+    cancelLabel?: string
+    tone?: 'default' | 'danger'
+    inputLabel?: string
+    inputValue?: string
+    inputType?: string
+    resolve: (value: string | boolean | null) => void
+  }
+  let actionModal = $state<ModalState | null>(null)
+
+  type MobileSwipeAction = 'archive' | 'mark_read' | 'trash'
+
+  let mobileSwipeMessageId = $state<number | null>(null)
+  let mobileSwipePointerId = $state<number | null>(null)
+  let mobileSwipeStartX = 0
+  let mobileSwipeStartY = 0
+  let mobileSwipeOffsetX = $state(0)
+  let mobileSwipeDragging = $state(false)
+  let mobileSwipeSuppressClickId = $state<number | null>(null)
+
+  const mobileSwipeActivationDistance = 12
+  const mobileSwipeActionThreshold = 88
+  const mobileSwipeTrashThreshold = 148
+  const mobileSwipeMaxOffset = 168
 
   type ContextMenuAction =
     | 'open'
@@ -222,8 +270,11 @@
     | 'trash'
     | 'spam'
     | 'inbox'
+    | 'archive_sender'
+    | 'trash_sender'
     | 'mark_read'
     | 'mark_unread'
+    | 'snooze'
 
   type ContextMenuState = {
     message: Message
@@ -247,8 +298,8 @@
     )
   })
   const showSearchAutocomplete = $derived(
-    (searchInputFocused && syntaxSuggestions.length > 0) ||
-      (showContactSuggestions && contactSuggestions.length > 0)
+    searchInputFocused &&
+      ((syntaxSuggestions.length > 0) || (showContactSuggestions && contactSuggestions.length > 0))
   )
 
   const relativeFormatter = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
@@ -263,6 +314,8 @@
   const visibleMessages = $derived.by(() => {
     return messages.filter((message) => {
       if (activeFilter === 'unread' && !isUnread(message.flags, message.hasUnread)) return false
+      if (activeFilter === 'starred' && !message.threadStarred) return false
+      if (activeFilter === 'pinned' && !message.threadPinned) return false
       return true
     })
   })
@@ -334,6 +387,13 @@
   const simplifiedMarkReadReady = $derived(
     activeSimplifiedMessageUnread && simplifiedMarkReadGestureReady
   )
+
+  $effect(() => {
+    const routeQuery = page.url.searchParams.get('q')?.trim() ?? ''
+    if (routeQuery === lastRouteSearchQuery) return
+    lastRouteSearchQuery = routeQuery
+    searchQuery = routeQuery
+  })
 
   $effect(() => {
     const query = searchQuery.trim()
@@ -439,6 +499,17 @@
     showContactSuggestions = contactSuggestions.length > 0
   }
 
+  function requestModal(options: Omit<ModalState, 'resolve'>) {
+    return new Promise<string | boolean | null>((resolve) => {
+      actionModal = { ...options, resolve }
+    })
+  }
+
+  function closeActionModal(value: string | boolean | null) {
+    actionModal?.resolve(value)
+    actionModal = null
+  }
+
   function onSearchBlur() {
     setTimeout(() => {
       searchInputFocused = false
@@ -462,7 +533,14 @@
     const query = searchQuery.trim()
     if (!query || savingSearch) return
     const defaultName = query.length > 36 ? `${query.slice(0, 33)}...` : query
-    const name = window.prompt('Saved search name', defaultName)?.trim()
+    const name = String(
+      (await requestModal({
+        title: 'Save search',
+        inputLabel: 'Saved search name',
+        inputValue: defaultName,
+        confirmLabel: 'Save'
+      })) ?? ''
+    ).trim()
     if (!name) return
 
     savingSearch = true
@@ -474,6 +552,7 @@
       })
       if (!response.ok) throw new Error(await readErrorMessage(response, 'Failed to save search.'))
       await loadSavedSearches()
+      window.dispatchEvent(new CustomEvent('mail:saved-searches-changed'))
       showSavedSearchMenu = false
     } catch (error) {
       errorDialogMessage = errorMessageFromUnknown(error, 'Failed to save search.')
@@ -482,9 +561,39 @@
     }
   }
 
+  async function renameSavedSearch(savedSearch: SavedSearch) {
+    const name = String(
+      (await requestModal({
+        title: 'Rename saved search',
+        inputLabel: 'Name',
+        inputValue: savedSearch.name,
+        confirmLabel: 'Rename'
+      })) ?? ''
+    ).trim()
+    if (!name || name === savedSearch.name) return
+
+    try {
+      const response = await fetch(`/api/saved-searches/${savedSearch.id}`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name })
+      })
+      if (!response.ok)
+        throw new Error(await readErrorMessage(response, 'Failed to rename saved search.'))
+      await loadSavedSearches()
+      window.dispatchEvent(new CustomEvent('mail:saved-searches-changed'))
+    } catch (error) {
+      errorDialogMessage = errorMessageFromUnknown(error, 'Failed to rename saved search.')
+    }
+  }
+
   function selectSavedSearch(savedSearch: SavedSearch) {
     searchQuery = savedSearch.query
     showSavedSearchMenu = false
+    void goto(resolve(`/${mailbox}?q=${encodeURIComponent(savedSearch.query)}`), {
+      noScroll: true,
+      keepFocus: true
+    })
   }
 
   // Scroll focused row into view when keyboard.focusedIndex changes
@@ -574,6 +683,12 @@
     return label.split('<')[0]?.trim() || label
   }
 
+  function normalizedSender(from: string | null | undefined) {
+    if (!from) return ''
+    const angleAddress = from.match(/<([^<>]+)>/)?.[1]
+    return (angleAddress ?? from).trim().toLowerCase()
+  }
+
   function subjectLabel(subject: string | null | undefined) {
     if (!subject) return '(no subject)'
     return subject
@@ -581,6 +696,32 @@
 
   function previewLabel(preview: string | null | undefined) {
     return preview || 'No preview available.'
+  }
+
+  function defaultSnoozeInputValue() {
+    const date = new SvelteDate(Date.now() + 60 * 60 * 1000)
+    date.setMinutes(date.getMinutes() - date.getTimezoneOffset())
+    return date.toISOString().slice(0, 16)
+  }
+
+  async function promptForSnoozeDate() {
+    const value = await requestModal({
+      title: 'Snooze messages',
+      inputLabel: 'Snooze until',
+      inputValue: defaultSnoozeInputValue(),
+      inputType: 'datetime-local',
+      confirmLabel: 'Snooze'
+    })
+    if (value === null || typeof value === 'boolean') return null
+
+    const trimmed = value.trim()
+    const date = trimmed ? new Date(trimmed) : null
+    if (!date || Number.isNaN(date.getTime()) || date.getTime() <= Date.now()) {
+      errorDialogMessage = 'Choose a future date and time to snooze messages.'
+      return null
+    }
+
+    return date
   }
 
   function mailboxLabel(mailboxPath: string | undefined) {
@@ -597,6 +738,8 @@
     })
     if (threadedMode) params.set('threaded', '1')
     if (activeFilter === 'unread') params.set('unread', '1')
+    if (activeFilter === 'starred') params.set('starred', '1')
+    if (activeFilter === 'pinned') params.set('pinned', '1')
     return `/api/messages?${params}`
   }
 
@@ -639,7 +782,9 @@
     hasMore = seed.hasMore
     loadedCount = seed.messages.length
     totalCount = seed.total
+    cachedListSavedAt = null
     loadMoreError = null
+    void cacheCurrentList()
     restoreListScrollTop(scrollTop)
     logPerf('applyListSeed', {
       reason,
@@ -648,6 +793,42 @@
       rows: messages.length,
       threadedMode: untrack(() => threadedMode),
       ms: Math.round(now() - startedAt)
+    })
+  }
+
+  function applyOfflineList(cache: OfflineListCache, reason = 'offline-cache') {
+    const scrollTop = captureListScrollTop()
+    loadedMailbox = mailbox
+    lastKnownPageSize = cache.pageSize
+    isRefreshingList = false
+    messages = cache.messages
+    hasMore = cache.hasMore
+    loadedCount = cache.messages.length
+    totalCount = cache.total
+    cachedListSavedAt = cache.savedAt
+    loadMoreError = null
+    restoreListScrollTop(scrollTop)
+    logPerf('applyOfflineList', { reason, mailbox, rows: messages.length })
+  }
+
+  async function readCachedList(reason = 'offline-cache') {
+    if (!offlineUserKey || isSearchMode) return false
+    const cache = await readOfflineList(offlineUserKey, mailbox, threadedMode)
+    if (!cache) return false
+    applyOfflineList(cache, reason)
+    return true
+  }
+
+  async function cacheCurrentList() {
+    if (!offlineUserKey || isSearchMode || messages.length === 0) return
+    await saveOfflineList({
+      userKey: offlineUserKey,
+      mailbox,
+      messages: messages.slice(0, lastKnownPageSize),
+      hasMore,
+      pageSize: lastKnownPageSize,
+      total: totalCount,
+      threaded: threadedMode
     })
   }
 
@@ -676,11 +857,16 @@
       hasMore = payload.hasMore
       loadedCount = payload.messages.length
       totalCount = payload.total
+      cachedListSavedAt = null
       loadMoreError = null
+      void cacheCurrentList()
       restoreListScrollTop(scrollTop)
     } catch {
       if (requestId !== listRequestId) return
-      loadMoreError = 'Failed to refresh message list.'
+      const restored = await readCachedList('refresh-failed')
+      loadMoreError = restored
+        ? 'Showing cached messages because the network is unavailable.'
+        : 'Failed to refresh message list.'
     } finally {
       if (requestId === listRequestId) {
         isRefreshingList = false
@@ -719,6 +905,8 @@
       hasMore = payload.hasMore
       loadedCount = messages.length
       totalCount = payload.total
+      cachedListSavedAt = null
+      void cacheCurrentList()
     } catch (error) {
       loadMoreError = error instanceof Error ? error.message : 'Failed to load more messages.'
     } finally {
@@ -782,14 +970,161 @@
   function selectMessage(message: Message) {
     closeContextMenu()
     markMessageRowRead(message)
+    const targetMailbox = message.mailbox ? pathToSlug(message.mailbox) : mailbox
     if (threadedMode && message.threadId && (message.threadCount ?? 0) > 1) {
-      goto(resolve(`/${mailbox}/thread/${encodeThreadId(message.threadId)}`), {
+      goto(resolve(`/${targetMailbox}/thread/${encodeThreadId(message.threadId)}`), {
         noScroll: true,
         keepFocus: true
       })
     } else {
-      goto(resolve(`/${mailbox}/${message.id}`), { noScroll: true, keepFocus: true })
+      goto(resolve(`/${targetMailbox}/${message.id}`), { noScroll: true, keepFocus: true })
     }
+  }
+
+  function selectMessageFromRow(message: Message) {
+    if (mobileSwipeSuppressClickId === message.id) {
+      mobileSwipeSuppressClickId = null
+      return
+    }
+
+    selectMessage(message)
+  }
+
+  function isMobileSwipeEnabled(event: PointerEvent) {
+    return !isDesktop && !selectionMode && event.isPrimary && event.pointerType !== 'mouse'
+  }
+
+  function resetMobileSwipe() {
+    mobileSwipeMessageId = null
+    mobileSwipePointerId = null
+    mobileSwipeOffsetX = 0
+    mobileSwipeDragging = false
+  }
+
+  function clampMobileSwipeOffset(deltaX: number) {
+    return Math.max(-mobileSwipeMaxOffset, Math.min(mobileSwipeMaxOffset, deltaX))
+  }
+
+  function mobileSwipeActionFor(message: Message): MobileSwipeAction | null {
+    if (mobileSwipeOffsetX >= mobileSwipeActionThreshold) return 'archive'
+    if (mobileSwipeOffsetX <= -mobileSwipeTrashThreshold) return 'trash'
+    if (mobileSwipeOffsetX <= -mobileSwipeActionThreshold) {
+      return isUnread(message.flags, message.hasUnread) ? 'mark_read' : 'trash'
+    }
+
+    return null
+  }
+
+  function mobileSwipeBackgroundLabel(message: Message, side: 'left' | 'right') {
+    const action = mobileSwipeActionFor(message)
+    if (side === 'left') return action === 'archive' ? 'Release to archive' : 'Archive'
+    if (action === 'trash') return 'Release to trash'
+    if (action === 'mark_read') return 'Release to mark read'
+    return isUnread(message.flags, message.hasUnread) ? 'Mark read' : 'Trash'
+  }
+
+  function mobileSwipeRowStyle(message: Message) {
+    if (mobileSwipeMessageId !== message.id) return 'touch-action: pan-y;'
+
+    return `transform: translate3d(${mobileSwipeOffsetX}px, 0, 0); touch-action: pan-y;`
+  }
+
+  function mobileSwipeActionBackgroundClass(
+    message: Message,
+    side: 'left' | 'right',
+    baseClass: string
+  ) {
+    const active = mobileSwipeMessageId === message.id
+    const action = mobileSwipeActionFor(message)
+    const ready =
+      side === 'left' ? action === 'archive' : action === 'mark_read' || action === 'trash'
+    const actionClass =
+      side === 'left'
+        ? 'justify-start bg-emerald-500/16 text-emerald-100'
+        : action === 'trash'
+          ? 'justify-end bg-rose-500/16 text-rose-100'
+          : 'justify-end bg-sky-500/16 text-sky-100'
+
+    return [
+      baseClass,
+      actionClass,
+      !active ? 'opacity-0' : ready ? 'opacity-100' : 'opacity-70'
+    ].join(' ')
+  }
+
+  function handleMobileSwipePointerDown(event: PointerEvent, message: Message) {
+    if (!isMobileSwipeEnabled(event)) return
+
+    const row = event.currentTarget as HTMLElement
+    mobileSwipeMessageId = message.id
+    mobileSwipePointerId = event.pointerId
+    mobileSwipeStartX = event.clientX
+    mobileSwipeStartY = event.clientY
+    mobileSwipeOffsetX = 0
+    mobileSwipeDragging = false
+    row.setPointerCapture(event.pointerId)
+  }
+
+  function handleMobileSwipePointerMove(event: PointerEvent) {
+    if (mobileSwipePointerId !== event.pointerId || mobileSwipeMessageId === null) return
+
+    const deltaX = event.clientX - mobileSwipeStartX
+    const deltaY = event.clientY - mobileSwipeStartY
+
+    if (!mobileSwipeDragging) {
+      if (Math.abs(deltaY) > mobileSwipeActivationDistance && Math.abs(deltaY) > Math.abs(deltaX)) {
+        const row = event.currentTarget as HTMLElement
+        if (row.hasPointerCapture(event.pointerId)) {
+          row.releasePointerCapture(event.pointerId)
+        }
+        resetMobileSwipe()
+        return
+      }
+
+      if (Math.abs(deltaX) < mobileSwipeActivationDistance) return
+      if (Math.abs(deltaX) < Math.abs(deltaY) * 1.25) return
+
+      mobileSwipeDragging = true
+    }
+
+    event.preventDefault()
+    mobileSwipeOffsetX = clampMobileSwipeOffset(deltaX)
+  }
+
+  async function finishMobileSwipe(message: Message) {
+    const action = mobileSwipeActionFor(message)
+    if (mobileSwipeDragging) mobileSwipeSuppressClickId = message.id
+    resetMobileSwipe()
+
+    if (action === 'archive') {
+      await archiveMessage(message.id)
+    } else if (action === 'mark_read') {
+      await markMessageRead(message.id)
+    } else if (action === 'trash') {
+      await trashMessage(message.id)
+    }
+  }
+
+  function handleMobileSwipePointerUp(event: PointerEvent, message: Message) {
+    if (mobileSwipePointerId !== event.pointerId) return
+
+    const row = event.currentTarget as HTMLElement
+    if (row.hasPointerCapture(event.pointerId)) {
+      row.releasePointerCapture(event.pointerId)
+    }
+
+    void finishMobileSwipe(message)
+  }
+
+  function handleMobileSwipePointerCancel(event: PointerEvent) {
+    if (mobileSwipePointerId !== event.pointerId) return
+
+    const row = event.currentTarget as HTMLElement
+    if (row.hasPointerCapture(event.pointerId)) {
+      row.releasePointerCapture(event.pointerId)
+    }
+
+    resetMobileSwipe()
   }
 
   function showPreviousSimplifiedCard() {
@@ -1100,7 +1435,7 @@
     keyboard.focusedIndex = index
 
     const menuWidth = 208
-    const menuHeight = 224
+    const menuHeight = 288
     const padding = 12
     const nextX = Math.min(event.clientX, Math.max(padding, viewportWidth - menuWidth - padding))
     const nextY = Math.min(event.clientY, Math.max(padding, viewportHeight - menuHeight - padding))
@@ -1122,11 +1457,19 @@
       items.push({ action: 'spam', label: 'Move to spam' })
     }
 
+    if (normalizedSender(message.from)) {
+      if (role !== 'archive')
+        items.push({ action: 'archive_sender', label: 'Archive from sender…' })
+      if (role !== 'trash') items.push({ action: 'trash_sender', label: 'Trash from sender…' })
+    }
+
     if (isUnread(message.flags, message.hasUnread)) {
       items.push({ action: 'mark_read', label: 'Mark as read' })
     } else {
       items.push({ action: 'mark_unread', label: 'Mark as unread' })
     }
+
+    items.push({ action: 'snooze', label: 'Snooze...' })
 
     return items
   }
@@ -1140,15 +1483,70 @@
     )
   }
 
+  function updateThreadMetadataRows(threadId: string, values: Partial<Message>) {
+    const update = (message: Message) =>
+      message.threadId === threadId || message.messageId === threadId ? { ...message, ...values } : message
+    messages = messages.map(update)
+    searchResults = searchResults.map(update)
+  }
+
+  async function toggleThreadMetadata(
+    event: MouseEvent,
+    message: Message,
+    field: 'threadStarred' | 'threadPinned'
+  ) {
+    event.stopPropagation()
+    event.preventDefault()
+    const threadId = message.threadId ?? message.messageId
+    if (!threadId) return
+
+    const nextValue = !message[field]
+    updateThreadMetadataRows(threadId, { [field]: nextValue })
+
+    try {
+      const response = await fetch(`/api/threads/${encodeThreadId(threadId)}/metadata`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          mailbox: message.mailbox ?? mailbox,
+          [field === 'threadStarred' ? 'starred' : 'pinned']: nextValue
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, 'Failed to update thread metadata.'))
+      }
+
+      const payload = (await response.json()) as {
+        metadata: { starred: boolean; pinned: boolean }
+      }
+      updateThreadMetadataRows(threadId, {
+        threadStarred: payload.metadata.starred,
+        threadPinned: payload.metadata.pinned
+      })
+      notifyMailboxStateChanged('thread-metadata')
+    } catch (error) {
+      updateThreadMetadataRows(threadId, { [field]: !nextValue })
+      errorDialogMessage = errorMessageFromUnknown(error, 'Failed to update thread metadata.')
+    }
+  }
+
   async function bulkAction(action: string) {
     if (bulkActionPending || selectedIds.size === 0) return
+    const snoozedUntil = action === 'snooze' ? await promptForSnoozeDate() : null
+    if (action === 'snooze' && !snoozedUntil) return
+
     bulkActionPending = true
     try {
       await trackAppLoading(async () => {
         const response = await fetch('/api/messages/bulk', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ ids: [...selectedIds], action })
+          body: JSON.stringify({
+            ids: [...selectedIds],
+            action,
+            ...(snoozedUntil ? { snoozedUntil: snoozedUntil.toISOString() } : {})
+          })
         })
 
         if (!response.ok) {
@@ -1197,7 +1595,7 @@
     void refreshVisibleListWindow(seed ? 'route-threaded-reload' : 'detail-hydration-reload')
   })
 
-  let lastActiveFilter = $state<'all' | 'unread'>('all')
+  let lastActiveFilter = $state<'all' | 'unread' | 'starred' | 'pinned'>('all')
   $effect(() => {
     const filter = activeFilter
     if (filter === untrack(() => lastActiveFilter)) return
@@ -1230,6 +1628,16 @@
 
   onMount(() => {
     keyboard.panel = 'list'
+    online = navigator.onLine
+    const updateOnline = () => {
+      online = navigator.onLine
+      if (!online) void readCachedList('went-offline')
+    }
+    window.addEventListener('online', updateOnline)
+    window.addEventListener('offline', updateOnline)
+    void cacheCurrentList()
+    if (!online) void readCachedList('mount-offline')
+
     void loadSavedSearches()
 
     const intervalMs = refreshIntervalMs
@@ -1296,6 +1704,8 @@
     })
 
     return () => {
+      window.removeEventListener('online', updateOnline)
+      window.removeEventListener('offline', updateOnline)
       clearInterval(interval)
       teardown()
     }
@@ -1367,6 +1777,71 @@
     }
   }
 
+  async function bulkSenderAction(message: Message, action: 'archive' | 'trash') {
+    if (bulkSenderPending) return
+    closeContextMenu()
+
+    const sender = normalizedSender(message.from)
+    if (!sender) {
+      errorDialogMessage = 'This message does not have a sender to match.'
+      return
+    }
+
+    const scopedMailbox = message.mailbox ?? mailbox
+    bulkSenderPending = true
+
+    try {
+      await trackAppLoading(async () => {
+        const params = new SvelteURLSearchParams({ mailbox: scopedMailbox, sender, action })
+        const countResponse = await fetch(`/api/messages/by-sender?${params}`)
+        if (!countResponse.ok) {
+          throw new Error(await readErrorMessage(countResponse, 'Failed to count sender messages.'))
+        }
+
+        const countPayload = (await countResponse.json()) as {
+          count: number
+          mailbox: string
+          normalizedSender: string
+        }
+
+        if (countPayload.count === 0) return
+
+        const actionLabel = action === 'archive' ? 'archive' : 'move to trash'
+        const confirmed = await requestModal({
+          title: action === 'archive' ? 'Archive sender mail' : 'Trash sender mail',
+          message: `This will ${actionLabel} ${countPayload.count} message${countPayload.count === 1 ? '' : 's'} from ${countPayload.normalizedSender} in ${mailboxLabel(countPayload.mailbox)}.`,
+          confirmLabel: action === 'archive' ? 'Archive' : 'Move to trash',
+          tone: action === 'archive' ? 'default' : 'danger'
+        })
+        if (!confirmed) return
+
+        const actionResponse = await fetch('/api/messages/by-sender', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            mailbox: countPayload.mailbox,
+            sender: countPayload.normalizedSender,
+            action,
+            expectedCount: countPayload.count
+          })
+        })
+
+        if (!actionResponse.ok) {
+          throw new Error(
+            await readErrorMessage(actionResponse, `Failed to ${actionLabel} sender mail.`)
+          )
+        }
+
+        await refreshVisibleListWindow(`bulk-sender:${action}`)
+        notifyMailboxStateChanged(`bulk-sender:${action}`)
+      })
+    } catch (error) {
+      errorDialogMessage = errorMessageFromUnknown(error, `Failed to ${action} sender mail.`)
+    } finally {
+      bulkSenderPending = false
+    }
+  }
+
   async function markMessageRead(id: number) {
     closeContextMenu()
     updateMessageFlags(id, (flags) => (flags.includes('\\Seen') ? flags : [...flags, '\\Seen']))
@@ -1431,7 +1906,47 @@
       return
     }
 
+    if (action === 'snooze') {
+      await snoozeMessage(message.id)
+      return
+    }
+
+    if (action === 'archive_sender') {
+      await bulkSenderAction(message, 'archive')
+      return
+    }
+
+    if (action === 'trash_sender') {
+      await bulkSenderAction(message, 'trash')
+      return
+    }
+
     await moveMessageAction(message.id, action)
+  }
+
+  async function snoozeMessage(id: number) {
+    closeContextMenu()
+    const snoozedUntil = await promptForSnoozeDate()
+    if (!snoozedUntil) return
+
+    try {
+      await trackAppLoading(async () => {
+        const response = await fetch(`/api/messages/${id}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'snooze', snoozedUntil: snoozedUntil.toISOString() })
+        })
+
+        if (!response.ok) {
+          throw new Error(await readErrorMessage(response, 'Failed to snooze message.'))
+        }
+
+        await refreshVisibleListWindow('message-action:snooze')
+        notifyMailboxStateChanged('message-action:snooze')
+      })
+    } catch (error) {
+      errorDialogMessage = errorMessageFromUnknown(error, 'Failed to snooze message.')
+    }
   }
 
   $effect(() => {
@@ -1558,12 +2073,37 @@
 
   const selectedMessageRowClass = 'bg-white/14 shadow-[inset_3px_0_0_rgba(56,189,248,0.95)]'
   const focusedMessageRowClass = 'bg-white/10 shadow-[inset_3px_0_0_rgba(255,255,255,0.25)]'
+  const listHeaderClass = $derived(
+    density === 'condensed'
+      ? 'p-3 sm:p-4 md:border-b md:border-white/8'
+      : 'p-4 sm:p-5 md:border-b md:border-white/8'
+  )
+  const listSearchInputClass = $derived(
+    density === 'condensed'
+      ? 'w-full rounded-l-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none placeholder:text-zinc-500 focus:border-blue-500 md:border-white/10'
+      : 'w-full rounded-l-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none placeholder:text-zinc-500 focus:border-blue-500 md:border-white/10'
+  )
+  const listContainerClass = $derived(
+    density === 'condensed'
+      ? 'space-y-1 p-1 md:space-y-0 md:p-0'
+      : 'space-y-2 p-2 md:space-y-0 md:p-0'
+  )
+  const rowBaseClass = $derived(
+    density === 'condensed'
+      ? 'relative z-10 block w-full rounded-xl bg-white/2 py-2.5 pr-20 pl-8 text-left transition-[transform,background-color,box-shadow] sm:pl-9 md:rounded-none md:border-b md:border-white/8 md:bg-transparent'
+      : 'relative z-10 block w-full rounded-2xl bg-white/2 py-4 pr-20 pl-9 text-left transition-[transform,background-color,box-shadow] sm:pl-10 md:rounded-none md:border-b md:border-white/8 md:bg-transparent'
+  )
+  const previewClass = $derived(
+    density === 'condensed'
+      ? 'mt-1.5 line-clamp-1 text-xs leading-5 text-zinc-400'
+      : 'mt-3 line-clamp-2 text-sm leading-6 text-zinc-400'
+  )
 
   function messageRowClass(message: Message, index: number) {
     const isFocused = focusedIndex === index && !isSearchMode
     const isSelected = selectedMessageId === message.id
     return [
-      'block w-full rounded-2xl bg-white/2 py-4 pr-4 pl-9 text-left transition sm:pr-5 sm:pl-10 md:rounded-none md:border-b md:border-white/8 md:bg-transparent',
+      rowBaseClass,
       isSelected ? selectedMessageRowClass : isFocused ? focusedMessageRowClass : 'hover:bg-white/3'
     ].join(' ')
   }
@@ -1622,11 +2162,19 @@
 
 {#if showSimplifiedMailboxView}
   <section class="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-[#0d0d10]">
-    <div class="p-4 sm:p-5 md:border-b md:border-white/8">
+    <div class={listHeaderClass}>
       <div class="flex items-start justify-between gap-4">
         <div class="min-w-0">
           <p class="truncate text-sm font-semibold text-white sm:text-base">{folderDisplayName}</p>
           <p class="mt-1 text-xs text-zinc-500 sm:text-sm">{totalCountLabel}</p>
+          {#if !online}
+            <p
+              class="mt-2 inline-flex items-center gap-1.5 rounded-full border border-amber-400/15 bg-amber-400/8 px-2.5 py-1 text-xs text-amber-200"
+            >
+              <WifiOff size={12} />
+              Offline
+            </p>
+          {/if}
         </div>
 
         <div class="flex justify-end overflow-x-auto">
@@ -1683,12 +2231,12 @@
               <Sparkles size={15} />
             </button>
             <div
-              class="shrink-0 rounded-xl border border-transparent bg-white/3 p-1 text-xs md:border-white/8 md:text-sm"
+              class="inline-flex shrink-0 items-center rounded-xl border border-transparent bg-white/3 p-1 text-xs md:border-white/8 md:text-sm"
             >
               <button
                 type="button"
                 class={[
-                  'rounded-lg px-2.5 py-1.5 transition sm:px-3',
+                  'inline-flex items-center justify-center rounded-lg px-2.5 py-1.5 transition sm:px-3',
                   activeFilter === 'all' ? 'bg-white/8 text-white' : 'text-zinc-400'
                 ]}
                 onclick={() => (activeFilter = 'all')}
@@ -1699,12 +2247,32 @@
               <button
                 type="button"
                 class={[
-                  'rounded-lg px-2.5 py-1.5 transition sm:px-3',
+                  'inline-flex items-center justify-center rounded-lg px-2.5 py-1.5 transition sm:px-3',
                   activeFilter === 'unread' ? 'bg-white/8 text-white' : 'text-zinc-400'
                 ]}
                 onclick={() => (activeFilter = 'unread')}
               >
                 Unread
+              </button>
+              <button
+                type="button"
+                class={[
+                  'inline-flex items-center justify-center rounded-lg px-2.5 py-1.5 transition sm:px-3',
+                  activeFilter === 'starred' ? 'bg-white/8 text-white' : 'text-zinc-400'
+                ]}
+                onclick={() => (activeFilter = 'starred')}
+              >
+                <Star size={14} fill={activeFilter === 'starred' ? 'currentColor' : 'none'} />
+              </button>
+              <button
+                type="button"
+                class={[
+                  'inline-flex items-center justify-center rounded-lg px-2.5 py-1.5 transition sm:px-3',
+                  activeFilter === 'pinned' ? 'bg-white/8 text-white' : 'text-zinc-400'
+                ]}
+                onclick={() => (activeFilter = 'pinned')}
+              >
+                <Pin size={14} fill={activeFilter === 'pinned' ? 'currentColor' : 'none'} />
               </button>
             </div>
           </div>
@@ -1725,7 +2293,7 @@
               placeholder="Search"
               onfocus={onSearchFocus}
               onblur={onSearchBlur}
-              class="w-full rounded-l-xl border border-transparent bg-black/20 px-4 py-3 text-sm text-white outline-none placeholder:text-zinc-500 focus:border-white/8 md:border-white/8"
+              class={listSearchInputClass}
             />
           </label>
           <button
@@ -1746,17 +2314,26 @@
               </div>
               {#if savedSearches.length > 0}
                 {#each savedSearches as savedSearch (savedSearch.id)}
-                  <button
-                    type="button"
-                    onclick={() => selectSavedSearch(savedSearch)}
-                    class="block w-full px-3 py-2 text-left hover:bg-white/6"
-                    title={savedSearch.query}
-                  >
-                    <span class="block truncate text-sm font-medium text-zinc-200">
-                      {savedSearch.name}
-                    </span>
-                    <span class="block truncate text-xs text-zinc-500">{savedSearch.query}</span>
-                  </button>
+                  <div class="flex items-start gap-1 px-1 py-1 hover:bg-white/6">
+                    <button
+                      type="button"
+                      onclick={() => selectSavedSearch(savedSearch)}
+                      class="min-w-0 flex-1 rounded-lg px-2 py-1 text-left"
+                      title={savedSearch.query}
+                    >
+                      <span class="block truncate text-sm font-medium text-zinc-200">
+                        {savedSearch.name}
+                      </span>
+                      <span class="block truncate text-xs text-zinc-500">{savedSearch.query}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onclick={() => void renameSavedSearch(savedSearch)}
+                      class="rounded-lg px-2 py-1 text-xs text-zinc-500 hover:bg-white/8 hover:text-zinc-200"
+                    >
+                      Rename
+                    </button>
+                  </div>
                 {/each}
               {:else}
                 <p class="px-3 py-3 text-sm text-zinc-500">No saved searches yet.</p>
@@ -1940,6 +2517,15 @@
                             Thread
                           </span>
                         {/if}
+                        {#if message.hasThreadNote}
+                          <span
+                            class="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-400/10 px-2 py-0.5 text-xs font-medium text-amber-200"
+                            title="Private note"
+                          >
+                            <StickyNote size={12} />
+                            Note
+                          </span>
+                        {/if}
                       </div>
 
                       <h2
@@ -2027,13 +2613,21 @@
       ]}
       aria-label="Message list"
     >
-      <div class="p-4 sm:p-5 md:border-b md:border-white/8">
+      <div class={listHeaderClass}>
         <div class="flex items-start justify-between gap-4">
           <div class="min-w-0">
             <p class="truncate text-sm font-semibold text-white sm:text-base">
               {folderDisplayName}
             </p>
             <p class="mt-1 text-xs text-zinc-500 sm:text-sm">{totalCountLabel}</p>
+            {#if !online}
+              <p
+                class="mt-2 inline-flex items-center gap-1.5 rounded-full border border-amber-400/15 bg-amber-400/8 px-2.5 py-1 text-xs text-amber-200"
+              >
+                <WifiOff size={12} />
+                Offline
+              </p>
+            {/if}
           </div>
 
           <div class="flex justify-end overflow-x-auto">
@@ -2092,12 +2686,12 @@
                 <Sparkles size={15} />
               </button>
               <div
-                class="shrink-0 rounded-xl border border-transparent bg-white/3 p-1 text-xs md:border-white/8 md:text-sm"
+                class="inline-flex shrink-0 items-center rounded-xl border border-transparent bg-white/3 p-1 text-xs md:border-white/8 md:text-sm"
               >
                 <button
                   type="button"
                   class={[
-                    'rounded-lg px-2.5 py-1.5 transition sm:px-3',
+                    'inline-flex items-center justify-center rounded-lg px-2.5 py-1.5 transition sm:px-3',
                     activeFilter === 'all' ? 'bg-white/8 text-white' : 'text-zinc-400'
                   ]}
                   onclick={() => (activeFilter = 'all')}
@@ -2108,12 +2702,32 @@
                 <button
                   type="button"
                   class={[
-                    'rounded-lg px-2.5 py-1.5 transition sm:px-3',
+                    'inline-flex items-center justify-center rounded-lg px-2.5 py-1.5 transition sm:px-3',
                     activeFilter === 'unread' ? 'bg-white/8 text-white' : 'text-zinc-400'
                   ]}
                   onclick={() => (activeFilter = 'unread')}
                 >
                   Unread
+                </button>
+                <button
+                  type="button"
+                  class={[
+                    'inline-flex items-center justify-center rounded-lg px-2.5 py-1.5 transition sm:px-3',
+                    activeFilter === 'starred' ? 'bg-white/8 text-white' : 'text-zinc-400'
+                  ]}
+                  onclick={() => (activeFilter = 'starred')}
+                >
+                  <Star size={14} fill={activeFilter === 'starred' ? 'currentColor' : 'none'} />
+                </button>
+                <button
+                  type="button"
+                  class={[
+                    'inline-flex items-center justify-center rounded-lg px-2.5 py-1.5 transition sm:px-3',
+                    activeFilter === 'pinned' ? 'bg-white/8 text-white' : 'text-zinc-400'
+                  ]}
+                  onclick={() => (activeFilter = 'pinned')}
+                >
+                  <Pin size={14} fill={activeFilter === 'pinned' ? 'currentColor' : 'none'} />
                 </button>
               </div>
             </div>
@@ -2130,7 +2744,7 @@
                 placeholder="Search"
                 onfocus={onSearchFocus}
                 onblur={onSearchBlur}
-                class="w-full rounded-l-xl border border-transparent bg-black/20 px-4 py-3 text-sm text-white outline-none placeholder:text-zinc-500 focus:border-white/8 md:border-white/8"
+                class={listSearchInputClass}
               />
             </label>
             <button
@@ -2151,17 +2765,26 @@
                 </div>
                 {#if savedSearches.length > 0}
                   {#each savedSearches as savedSearch (savedSearch.id)}
-                    <button
-                      type="button"
-                      onclick={() => selectSavedSearch(savedSearch)}
-                      class="block w-full px-3 py-2 text-left hover:bg-white/6"
-                      title={savedSearch.query}
-                    >
-                      <span class="block truncate text-sm font-medium text-zinc-200">
-                        {savedSearch.name}
-                      </span>
-                      <span class="block truncate text-xs text-zinc-500">{savedSearch.query}</span>
-                    </button>
+                    <div class="flex items-start gap-1 px-1 py-1 hover:bg-white/6">
+                      <button
+                        type="button"
+                        onclick={() => selectSavedSearch(savedSearch)}
+                        class="min-w-0 flex-1 rounded-lg px-2 py-1 text-left"
+                        title={savedSearch.query}
+                      >
+                        <span class="block truncate text-sm font-medium text-zinc-200">
+                          {savedSearch.name}
+                        </span>
+                        <span class="block truncate text-xs text-zinc-500">{savedSearch.query}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onclick={() => void renameSavedSearch(savedSearch)}
+                        class="rounded-lg px-2 py-1 text-xs text-zinc-500 hover:bg-white/8 hover:text-zinc-200"
+                      >
+                        Rename
+                      </button>
+                    </div>
                   {/each}
                 {:else}
                   <p class="px-3 py-3 text-sm text-zinc-500">No saved searches yet.</p>
@@ -2292,6 +2915,15 @@
             </button>
             <button
               type="button"
+              title="Snooze"
+              onclick={() => void bulkAction('snooze')}
+              disabled={bulkActionPending}
+              class="flex items-center gap-1 rounded px-2 py-1 text-xs text-zinc-300 hover:bg-white/8 disabled:opacity-50"
+            >
+              <Clock size={13} /> Snooze
+            </button>
+            <button
+              type="button"
               title="Mark read"
               onclick={() => void bulkAction('mark_read')}
               disabled={bulkActionPending}
@@ -2332,9 +2964,36 @@
               <p class="mt-2 text-sm text-zinc-500">No messages matched your search.</p>
             </div>
           {:else}
-            <div class="space-y-2 p-2 md:space-y-0 md:p-0">
+            <div class={listContainerClass}>
               {#each searchResults as message, index (message.id)}
-                <div class="group relative" use:registerRow={{ id: message.id, map: rowEls }}>
+                <div
+                  class="group relative overflow-hidden rounded-2xl md:rounded-none"
+                  use:registerRow={{ id: message.id, map: rowEls }}
+                >
+                  <div
+                    class={mobileSwipeActionBackgroundClass(
+                      message,
+                      'left',
+                      'pointer-events-none absolute inset-y-0 right-1/2 left-0 flex items-center gap-2 px-5 text-xs font-semibold transition-opacity md:hidden'
+                    )}
+                  >
+                    <Archive size={15} />
+                    {mobileSwipeBackgroundLabel(message, 'left')}
+                  </div>
+                  <div
+                    class={mobileSwipeActionBackgroundClass(
+                      message,
+                      'right',
+                      'pointer-events-none absolute inset-y-0 right-0 left-1/2 flex items-center gap-2 px-5 text-xs font-semibold transition-opacity md:hidden'
+                    )}
+                  >
+                    {mobileSwipeBackgroundLabel(message, 'right')}
+                    {#if mobileSwipeActionFor(message) === 'trash'}
+                      <Trash2 size={15} />
+                    {:else}
+                      <MailOpen size={15} />
+                    {/if}
+                  </div>
                   <!-- Checkbox -->
                   <button
                     type="button"
@@ -2344,7 +3003,7 @@
                       toggleSelection(message.id, index, e.shiftKey)
                     }}
                     class={[
-                      'absolute top-1/2 left-2 z-10 -translate-y-1/2 transition',
+                      'absolute top-1/2 left-2 z-20 -translate-y-1/2 transition',
                       selectionMode ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
                     ].join(' ')}
                   >
@@ -2354,16 +3013,50 @@
                       <Square size={16} class="text-zinc-600" />
                     {/if}
                   </button>
+                  <div class="absolute top-3 right-3 z-30 flex items-center gap-1">
+                    <button
+                      type="button"
+                      aria-label={message.threadStarred ? 'Unstar thread' : 'Star thread'}
+                      title={message.threadStarred ? 'Unstar thread' : 'Star thread'}
+                      onclick={(event) =>
+                        void toggleThreadMetadata(event, message, 'threadStarred')}
+                      class={[
+                        'rounded-md p-1 transition hover:bg-white/8',
+                        message.threadStarred
+                          ? 'text-amber-300'
+                          : 'text-zinc-600 hover:text-zinc-300'
+                      ]}
+                    >
+                      <Star size={14} fill={message.threadStarred ? 'currentColor' : 'none'} />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={message.threadPinned ? 'Unpin thread' : 'Pin thread'}
+                      title={message.threadPinned ? 'Unpin thread' : 'Pin thread'}
+                      onclick={(event) => void toggleThreadMetadata(event, message, 'threadPinned')}
+                      class={[
+                        'rounded-md p-1 transition hover:bg-white/8',
+                        message.threadPinned ? 'text-sky-300' : 'text-zinc-600 hover:text-zinc-300'
+                      ]}
+                    >
+                      <Pin size={14} fill={message.threadPinned ? 'currentColor' : 'none'} />
+                    </button>
+                  </div>
                   <button
                     type="button"
                     class={[
-                      'block w-full rounded-2xl bg-white/2 py-4 pr-4 pl-9 text-left transition sm:pr-5 sm:pl-10 md:rounded-none md:border-b md:border-white/8 md:bg-transparent',
+                      rowBaseClass,
                       selectedMessageId === message.id
                         ? selectedMessageRowClass
                         : 'hover:bg-white/3'
                     ].join(' ')}
-                    onclick={() => selectMessage(message)}
+                    style={mobileSwipeRowStyle(message)}
+                    onclick={() => selectMessageFromRow(message)}
                     oncontextmenu={(event) => openContextMenu(event, message, index)}
+                    onpointerdown={(event) => handleMobileSwipePointerDown(event, message)}
+                    onpointermove={handleMobileSwipePointerMove}
+                    onpointerup={(event) => handleMobileSwipePointerUp(event, message)}
+                    onpointercancel={handleMobileSwipePointerCancel}
                   >
                     <div class="flex items-start justify-between gap-3">
                       <div class="min-w-0 flex-1">
@@ -2380,6 +3073,15 @@
                           </p>
                           {#if isUnread(message.flags, message.hasUnread)}
                             <span class="h-2 w-2 rounded-full bg-sky-400"></span>
+                          {/if}
+                          {#if message.hasThreadNote}
+                            <span
+                              class="inline-flex shrink-0 items-center gap-1 rounded-md border border-amber-300/20 bg-amber-400/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-200"
+                              title="Private note"
+                              aria-label="Thread has a private note"
+                            >
+                              <StickyNote size={11} />
+                            </span>
                           {/if}
                         </div>
 
@@ -2401,7 +3103,7 @@
                     </div>
 
                     {#if !compactModeEnabled}
-                      <p class="mt-3 line-clamp-2 text-sm leading-6 text-zinc-400">
+                      <p class={previewClass}>
                         {previewLabel(message.preview)}
                       </p>
                     {/if}
@@ -2425,9 +3127,36 @@
             {/each}
           </div>
         {:else}
-          <div class="space-y-2 p-2 md:space-y-0 md:p-0">
+          <div class={listContainerClass}>
             {#each visibleMessages as message, index (message.id)}
-              <div class="group relative" use:registerRow={{ id: message.id, map: rowEls }}>
+              <div
+                class="group relative overflow-hidden rounded-2xl md:rounded-none"
+                use:registerRow={{ id: message.id, map: rowEls }}
+              >
+                <div
+                  class={mobileSwipeActionBackgroundClass(
+                    message,
+                    'left',
+                    'pointer-events-none absolute inset-y-0 right-1/2 left-0 flex items-center gap-2 px-5 text-xs font-semibold transition-opacity md:hidden'
+                  )}
+                >
+                  <Archive size={15} />
+                  {mobileSwipeBackgroundLabel(message, 'left')}
+                </div>
+                <div
+                  class={mobileSwipeActionBackgroundClass(
+                    message,
+                    'right',
+                    'pointer-events-none absolute inset-y-0 right-0 left-1/2 flex items-center gap-2 px-5 text-xs font-semibold transition-opacity md:hidden'
+                  )}
+                >
+                  {mobileSwipeBackgroundLabel(message, 'right')}
+                  {#if mobileSwipeActionFor(message) === 'trash'}
+                    <Trash2 size={15} />
+                  {:else}
+                    <MailOpen size={15} />
+                  {/if}
+                </div>
                 <!-- Checkbox -->
                 <button
                   type="button"
@@ -2437,7 +3166,7 @@
                     toggleSelection(message.id, index, e.shiftKey)
                   }}
                   class={[
-                    'absolute top-1/2 left-2 z-10 -translate-y-1/2 transition',
+                    'absolute top-1/2 left-2 z-20 -translate-y-1/2 transition',
                     selectionMode ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
                   ].join(' ')}
                 >
@@ -2447,11 +3176,42 @@
                     <Square size={16} class="text-zinc-600" />
                   {/if}
                 </button>
+                <div class="absolute top-3 right-3 z-30 flex items-center gap-1">
+                  <button
+                    type="button"
+                    aria-label={message.threadStarred ? 'Unstar thread' : 'Star thread'}
+                    title={message.threadStarred ? 'Unstar thread' : 'Star thread'}
+                    onclick={(event) => void toggleThreadMetadata(event, message, 'threadStarred')}
+                    class={[
+                      'rounded-md p-1 transition hover:bg-white/8',
+                      message.threadStarred ? 'text-amber-300' : 'text-zinc-600 hover:text-zinc-300'
+                    ]}
+                  >
+                    <Star size={14} fill={message.threadStarred ? 'currentColor' : 'none'} />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={message.threadPinned ? 'Unpin thread' : 'Pin thread'}
+                    title={message.threadPinned ? 'Unpin thread' : 'Pin thread'}
+                    onclick={(event) => void toggleThreadMetadata(event, message, 'threadPinned')}
+                    class={[
+                      'rounded-md p-1 transition hover:bg-white/8',
+                      message.threadPinned ? 'text-sky-300' : 'text-zinc-600 hover:text-zinc-300'
+                    ]}
+                  >
+                    <Pin size={14} fill={message.threadPinned ? 'currentColor' : 'none'} />
+                  </button>
+                </div>
                 <button
                   type="button"
                   class={messageRowClass(message, index)}
-                  onclick={() => selectMessage(message)}
+                  style={mobileSwipeRowStyle(message)}
+                  onclick={() => selectMessageFromRow(message)}
                   oncontextmenu={(event) => openContextMenu(event, message, index)}
+                  onpointerdown={(event) => handleMobileSwipePointerDown(event, message)}
+                  onpointermove={handleMobileSwipePointerMove}
+                  onpointerup={(event) => handleMobileSwipePointerUp(event, message)}
+                  onpointercancel={handleMobileSwipePointerCancel}
                 >
                   <div class="flex items-start justify-between gap-3">
                     <div class="min-w-0 flex-1">
@@ -2479,6 +3239,15 @@
                             {message.threadCount}
                           </span>
                         {/if}
+                        {#if message.hasThreadNote}
+                          <span
+                            class="inline-flex shrink-0 items-center gap-1 rounded-md border border-amber-300/20 bg-amber-400/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-200"
+                            title="Private note"
+                            aria-label="Thread has a private note"
+                          >
+                            <StickyNote size={11} />
+                          </span>
+                        {/if}
                       </div>
 
                       <p class="mt-1 truncate text-sm font-medium text-zinc-200">
@@ -2492,7 +3261,7 @@
                   </div>
 
                   {#if !compactModeEnabled}
-                    <p class="mt-3 line-clamp-2 text-sm leading-6 text-zinc-400">
+                    <p class={previewClass}>
                       {previewLabel(message.preview)}
                     </p>
                   {/if}
@@ -2589,3 +3358,18 @@
   title="Mailbox error"
   onclose={() => (errorDialogMessage = null)}
 />
+
+{#if actionModal}
+  <ActionModal
+    title={actionModal.title}
+    message={actionModal.message}
+    confirmLabel={actionModal.confirmLabel}
+    cancelLabel={actionModal.cancelLabel}
+    tone={actionModal.tone}
+    inputLabel={actionModal.inputLabel}
+    inputValue={actionModal.inputValue}
+    inputType={actionModal.inputType}
+    onconfirm={(value) => closeActionModal(value ?? true)}
+    oncancel={() => closeActionModal(null)}
+  />
+{/if}
