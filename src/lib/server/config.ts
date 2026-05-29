@@ -4,15 +4,29 @@
  */
 import { env } from '$env/dynamic/private'
 import { db } from './db'
-import { mailConfig } from './db/schema'
-import { eq } from 'drizzle-orm'
+import { mailConfig, mailSignature } from './db/schema'
+import { asc, desc, eq } from 'drizzle-orm'
 import {
   getDemoDisplayConfig,
   getDemoImapConfig,
   getDemoOidcConfig,
+  getDemoSignatureProfiles,
   getDemoSmtpConfig,
   isDemoModeEnabled
 } from './demo'
+import {
+  decryptSecret,
+  encryptSecret,
+  getSecretStorageStatus,
+  isEncryptedSecret,
+  isSecretEncryptionConfigured
+} from './secrets'
+import {
+  DEFAULT_QUIET_HOURS,
+  normalizeQuietHoursTime,
+  normalizeQuietHoursTimezone,
+  type QuietHoursConfig
+} from './quiet-hours'
 
 export type ImapConfig = {
   host: string
@@ -40,6 +54,7 @@ export type OidcConfig = {
 }
 
 export type MailConfigRow = typeof mailConfig.$inferSelect
+export type MailSignatureRow = typeof mailSignature.$inferSelect
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
   if (value == null || value === '') return fallback
@@ -51,10 +66,32 @@ function parseNumber(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
 
+function parseUndoSendSeconds(value: unknown): number {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return 0
+  return Math.min(30, Math.max(0, Math.floor(parsed)))
+}
+
 let cachedRow: MailConfigRow | null | undefined = undefined // undefined = not loaded yet
 
 async function loadConfigRow(): Promise<MailConfigRow | null> {
   const [row] = await db.select().from(mailConfig).where(eq(mailConfig.id, 1)).limit(1)
+  if (row && isSecretEncryptionConfigured()) {
+    const updates: Partial<MailConfigRow> = {}
+    if (row.imapPassword && !isEncryptedSecret(row.imapPassword)) {
+      updates.imapPassword = encryptSecret(row.imapPassword)
+    }
+    if (row.smtpPassword && !isEncryptedSecret(row.smtpPassword)) {
+      updates.smtpPassword = encryptSecret(row.smtpPassword)
+    }
+
+    if (Object.keys(updates).length > 0) {
+      await db.update(mailConfig).set(updates).where(eq(mailConfig.id, 1))
+      cachedRow = { ...row, ...updates }
+      return cachedRow
+    }
+  }
+
   cachedRow = row ?? null
   return cachedRow ?? null
 }
@@ -76,7 +113,7 @@ export async function getImapConfig(): Promise<ImapConfig | { missing: string[] 
 
   const host = row?.imapHost || env.IMAP_HOST || ''
   const user = row?.imapUser || env.IMAP_USER || ''
-  const password = row?.imapPassword || env.IMAP_PASSWORD || ''
+  const password = row?.imapPassword ? decryptSecret(row.imapPassword) : env.IMAP_PASSWORD || ''
 
   const missing: string[] = []
   if (!host) missing.push('IMAP Host')
@@ -104,7 +141,7 @@ export async function getSmtpConfig(): Promise<SmtpConfig | { missing: string[] 
 
   const host = row?.smtpHost || env.SMTP_HOST || ''
   const user = row?.smtpUser || env.SMTP_USER || ''
-  const password = row?.smtpPassword || env.SMTP_PASSWORD || ''
+  const password = row?.smtpPassword ? decryptSecret(row.smtpPassword) : env.SMTP_PASSWORD || ''
 
   const missing: string[] = []
   if (!host) missing.push('SMTP Host')
@@ -125,6 +162,12 @@ export async function getSmtpConfig(): Promise<SmtpConfig | { missing: string[] 
   }
 }
 
+export async function getUndoSendSeconds(): Promise<number> {
+  if (isDemoModeEnabled()) return getDemoDisplayConfig().smtp.undoSendSeconds
+  const row = await getRow()
+  return parseUndoSendSeconds(row?.smtpUndoSendSeconds ?? env.SMTP_UNDO_SEND_SECONDS ?? 0)
+}
+
 export async function getOidcConfig(): Promise<OidcConfig> {
   if (isDemoModeEnabled()) return getDemoOidcConfig()
   const row = await getRow()
@@ -143,16 +186,41 @@ export async function isOidcConfigured(): Promise<boolean> {
 
 export async function getSignature(): Promise<string> {
   if (isDemoModeEnabled()) return getDemoDisplayConfig().signature
+  const [profile] = await db
+    .select()
+    .from(mailSignature)
+    .orderBy(desc(mailSignature.isDefault), asc(mailSignature.id))
+    .limit(1)
+  if (profile) return profile.html
   const row = await getRow()
   return row?.signature ?? ''
+}
+
+export async function getSignatureProfiles(): Promise<MailSignatureRow[]> {
+  if (isDemoModeEnabled()) return getDemoSignatureProfiles()
+  return db.select().from(mailSignature).orderBy(asc(mailSignature.id))
+}
+
+export async function getQuietHoursConfig(): Promise<QuietHoursConfig> {
+  if (isDemoModeEnabled()) return getDemoDisplayConfig().quietHours
+  const row = await getRow()
+  return {
+    enabled: row?.quietHoursEnabled ?? DEFAULT_QUIET_HOURS.enabled,
+    start: normalizeQuietHoursTime(row?.quietHoursStart, DEFAULT_QUIET_HOURS.start),
+    end: normalizeQuietHoursTime(row?.quietHoursEnd, DEFAULT_QUIET_HOURS.end),
+    timezone: normalizeQuietHoursTimezone(row?.quietHoursTimezone, DEFAULT_QUIET_HOURS.timezone)
+  }
 }
 
 /** Returns the effective values shown in the settings UI (masks password). */
 export async function getDisplayConfig() {
   if (isDemoModeEnabled()) return getDemoDisplayConfig()
   const row = await getRow()
+  const signatureProfiles = await getSignatureProfiles()
+  const quietHours = await getQuietHoursConfig()
   return {
     signature: row?.signature ?? '',
+    signatureProfiles,
     imap: {
       host: row?.imapHost ?? env.IMAP_HOST ?? '',
       port: row?.imapPort ?? parseNumber(env.IMAP_PORT, 993),
@@ -171,6 +239,9 @@ export async function getDisplayConfig() {
       user: row?.smtpUser ?? env.SMTP_USER ?? '',
       password: row?.smtpPassword ? '••••••••' : env.SMTP_PASSWORD ? '••••••••' : '',
       from: row?.smtpFrom ?? env.SMTP_FROM ?? '',
+      undoSendSeconds: parseUndoSendSeconds(
+        row?.smtpUndoSendSeconds ?? env.SMTP_UNDO_SEND_SECONDS ?? 0
+      ),
       source: row?.smtpHost ? 'db' : 'env'
     },
     oidc: {
@@ -178,6 +249,8 @@ export async function getDisplayConfig() {
       clientId: row?.oidcClientId ?? env.OIDC_CLIENT_ID ?? '',
       clientSecret: row?.oidcClientSecret ? '••••••••' : env.OIDC_CLIENT_SECRET ? '••••••••' : '',
       source: row?.oidcDiscoveryUrl || row?.oidcClientId ? 'db' : 'env'
-    }
+    },
+    secretStorage: getSecretStorageStatus(),
+    quietHours
   }
 }

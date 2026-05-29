@@ -4,6 +4,7 @@ import {
   integer,
   boolean,
   timestamp,
+  jsonb,
   index,
   uniqueIndex,
   serial,
@@ -31,6 +32,7 @@ export const mailConfig = pgTable('mail_config', {
   smtpUser: text('smtp_user'),
   smtpPassword: text('smtp_password'),
   smtpFrom: text('smtp_from'),
+  smtpUndoSendSeconds: integer('smtp_undo_send_seconds').notNull().default(0),
   oidcDiscoveryUrl: text('oidc_discovery_url'),
   oidcClientId: text('oidc_client_id'),
   oidcClientSecret: text('oidc_client_secret'),
@@ -38,7 +40,23 @@ export const mailConfig = pgTable('mail_config', {
   vapidPublicKey: text('vapid_public_key'),
   vapidPrivateKey: text('vapid_private_key'),
   vapidSubject: text('vapid_subject'),
+  quietHoursEnabled: boolean('quiet_hours_enabled'),
+  quietHoursStart: text('quiet_hours_start'),
+  quietHoursEnd: text('quiet_hours_end'),
+  quietHoursTimezone: text('quiet_hours_timezone'),
   updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' })
+})
+
+export const mailSignature = pgTable('mail_signature', {
+  id: serial('id').primaryKey(),
+  name: text('name').notNull(),
+  html: text('html').notNull().default(''),
+  isDefault: boolean('is_default').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' })
+    .defaultNow()
+    .$onUpdate(() => /* @__PURE__ */ new Date())
+    .notNull()
 })
 
 export const mailboxSync = pgTable('mailbox_sync', {
@@ -147,6 +165,7 @@ export const mailMessageMailbox = pgTable(
     uid: integer('uid').notNull(),
     flags: text('flags').notNull().default('[]'),
     receivedAt: timestamp('received_at', { withTimezone: true, mode: 'date' }),
+    snoozedUntil: timestamp('snoozed_until', { withTimezone: true, mode: 'date' }),
     syncedAt: timestamp('synced_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull()
   },
   (table) => [
@@ -156,7 +175,8 @@ export const mailMessageMailbox = pgTable(
       table.mailbox,
       table.receivedAt,
       table.uid
-    )
+    ),
+    index('mail_message_mailbox_mailbox_snoozed_until_idx').on(table.mailbox, table.snoozedUntil)
   ]
 )
 
@@ -180,6 +200,40 @@ export const mailThreadSummary = pgTable(
   ]
 )
 
+export const mailThreadMetadata = pgTable(
+  'mail_thread_metadata',
+  {
+    id: serial('id').primaryKey(),
+    mailbox: text('mailbox').notNull(),
+    threadKey: text('thread_key').notNull(),
+    starred: boolean('starred').notNull().default(false),
+    pinned: boolean('pinned').notNull().default(false),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' })
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull()
+  },
+  (table) => [
+    uniqueIndex('mail_thread_metadata_mailbox_thread_key_idx').on(table.mailbox, table.threadKey),
+    index('mail_thread_metadata_mailbox_starred_idx').on(table.mailbox, table.starred),
+    index('mail_thread_metadata_mailbox_pinned_idx').on(table.mailbox, table.pinned)
+  ]
+)
+
+export const mailThreadNote = pgTable(
+  'mail_thread_note',
+  {
+    threadKey: text('thread_key').primaryKey(),
+    body: text('body').notNull().default(''),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' })
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull()
+  },
+  (table) => [index('mail_thread_note_updated_at_idx').on(table.updatedAt)]
+)
+
 export const mailShare = pgTable('mail_share', {
   token: text('token').primaryKey(),
   messageId: text('message_id').notNull(),
@@ -198,6 +252,18 @@ export const mailAttachment = pgTable(
   },
   (table) => [index('mail_attachment_message_id_idx').on(table.messageId)]
 )
+
+export const mailAttachmentSummary = pgTable('mail_attachment_summary', {
+  id: serial('id').primaryKey(),
+  attachmentId: integer('attachment_id').notNull().unique(),
+  contentFingerprint: text('content_fingerprint').notNull(),
+  summary: text('summary').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' })
+    .defaultNow()
+    .$onUpdate(() => /* @__PURE__ */ new Date())
+    .notNull()
+})
 
 export const mailDraft = pgTable('mail_draft', {
   id: serial('id').primaryKey(),
@@ -237,6 +303,54 @@ export const mailContact = pgTable(
   ]
 )
 
+export const mailSenderRule = pgTable(
+  'mail_sender_rule',
+  {
+    id: serial('id').primaryKey(),
+    type: text('type').notNull(),
+    sender: text('sender').notNull(),
+    normalizedSender: text('normalized_sender').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull()
+  },
+  (table) => [
+    uniqueIndex('mail_sender_rule_type_normalized_sender_idx').on(
+      table.type,
+      table.normalizedSender
+    ),
+    index('mail_sender_rule_normalized_sender_idx').on(table.normalizedSender)
+  ]
+)
+
+export const mailContactGroup = pgTable(
+  'mail_contact_group',
+  {
+    id: serial('id').primaryKey(),
+    name: text('name').notNull(),
+    description: text('description').notNull().default(''),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' })
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull()
+  },
+  (table) => [uniqueIndex('mail_contact_group_name_idx').on(table.name)]
+)
+
+export const mailContactGroupMember = pgTable(
+  'mail_contact_group_member',
+  {
+    id: serial('id').primaryKey(),
+    groupId: integer('group_id').notNull(),
+    contactId: integer('contact_id').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull()
+  },
+  (table) => [
+    uniqueIndex('mail_contact_group_member_group_contact_idx').on(table.groupId, table.contactId),
+    index('mail_contact_group_member_group_id_idx').on(table.groupId),
+    index('mail_contact_group_member_contact_id_idx').on(table.contactId)
+  ]
+)
+
 export const mailFilter = pgTable('mail_filter', {
   id: serial('id').primaryKey(),
   sortOrder: integer('sort_order').notNull().default(0),
@@ -244,8 +358,44 @@ export const mailFilter = pgTable('mail_filter', {
   field: text('field').notNull(),
   operator: text('operator').notNull(),
   value: text('value').notNull(),
+  conditions: jsonb('conditions'),
   action: text('action').notNull(),
   target: text('target')
+})
+
+export const mailAuditLog = pgTable(
+  'mail_audit_log',
+  {
+    id: serial('id').primaryKey(),
+    action: text('action').notNull(),
+    entityType: text('entity_type').notNull(),
+    entityId: text('entity_id'),
+    summary: text('summary').notNull(),
+    metadata: text('metadata').notNull().default('{}'),
+    actorUserId: text('actor_user_id'),
+    actorEmail: text('actor_email'),
+    ipAddress: text('ip_address'),
+    userAgent: text('user_agent'),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull()
+  },
+  (table) => [
+    index('mail_audit_log_created_at_idx').on(table.createdAt),
+    index('mail_audit_log_entity_idx').on(table.entityType, table.entityId)
+  ]
+)
+
+export const mailCleanupRule = pgTable('mail_cleanup_rule', {
+  id: serial('id').primaryKey(),
+  enabled: boolean('enabled').notNull().default(true),
+  mailbox: text('mailbox'),
+  minAgeDays: integer('min_age_days').notNull(),
+  action: text('action').notNull().default('archive'),
+  lastRunAt: timestamp('last_run_at', { withTimezone: true, mode: 'date' }),
+  createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' })
+    .defaultNow()
+    .$onUpdate(() => /* @__PURE__ */ new Date())
+    .notNull()
 })
 
 export const savedSearch = pgTable('saved_search', {
@@ -253,6 +403,32 @@ export const savedSearch = pgTable('saved_search', {
   name: text('name').notNull(),
   query: text('query').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' })
+    .defaultNow()
+    .$onUpdate(() => /* @__PURE__ */ new Date())
+    .notNull()
+})
+
+export const messageTemplate = pgTable(
+  'message_template',
+  {
+    id: serial('id').primaryKey(),
+    name: text('name').notNull(),
+    subject: text('subject').notNull().default(''),
+    html: text('html').notNull().default(''),
+    isSnippet: boolean('is_snippet').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' })
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull()
+  },
+  (table) => [index('message_template_name_idx').on(table.name)]
+)
+
+export const mailboxNotificationSetting = pgTable('mailbox_notification_setting', {
+  mailbox: text('mailbox').primaryKey(),
+  enabled: boolean('enabled').notNull().default(true),
   updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' })
     .defaultNow()
     .$onUpdate(() => /* @__PURE__ */ new Date())

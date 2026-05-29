@@ -36,6 +36,104 @@
       "when": 1779940800000,
       "tag": "0004_saved_searches",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1780012800000,
+      "tag": "0005_snooze_messages",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1780012800000,
+      "tag": "0005_attachment_summaries",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1780045200000,
+      "tag": "0005_filter_conditions",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1780010000000,
+      "tag": "0005_mail_audit_log",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1780012800000,
+      "tag": "0005_message_templates",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1780099200000,
+      "tag": "0005_signature_profiles",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1779944400000,
+      "tag": "0005_cleanup_rules",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1779944400000,
+      "tag": "0005_sender_rules",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1780099200000,
+      "tag": "0005_contact_groups",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1780099200000,
+      "tag": "0005_mailbox_notification_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1780016400000,
+      "tag": "0005_quiet_hours",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1780016400000,
+      "tag": "0005_thread_metadata",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1780010000000,
+      "tag": "0005_thread_notes",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1779944400000,
+      "tag": "0005_undo_send",
+      "breakpoints": true
     }
   ]
 }
