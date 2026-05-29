@@ -1,5 +1,28 @@
 @import 'tailwindcss';
 
+:root {
+  color-scheme: dark;
+}
+
+input,
+select,
+textarea {
+  color-scheme: dark;
+  background-color: rgb(24 24 27);
+  color: rgb(228 228 231);
+}
+
+select option,
+select optgroup {
+  background-color: rgb(24 24 27);
+  color: rgb(228 228 231);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: rgb(113 113 122);
+}
+
 button,
 a {
   cursor: pointer;
