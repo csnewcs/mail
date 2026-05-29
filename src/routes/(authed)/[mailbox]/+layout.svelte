@@ -25,7 +25,8 @@
     ChevronLeft,
     ChevronRight,
     Search,
-    Sparkles
+    Sparkles,
+    Bookmark
   } from 'lucide-svelte'
   import { openCompose } from '$lib/composer.svelte'
   import { encodeThreadId } from '$lib/thread-url'
@@ -64,6 +65,28 @@
     name: string
     query: string
   }
+
+  type ContactSuggestion = {
+    id: number
+    name: string
+    email: string
+    display: string
+  }
+
+  type SearchSyntaxSuggestion = {
+    label: string
+    value: string
+    description: string
+  }
+
+  const searchSyntaxSuggestions: SearchSyntaxSuggestion[] = [
+    { label: 'From', value: 'from:', description: 'Messages from a sender' },
+    { label: 'To', value: 'to:', description: 'Messages sent to a recipient' },
+    { label: 'Subject', value: 'subject:', description: 'Subject contains text' },
+    { label: 'Has attachment', value: 'has:attachment', description: 'Messages with attachments' },
+    { label: 'Before', value: 'before:', description: 'Before a date, e.g. before:2026-01-01' },
+    { label: 'After', value: 'after:', description: 'After a date, e.g. after:2026-01-01' }
+  ]
 
   let threadedMode = $state(true)
 
@@ -177,8 +200,14 @@
   let isSearching = $state(false)
   let savedSearches = $state<SavedSearch[]>([])
   let savingSearch = $state(false)
+  let showSavedSearchMenu = $state(false)
+  let contactSuggestions = $state<ContactSuggestion[]>([])
+  let showContactSuggestions = $state(false)
+  let searchInputFocused = $state(false)
   let searchRequestId = 0
   let searchTimer: ReturnType<typeof setTimeout> | null = null
+  let contactSearchRequestId = 0
+  let contactSearchTimer: ReturnType<typeof setTimeout> | null = null
   let pendingMailboxNavigationScrollTop: number | null = null
   let viewportHeight = $state(768)
 
@@ -206,6 +235,21 @@
   let contextMenu = $state<ContextMenuState>(null)
 
   const isSearchMode = $derived(searchQuery.trim().length > 0)
+  const currentSearchToken = $derived.by(() => searchQuery.split(/\s+/).at(-1)?.toLowerCase() ?? '')
+  const syntaxSuggestions = $derived.by(() => {
+    const token = currentSearchToken
+    if (token.includes('@')) return []
+    if (!token) return searchSyntaxSuggestions
+
+    return searchSyntaxSuggestions.filter(
+      (suggestion) =>
+        suggestion.value.startsWith(token) || suggestion.label.toLowerCase().startsWith(token)
+    )
+  })
+  const showSearchAutocomplete = $derived(
+    (searchInputFocused && syntaxSuggestions.length > 0) ||
+      (showContactSuggestions && contactSuggestions.length > 0)
+  )
 
   const relativeFormatter = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
 
@@ -333,6 +377,75 @@
     }, 300)
   })
 
+  function contactAutocompleteQuery(query: string) {
+    const trimmed = query.trim()
+    if (!trimmed) return ''
+
+    const lastTerm = trimmed.split(/\s+/).at(-1) ?? trimmed
+    const operatorMatch = /^(?:from|to|subject):(.+)$/i.exec(lastTerm)
+    return (operatorMatch?.[1] ?? lastTerm).replace(/^"|"$/g, '').trim()
+  }
+
+  $effect(() => {
+    const query = contactAutocompleteQuery(searchQuery)
+
+    if (contactSearchTimer !== null) {
+      clearTimeout(contactSearchTimer)
+      contactSearchTimer = null
+    }
+
+    if (query.length < 1) {
+      contactSuggestions = []
+      showContactSuggestions = false
+      return
+    }
+
+    const requestId = ++contactSearchRequestId
+    contactSearchTimer = setTimeout(async () => {
+      try {
+        const response = await fetch(`/api/contacts?q=${encodeURIComponent(query)}&limit=6`)
+        if (!response.ok) return
+
+        const payload = (await response.json()) as { contacts: ContactSuggestion[] }
+        if (requestId !== contactSearchRequestId) return
+        contactSuggestions = payload.contacts
+        showContactSuggestions = payload.contacts.length > 0
+      } catch {
+        if (requestId !== contactSearchRequestId) return
+        contactSuggestions = []
+        showContactSuggestions = false
+      }
+    }, 150)
+  })
+
+  function selectContactSuggestion(contact: ContactSuggestion) {
+    searchQuery = contact.email
+    showContactSuggestions = false
+  }
+
+  function selectSyntaxSuggestion(suggestion: SearchSyntaxSuggestion) {
+    const parts = searchQuery.split(/\s+/)
+    if (parts.length === 0) {
+      searchQuery = suggestion.value
+    } else {
+      parts[parts.length - 1] = suggestion.value
+      searchQuery = parts.join(' ')
+    }
+    searchInputFocused = true
+  }
+
+  function onSearchFocus() {
+    searchInputFocused = true
+    showContactSuggestions = contactSuggestions.length > 0
+  }
+
+  function onSearchBlur() {
+    setTimeout(() => {
+      searchInputFocused = false
+      showContactSuggestions = false
+    }, 150)
+  }
+
   async function loadSavedSearches() {
     try {
       const response = await fetch('/api/saved-searches')
@@ -361,11 +474,17 @@
       })
       if (!response.ok) throw new Error(await readErrorMessage(response, 'Failed to save search.'))
       await loadSavedSearches()
+      showSavedSearchMenu = false
     } catch (error) {
       errorDialogMessage = errorMessageFromUnknown(error, 'Failed to save search.')
     } finally {
       savingSearch = false
     }
+  }
+
+  function selectSavedSearch(savedSearch: SavedSearch) {
+    searchQuery = savedSearch.query
+    showSavedSearchMenu = false
   }
 
   // Scroll focused row into view when keyboard.focusedIndex changes
@@ -1597,35 +1716,104 @@
       </p>
 
       {#if isDesktop || mobileSearchOpen || searchQuery.trim().length > 0}
-        <label class="mt-3 block md:mt-4">
-          <span class="sr-only">Search messages</span>
-          <input
-            bind:value={searchQuery}
-            type="search"
-            placeholder="Search"
-            class="w-full rounded-xl border border-transparent bg-black/20 px-4 py-3 text-sm text-white outline-none placeholder:text-zinc-500 focus:border-white/8 md:border-white/8"
-          />
-        </label>
-        <div class="mt-2 flex flex-wrap items-center gap-2">
-          {#each savedSearches as savedSearch (savedSearch.id)}
-            <button
-              type="button"
-              onclick={() => (searchQuery = savedSearch.query)}
-              class="rounded-full border border-white/8 bg-white/5 px-2.5 py-1 text-xs text-zinc-300 hover:bg-white/10"
-              title={savedSearch.query}
+        <div class="relative mt-3 flex md:mt-4">
+          <label class="min-w-0 flex-1">
+            <span class="sr-only">Search messages</span>
+            <input
+              bind:value={searchQuery}
+              type="search"
+              placeholder="Search"
+              onfocus={onSearchFocus}
+              onblur={onSearchBlur}
+              class="w-full rounded-l-xl border border-transparent bg-black/20 px-4 py-3 text-sm text-white outline-none placeholder:text-zinc-500 focus:border-white/8 md:border-white/8"
+            />
+          </label>
+          <button
+            type="button"
+            onclick={() => (showSavedSearchMenu = !showSavedSearchMenu)}
+            aria-label="Saved searches"
+            title="Saved searches"
+            class="grid w-11 place-items-center rounded-r-xl border border-transparent border-l-white/8 bg-black/30 text-zinc-300 hover:bg-white/8 md:border-white/8"
+          >
+            <Bookmark size={15} />
+          </button>
+          {#if showSavedSearchMenu}
+            <div
+              class="absolute top-full right-0 z-30 mt-2 w-64 overflow-hidden rounded-xl border border-white/10 bg-zinc-950 shadow-xl shadow-black/30"
             >
-              {savedSearch.name}
-            </button>
-          {/each}
-          {#if searchQuery.trim()}
-            <button
-              type="button"
-              onclick={() => void saveCurrentSearch()}
-              disabled={savingSearch}
-              class="rounded-full border border-blue-400/20 bg-blue-400/10 px-2.5 py-1 text-xs text-blue-200 disabled:opacity-50"
+              <div class="border-b border-white/8 px-3 py-2 text-xs font-medium text-zinc-500">
+                Saved searches
+              </div>
+              {#if savedSearches.length > 0}
+                {#each savedSearches as savedSearch (savedSearch.id)}
+                  <button
+                    type="button"
+                    onclick={() => selectSavedSearch(savedSearch)}
+                    class="block w-full px-3 py-2 text-left hover:bg-white/6"
+                    title={savedSearch.query}
+                  >
+                    <span class="block truncate text-sm font-medium text-zinc-200">
+                      {savedSearch.name}
+                    </span>
+                    <span class="block truncate text-xs text-zinc-500">{savedSearch.query}</span>
+                  </button>
+                {/each}
+              {:else}
+                <p class="px-3 py-3 text-sm text-zinc-500">No saved searches yet.</p>
+              {/if}
+              {#if searchQuery.trim()}
+                <div class="border-t border-white/8 p-2">
+                  <button
+                    type="button"
+                    onclick={() => void saveCurrentSearch()}
+                    disabled={savingSearch}
+                    class="w-full rounded-lg bg-blue-600 px-3 py-2 text-left text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+                  >
+                    {savingSearch ? 'Saving...' : 'Save current search'}
+                  </button>
+                </div>
+              {/if}
+            </div>
+          {/if}
+          {#if showSearchAutocomplete}
+            <div
+              class="absolute top-full right-0 left-0 z-20 mt-2 overflow-hidden rounded-xl border border-white/10 bg-zinc-950/95 shadow-xl shadow-black/20"
             >
-              Save search
-            </button>
+              {#if searchInputFocused && syntaxSuggestions.length > 0}
+                <div class="border-b border-white/8 px-3 py-2 text-xs font-medium text-zinc-500">
+                  Search syntax
+                </div>
+                {#each syntaxSuggestions as suggestion (suggestion.value)}
+                  <button
+                    type="button"
+                    onclick={() => selectSyntaxSuggestion(suggestion)}
+                    class="block w-full px-3 py-2 text-left hover:bg-white/6"
+                  >
+                    <span class="font-mono text-sm text-zinc-200">{suggestion.value}</span>
+                    <span class="ml-2 text-xs text-zinc-500">{suggestion.description}</span>
+                  </button>
+                {/each}
+              {/if}
+              {#if showContactSuggestions && contactSuggestions.length > 0}
+                <div class="border-y border-white/8 px-3 py-2 text-xs font-medium text-zinc-500">
+                  Contacts
+                </div>
+                {#each contactSuggestions as contact (contact.id)}
+                  <button
+                    type="button"
+                    onclick={() => selectContactSuggestion(contact)}
+                    class="block w-full px-3 py-2 text-left text-sm hover:bg-white/6"
+                  >
+                    <span class="block truncate font-medium text-zinc-200">
+                      {contact.name || contact.email}
+                    </span>
+                    {#if contact.name}
+                      <span class="block truncate text-xs text-zinc-500">{contact.email}</span>
+                    {/if}
+                  </button>
+                {/each}
+              {/if}
+            </div>
           {/if}
         </div>
       {/if}
@@ -1933,35 +2121,104 @@
         </div>
 
         {#if isDesktop || mobileSearchOpen || searchQuery.trim().length > 0}
-          <label class="mt-3 block md:mt-4">
-            <span class="sr-only">Search messages</span>
-            <input
-              bind:value={searchQuery}
-              type="search"
-              placeholder="Search"
-              class="w-full rounded-xl border border-transparent bg-black/20 px-4 py-3 text-sm text-white outline-none placeholder:text-zinc-500 focus:border-white/8 md:border-white/8"
-            />
-          </label>
-          <div class="mt-2 flex flex-wrap items-center gap-2">
-            {#each savedSearches as savedSearch (savedSearch.id)}
-              <button
-                type="button"
-                onclick={() => (searchQuery = savedSearch.query)}
-                class="rounded-full border border-white/8 bg-white/5 px-2.5 py-1 text-xs text-zinc-300 hover:bg-white/10"
-                title={savedSearch.query}
+          <div class="relative mt-3 flex md:mt-4">
+            <label class="min-w-0 flex-1">
+              <span class="sr-only">Search messages</span>
+              <input
+                bind:value={searchQuery}
+                type="search"
+                placeholder="Search"
+                onfocus={onSearchFocus}
+                onblur={onSearchBlur}
+                class="w-full rounded-l-xl border border-transparent bg-black/20 px-4 py-3 text-sm text-white outline-none placeholder:text-zinc-500 focus:border-white/8 md:border-white/8"
+              />
+            </label>
+            <button
+              type="button"
+              onclick={() => (showSavedSearchMenu = !showSavedSearchMenu)}
+              aria-label="Saved searches"
+              title="Saved searches"
+              class="grid w-11 place-items-center rounded-r-xl border border-transparent border-l-white/8 bg-black/30 text-zinc-300 hover:bg-white/8 md:border-white/8"
+            >
+              <Bookmark size={15} />
+            </button>
+            {#if showSavedSearchMenu}
+              <div
+                class="absolute top-full right-0 z-30 mt-2 w-64 overflow-hidden rounded-xl border border-white/10 bg-zinc-950 shadow-xl shadow-black/30"
               >
-                {savedSearch.name}
-              </button>
-            {/each}
-            {#if searchQuery.trim()}
-              <button
-                type="button"
-                onclick={() => void saveCurrentSearch()}
-                disabled={savingSearch}
-                class="rounded-full border border-blue-400/20 bg-blue-400/10 px-2.5 py-1 text-xs text-blue-200 disabled:opacity-50"
+                <div class="border-b border-white/8 px-3 py-2 text-xs font-medium text-zinc-500">
+                  Saved searches
+                </div>
+                {#if savedSearches.length > 0}
+                  {#each savedSearches as savedSearch (savedSearch.id)}
+                    <button
+                      type="button"
+                      onclick={() => selectSavedSearch(savedSearch)}
+                      class="block w-full px-3 py-2 text-left hover:bg-white/6"
+                      title={savedSearch.query}
+                    >
+                      <span class="block truncate text-sm font-medium text-zinc-200">
+                        {savedSearch.name}
+                      </span>
+                      <span class="block truncate text-xs text-zinc-500">{savedSearch.query}</span>
+                    </button>
+                  {/each}
+                {:else}
+                  <p class="px-3 py-3 text-sm text-zinc-500">No saved searches yet.</p>
+                {/if}
+                {#if searchQuery.trim()}
+                  <div class="border-t border-white/8 p-2">
+                    <button
+                      type="button"
+                      onclick={() => void saveCurrentSearch()}
+                      disabled={savingSearch}
+                      class="w-full rounded-lg bg-blue-600 px-3 py-2 text-left text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+                    >
+                      {savingSearch ? 'Saving...' : 'Save current search'}
+                    </button>
+                  </div>
+                {/if}
+              </div>
+            {/if}
+            {#if showSearchAutocomplete}
+              <div
+                class="absolute top-full right-0 left-0 z-20 mt-2 overflow-hidden rounded-xl border border-white/10 bg-zinc-950/95 shadow-xl shadow-black/20"
               >
-                Save search
-              </button>
+                {#if searchInputFocused && syntaxSuggestions.length > 0}
+                  <div class="border-b border-white/8 px-3 py-2 text-xs font-medium text-zinc-500">
+                    Search syntax
+                  </div>
+                  {#each syntaxSuggestions as suggestion (suggestion.value)}
+                    <button
+                      type="button"
+                      onclick={() => selectSyntaxSuggestion(suggestion)}
+                      class="block w-full px-3 py-2 text-left hover:bg-white/6"
+                    >
+                      <span class="font-mono text-sm text-zinc-200">{suggestion.value}</span>
+                      <span class="ml-2 text-xs text-zinc-500">{suggestion.description}</span>
+                    </button>
+                  {/each}
+                {/if}
+                {#if showContactSuggestions && contactSuggestions.length > 0}
+                  <div class="border-y border-white/8 px-3 py-2 text-xs font-medium text-zinc-500">
+                    Contacts
+                  </div>
+                  {#each contactSuggestions as contact (contact.id)}
+                    <button
+                      type="button"
+                      onclick={() => selectContactSuggestion(contact)}
+                      class="block w-full px-3 py-2 text-left text-sm hover:bg-white/6"
+                    >
+                      <span class="block truncate font-medium text-zinc-200">
+                        {contact.name || contact.email}
+                      </span>
+                      {#if contact.name}
+                        <span class="block truncate text-xs text-zinc-500">{contact.email}</span>
+                      {/if}
+                    </button>
+                  {/each}
+                {/if}
+              </div>
             {/if}
           </div>
         {/if}
