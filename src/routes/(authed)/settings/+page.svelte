@@ -129,9 +129,21 @@
     sortOrder: number
   }
 
+  type FilterPreviewMatch = {
+    id: number
+    subject: string
+    from: string
+    mailbox: string
+    receivedAt: string | null
+  }
+
   let filters = $state<Filter[]>([])
   let showAddFilter = $state(false)
   let errorDialogMessage = $state<string | null>(null)
+  let filterPreview = $state<FilterPreviewMatch[]>([])
+  let previewingFilter = $state(false)
+  let runningFilters = $state(false)
+  let filterRunMessage = $state<string | null>(null)
   let newFilter = $state({
     field: 'from',
     operator: 'contains',
@@ -184,6 +196,40 @@
       }
     } catch (error) {
       errorDialogMessage = errorMessageFromUnknown(error, 'Failed to add filter.')
+    }
+  }
+
+  async function previewNewFilter() {
+    if (!newFilter.value.trim()) return
+    previewingFilter = true
+    try {
+      const res = await fetch('/api/filters/preview', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(newFilter)
+      })
+      if (!res.ok) throw new Error(await readErrorMessage(res, 'Failed to preview filter.'))
+      const payload = (await res.json()) as { matches: FilterPreviewMatch[] }
+      filterPreview = payload.matches
+    } catch (error) {
+      errorDialogMessage = errorMessageFromUnknown(error, 'Failed to preview filter.')
+    } finally {
+      previewingFilter = false
+    }
+  }
+
+  async function runFiltersNow() {
+    runningFilters = true
+    filterRunMessage = null
+    try {
+      const res = await fetch('/api/filters/run', { method: 'POST' })
+      if (!res.ok) throw new Error(await readErrorMessage(res, 'Failed to run filters.'))
+      const payload = (await res.json()) as { scanned: number }
+      filterRunMessage = `Scanned ${payload.scanned} messages.`
+    } catch (error) {
+      errorDialogMessage = errorMessageFromUnknown(error, 'Failed to run filters.')
+    } finally {
+      runningFilters = false
     }
   }
 
@@ -982,9 +1028,7 @@
       <!-- Subscription status -->
       <div class="rounded-lg border border-white/8 bg-white/3 p-4">
         {#if pushStatus === 'unsupported'}
-          <p class="text-sm text-zinc-500">
-            Push notifications are not supported in this browser.
-          </p>
+          <p class="text-sm text-zinc-500">Push notifications are not supported in this browser.</p>
         {:else if pushStatus === 'denied'}
           <p class="text-sm text-amber-400">
             Notifications are blocked. Enable them in your browser or OS settings, then reload.
@@ -1005,9 +1049,7 @@
           <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p class="text-sm font-medium text-zinc-200">Enable notifications</p>
-              <p class="mt-0.5 text-xs text-zinc-500">
-                Get notified when new mail arrives.
-              </p>
+              <p class="mt-0.5 text-xs text-zinc-500">Get notified when new mail arrives.</p>
             </div>
             <button
               type="button"
@@ -1048,14 +1090,28 @@
     <section class="space-y-4">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <h2 class="text-sm font-semibold tracking-widest text-zinc-500 uppercase">Filters</h2>
-        <button
-          type="button"
-          onclick={() => (showAddFilter = !showAddFilter)}
-          class="flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-zinc-300 hover:bg-white/10"
-        >
-          <Plus size={12} /> Add rule
-        </button>
+        <div class="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onclick={() => void runFiltersNow()}
+            disabled={runningFilters}
+            class="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-zinc-300 hover:bg-white/10 disabled:opacity-50"
+          >
+            {runningFilters ? 'Running...' : 'Run now'}
+          </button>
+          <button
+            type="button"
+            onclick={() => (showAddFilter = !showAddFilter)}
+            class="flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-zinc-300 hover:bg-white/10"
+          >
+            <Plus size={12} /> Add rule
+          </button>
+        </div>
       </div>
+
+      {#if filterRunMessage}
+        <p class="text-sm text-emerald-400">{filterRunMessage}</p>
+      {/if}
 
       {#if filters.length === 0 && !showAddFilter}
         <p class="text-sm text-zinc-600">
@@ -1184,12 +1240,33 @@
             </button>
             <button
               type="button"
+              onclick={() => void previewNewFilter()}
+              disabled={previewingFilter || !newFilter.value.trim()}
+              class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-zinc-300 hover:bg-white/10 disabled:opacity-50"
+            >
+              {previewingFilter ? 'Previewing...' : 'Preview matches'}
+            </button>
+            <button
+              type="button"
               onclick={() => (showAddFilter = false)}
               class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-zinc-300 hover:bg-white/10"
             >
               Cancel
             </button>
           </div>
+          {#if filterPreview.length > 0}
+            <div class="rounded-lg border border-white/8 bg-black/20 p-3">
+              <p class="mb-2 text-xs font-medium text-zinc-400">Preview matches</p>
+              <div class="space-y-2">
+                {#each filterPreview as match (match.id)}
+                  <div class="text-xs text-zinc-400">
+                    <span class="text-zinc-200">{match.subject || '(no subject)'}</span>
+                    <span> from {match.from || 'unknown'} in {match.mailbox}</span>
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {/if}
         </div>
       {/if}
     </section>

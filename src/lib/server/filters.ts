@@ -1,9 +1,18 @@
 import { db } from './db'
 import { mailFilter, mailMessage, mailMessageMailbox } from './db/schema'
-import { eq, inArray } from 'drizzle-orm'
+import { desc, eq, inArray } from 'drizzle-orm'
 import { enqueueMarkRead, enqueueMoveMessage } from './imap-queue'
 
 type Filter = typeof mailFilter.$inferSelect
+
+export type FilterPreviewRow = {
+  id: number
+  messageId: string
+  subject: string
+  from: string
+  mailbox: string
+  receivedAt: Date | null
+}
 
 function matchesRule(filter: Filter, value: string): boolean {
   const v = value.toLowerCase()
@@ -22,7 +31,10 @@ function matchesRule(filter: Filter, value: string): boolean {
   }
 }
 
-function getFieldValue(filter: Filter, msg: typeof mailMessage.$inferSelect): string {
+function getFieldValue(
+  filter: Filter,
+  msg: Pick<typeof mailMessage.$inferSelect, 'from' | 'to' | 'subject' | 'cc'>
+): string {
   switch (filter.field) {
     case 'from':
       return msg.from
@@ -123,4 +135,34 @@ export async function runFiltersOnMessages(messageIds: string[]): Promise<void> 
   for (const [mailbox, threadKeys] of touchedThreadKeysByMailbox) {
     await refreshThreadSummaries(mailbox, threadKeys)
   }
+}
+
+export async function previewFilterMatches(
+  filter: Filter,
+  limit = 20
+): Promise<FilterPreviewRow[]> {
+  const rows = await db
+    .select({
+      id: mailMessageMailbox.id,
+      messageId: mailMessage.messageId,
+      subject: mailMessage.subject,
+      from: mailMessage.from,
+      to: mailMessage.to,
+      cc: mailMessage.cc,
+      mailbox: mailMessageMailbox.mailbox,
+      receivedAt: mailMessage.receivedAt
+    })
+    .from(mailMessage)
+    .innerJoin(mailMessageMailbox, eq(mailMessageMailbox.messageId, mailMessage.messageId))
+    .orderBy(desc(mailMessage.receivedAt))
+    .limit(500)
+
+  return rows.filter((row) => matchesRule(filter, getFieldValue(filter, row))).slice(0, limit)
+}
+
+export async function runFiltersOnExistingMessages(): Promise<number> {
+  const rows = await db.select({ messageId: mailMessage.messageId }).from(mailMessage)
+  const messageIds = [...new Set(rows.map((row) => row.messageId))]
+  await runFiltersOnMessages(messageIds)
+  return messageIds.length
 }
