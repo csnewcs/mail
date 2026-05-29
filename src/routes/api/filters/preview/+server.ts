@@ -2,6 +2,7 @@ import { json, error } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
 import { previewFilterMatches } from '$lib/server/filters'
 import { normalizeFilterConditions } from '$lib/filter-conditions'
+import { isDemoModeEnabled } from '$lib/server/demo'
 
 export const POST: RequestHandler = async ({ request }) => {
   const body = await request.json()
@@ -15,6 +16,8 @@ export const POST: RequestHandler = async ({ request }) => {
   if (!firstCondition || !body.action) {
     return error(400, 'Missing required fields: conditions, action')
   }
+
+  if (isDemoModeEnabled()) return json({ matches: [] })
 
   const matches = await previewFilterMatches({
     id: 0,

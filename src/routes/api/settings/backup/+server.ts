@@ -19,11 +19,16 @@ import {
   normalizeRestoreSelection,
   validateSettingsBackup
 } from '$lib/server/settings-backup'
+import { isDemoModeEnabled, listDemoFilters } from '$lib/server/demo'
 
 export const GET: RequestHandler = async ({ cookies }) => {
   const config = await getDisplayConfig()
-  const filters = await db.select().from(mailFilter).orderBy(asc(mailFilter.sortOrder))
-  const searches = await db.select().from(savedSearch).orderBy(asc(savedSearch.name))
+  const filters = isDemoModeEnabled()
+    ? listDemoFilters()
+    : await db.select().from(mailFilter).orderBy(asc(mailFilter.sortOrder))
+  const searches = isDemoModeEnabled()
+    ? []
+    : await db.select().from(savedSearch).orderBy(asc(savedSearch.name))
 
   return json({
     schemaVersion: SETTINGS_BACKUP_SCHEMA_VERSION,
@@ -82,6 +87,22 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
   const { backup, errors } = validateSettingsBackup(body.backup)
 
   if (!backup) return error(400, errors.join('\n'))
+
+  if (isDemoModeEnabled()) {
+    if (selection.preferences && backup.preferences) {
+      if (backup.preferences.simplifiedView != null) {
+        setSimplifiedViewEnabled(cookies, backup.preferences.simplifiedView)
+      }
+      if (backup.preferences.compactMode != null) {
+        setCompactModeEnabled(cookies, backup.preferences.compactMode)
+      }
+      if (backup.preferences.translationTargetLanguage != null) {
+        setTranslationTargetLanguage(cookies, backup.preferences.translationTargetLanguage)
+      }
+    }
+
+    return json({ success: true, restored: selection })
+  }
 
   let restoredSettings = false
 
