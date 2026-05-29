@@ -272,6 +272,8 @@
   let testingPush = $state(false)
 
   onMount(async () => {
+    lastSavedSettingsSnapshot = settingsSnapshot()
+    autosaveReady = true
     void loadFilters()
 
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
@@ -376,6 +378,7 @@
   }
 
   let saving = $state(false)
+  let autosaveStatus = $state<'idle' | 'saving' | 'saved' | 'error'>('idle')
   let testingImap = $state(false)
   let testingSmtp = $state(false)
   let saveSuccess = $state(false)
@@ -384,7 +387,22 @@
   let showTranslationLanguageSuggestions = $state(false)
   let translationLanguageHighlightIndex = $state(-1)
   let translationLanguageBlurTimer: ReturnType<typeof setTimeout> | null = null
+  let autosaveTimer: ReturnType<typeof setTimeout> | null = null
+  let autosaveReady = false
+  let lastSavedSettingsSnapshot = ''
   const translationLanguageListboxId = 'translation-target-language-listbox'
+
+  function settingsSnapshot() {
+    return JSON.stringify({
+      imap,
+      smtp,
+      oidc,
+      signature: form.signature,
+      simplifiedView,
+      compactMode,
+      translationTargetLanguage
+    })
+  }
 
   const filteredTranslationLanguages = $derived.by(() => {
     const query = form.translationTargetLanguage.trim().toLowerCase()
@@ -500,9 +518,13 @@
     }, 150)
   }
 
-  async function save() {
+  async function save(
+    options: { manual?: boolean; invalidate?: boolean; clearSecrets?: boolean } = {}
+  ) {
+    const snapshot = settingsSnapshot()
     saving = true
-    saveSuccess = false
+    if (options.manual) saveSuccess = false
+    else autosaveStatus = 'saving'
     try {
       const res = await fetch('/api/settings', {
         method: 'POST',
@@ -518,22 +540,55 @@
         })
       })
       if (!res.ok) {
-        errorDialogMessage = await readErrorMessage(res, 'Failed to save settings.')
+        const message = await readErrorMessage(res, 'Failed to save settings.')
+        if (options.manual) errorDialogMessage = message
+        else autosaveStatus = 'error'
         return
       }
 
-      saveSuccess = true
-      // Clear passwords after save so they show as bullets again
-      imap.password = ''
-      smtp.password = ''
-      oidc.clientSecret = ''
-      await invalidateAll()
+      lastSavedSettingsSnapshot = snapshot
+      if (options.manual) saveSuccess = true
+      else autosaveStatus = 'saved'
+      if (options.clearSecrets) {
+        // Clear passwords after manual save so they show as bullets again.
+        imap.password = ''
+        smtp.password = ''
+        oidc.clientSecret = ''
+        lastSavedSettingsSnapshot = settingsSnapshot()
+      }
+      if (options.invalidate) await invalidateAll()
     } catch (err) {
-      errorDialogMessage = errorMessageFromUnknown(err, 'Failed to save settings.')
+      if (options.manual)
+        errorDialogMessage = errorMessageFromUnknown(err, 'Failed to save settings.')
+      else autosaveStatus = 'error'
     } finally {
       saving = false
+      if (!options.manual && settingsSnapshot() !== lastSavedSettingsSnapshot) {
+        scheduleAutosave()
+      }
     }
   }
+
+  function scheduleAutosave(delayMs = 1000) {
+    if (!autosaveReady) return
+    const snapshot = settingsSnapshot()
+    if (snapshot === lastSavedSettingsSnapshot) return
+
+    if (autosaveTimer) clearTimeout(autosaveTimer)
+    autosaveTimer = setTimeout(() => {
+      autosaveTimer = null
+      void save()
+    }, delayMs)
+  }
+
+  function autosaveToggleChange() {
+    setTimeout(() => scheduleAutosave(0), 0)
+  }
+
+  $effect(() => {
+    settingsSnapshot()
+    scheduleAutosave()
+  })
 
   async function testImap() {
     testingImap = true
@@ -678,7 +733,12 @@
         </div>
         <div class="col-span-2 flex items-center gap-2">
           <label class="relative inline-flex cursor-pointer items-center gap-2">
-            <input type="checkbox" bind:checked={imap.secure} class="peer sr-only" />
+            <input
+              type="checkbox"
+              bind:checked={imap.secure}
+              onchange={autosaveToggleChange}
+              class="peer sr-only"
+            />
             <div
               class="h-5 w-9 rounded-full bg-zinc-700 transition peer-checked:bg-blue-600 after:absolute after:top-0.5 after:left-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-4"
             ></div>
@@ -781,7 +841,12 @@
         </div>
         <div class="col-span-2 flex items-center gap-2">
           <label class="relative inline-flex cursor-pointer items-center gap-2">
-            <input type="checkbox" bind:checked={smtp.secure} class="peer sr-only" />
+            <input
+              type="checkbox"
+              bind:checked={smtp.secure}
+              onchange={autosaveToggleChange}
+              class="peer sr-only"
+            />
             <div
               class="h-5 w-9 rounded-full bg-zinc-700 transition peer-checked:bg-blue-600 after:absolute after:top-0.5 after:left-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-4"
             ></div>
@@ -967,7 +1032,12 @@
           </div>
 
           <span class="relative inline-flex cursor-pointer items-center">
-            <input type="checkbox" bind:checked={simplifiedView} class="peer sr-only" />
+            <input
+              type="checkbox"
+              bind:checked={simplifiedView}
+              onchange={autosaveToggleChange}
+              class="peer sr-only"
+            />
             <span
               class="h-5 w-9 rounded-full bg-zinc-700 transition peer-checked:bg-blue-600 after:absolute after:top-0.5 after:left-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-4"
             ></span>
@@ -984,7 +1054,12 @@
           </div>
 
           <span class="relative inline-flex cursor-pointer items-center">
-            <input type="checkbox" bind:checked={compactMode} class="peer sr-only" />
+            <input
+              type="checkbox"
+              bind:checked={compactMode}
+              onchange={autosaveToggleChange}
+              class="peer sr-only"
+            />
             <span
               class="h-5 w-9 rounded-full bg-zinc-700 transition peer-checked:bg-blue-600 after:absolute after:top-0.5 after:left-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-4"
             ></span>
@@ -1277,7 +1352,7 @@
     <div class="flex flex-wrap items-center gap-4">
       <button
         type="button"
-        onclick={save}
+        onclick={() => void save({ manual: true, invalidate: true, clearSecrets: true })}
         disabled={saving}
         class="rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-50"
       >
@@ -1285,6 +1360,12 @@
       </button>
       {#if saveSuccess}
         <span class="text-sm text-emerald-400">Settings saved.</span>
+      {:else if autosaveStatus === 'saving'}
+        <span class="text-sm text-zinc-500">Autosaving...</span>
+      {:else if autosaveStatus === 'saved'}
+        <span class="text-sm text-emerald-400">Autosaved.</span>
+      {:else if autosaveStatus === 'error'}
+        <span class="text-sm text-amber-400">Autosave failed. Use Save settings to retry.</span>
       {/if}
     </div>
   </div>
