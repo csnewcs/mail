@@ -4,6 +4,7 @@
   import { page } from '$app/state'
   import { setSimplifiedModeSidebarActionContext } from '$lib/simplified-mode-context'
   import { onMount } from 'svelte'
+  import ActionModal from '$lib/components/ActionModal.svelte'
   import {
     Inbox,
     Send,
@@ -20,6 +21,8 @@
     RefreshCw,
     PanelLeft,
     Layers,
+    Bookmark,
+    CircleHelp,
     ChevronRight,
     ChevronDown,
     X
@@ -28,14 +31,17 @@
   import { pathToSlug } from '$lib/mailbox'
   import Composer from '$lib/components/Composer.svelte'
   import ErrorDialog from '$lib/components/ErrorDialog.svelte'
+  import ShortcutHelpOverlay from '$lib/components/ShortcutHelpOverlay.svelte'
   import { openCompose, openDraft, type DraftRow } from '$lib/composer.svelte'
   import { errorMessageFromUnknown, readErrorMessage } from '$lib/http'
   import { afterNavigate, goto, invalidateAll } from '$app/navigation'
   import { keyboard } from '$lib/keyboard.svelte'
   import { MAILBOX_STATE_CHANGED_EVENT } from '$lib/mailbox-state'
+  import { clearOfflineCache } from '$lib/offline-cache'
   import { SvelteMap, SvelteSet } from 'svelte/reactivity'
 
   type ImapMailbox = { path: string; name: string; delimiter: string }
+  type SavedSearch = { id: number; name: string; query: string }
   type SyncStatus = {
     syncing: boolean
     configured: boolean
@@ -48,6 +54,7 @@
     data: {
       imapMailboxes: ImapMailbox[]
       unreadCounts: Record<string, number>
+      savedSearches: SavedSearch[]
       user: { name: string; email: string } | null
       simplifiedView: boolean
     }
@@ -262,14 +269,29 @@
   let refreshing = $state(false)
   let drafts = $state<DraftListRow[]>([])
   let draftsError = $state<string | null>(null)
+  let savedSearches = $state<SavedSearch[]>([])
+  let smartFolderError = $state<string | null>(null)
+  type ModalState = {
+    title: string
+    message?: string
+    confirmLabel?: string
+    cancelLabel?: string
+    tone?: 'default' | 'danger'
+    inputLabel?: string
+    inputValue?: string
+    resolve: (value: string | boolean | null) => void
+  }
+  let actionModal = $state<ModalState | null>(null)
   let unreadCount = $state(0)
   let mobileNavOpen = $state(false)
   let utilityNavOpen = $state(false)
+  let shortcutHelpOpen = $state(false)
   let sidebarSimplifiedModeAction = $state<((enabled: boolean) => Promise<void>) | null>(null)
   let simplifiedViewEnabled = $state(false)
   let savingSimplifiedView = $state(false)
   let viewportWidth = $state(1024)
   let syncPollTimer: ReturnType<typeof setTimeout> | null = null
+  let offlineCacheClearedForSignedOut = false
 
   const isMobile = $derived(viewportWidth < 768)
   const activeMailboxLabel = $derived(
@@ -295,6 +317,22 @@
 
   $effect(() => {
     unreadCounts = data.unreadCounts
+  })
+
+  $effect(() => {
+    savedSearches = data.savedSearches
+  })
+
+  $effect(() => {
+    if (data.user) {
+      offlineCacheClearedForSignedOut = false
+      return
+    }
+
+    if (offlineCacheClearedForSignedOut) return
+    offlineCacheClearedForSignedOut = true
+    void clearOfflineCache()
+    navigator.serviceWorker?.controller?.postMessage({ type: 'CLEAR_OFFLINE_CACHE' })
   })
 
   $effect(() => {
@@ -390,6 +428,80 @@
         rows: drafts.length,
         ms: Math.round(now() - startedAt)
       })
+    }
+  }
+
+  async function fetchSavedSearches() {
+    try {
+      const res = await fetch('/api/saved-searches')
+      if (!res.ok) throw new Error(await readErrorMessage(res, 'Failed to load smart folders.'))
+      const payload = (await res.json()) as { searches: SavedSearch[] }
+      savedSearches = payload.searches
+      smartFolderError = null
+    } catch (error) {
+      smartFolderError = errorMessageFromUnknown(error, 'Failed to load smart folders.')
+    }
+  }
+
+  async function deleteSmartFolder(savedSearch: SavedSearch) {
+    const confirmed = await requestModal({
+      title: 'Delete smart folder',
+      message: `Delete smart folder "${savedSearch.name}"?`,
+      confirmLabel: 'Delete',
+      tone: 'danger'
+    })
+    if (!confirmed) return
+
+    const previousSearches = savedSearches
+    savedSearches = savedSearches.filter((candidate) => candidate.id !== savedSearch.id)
+
+    try {
+      const res = await fetch(`/api/saved-searches/${savedSearch.id}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error(await readErrorMessage(res, 'Failed to delete smart folder.'))
+      window.dispatchEvent(new CustomEvent('mail:saved-searches-changed'))
+    } catch (error) {
+      savedSearches = previousSearches
+      smartFolderError = errorMessageFromUnknown(error, 'Failed to delete smart folder.')
+    }
+  }
+
+  function requestModal(options: Omit<ModalState, 'resolve'>) {
+    return new Promise<string | boolean | null>((resolve) => {
+      actionModal = { ...options, resolve }
+    })
+  }
+
+  function closeActionModal(value: string | boolean | null) {
+    actionModal?.resolve(value)
+    actionModal = null
+  }
+
+  async function renameSmartFolder(savedSearch: SavedSearch) {
+    const name = String(
+      (await requestModal({
+        title: 'Rename smart folder',
+        inputLabel: 'Name',
+        inputValue: savedSearch.name,
+        confirmLabel: 'Rename'
+      })) ?? ''
+    ).trim()
+    if (!name || name === savedSearch.name) return
+
+    const previousSearches = savedSearches
+    savedSearches = savedSearches.map((candidate) =>
+      candidate.id === savedSearch.id ? { ...candidate, name } : candidate
+    )
+    try {
+      const res = await fetch(`/api/saved-searches/${savedSearch.id}`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name })
+      })
+      if (!res.ok) throw new Error(await readErrorMessage(res, 'Failed to rename smart folder.'))
+      window.dispatchEvent(new CustomEvent('mail:saved-searches-changed'))
+    } catch (error) {
+      savedSearches = previousSearches
+      smartFolderError = errorMessageFromUnknown(error, 'Failed to rename smart folder.')
     }
   }
 
@@ -542,6 +654,20 @@
   })
 
   $effect(() => {
+    keyboard.shortcutHelpOpen = shortcutHelpOpen
+  })
+
+  $effect(() => {
+    keyboard.onShortcutHelp = () => {
+      shortcutHelpOpen = !shortcutHelpOpen
+    }
+    return () => {
+      keyboard.onShortcutHelp = null
+      keyboard.shortcutHelpOpen = false
+    }
+  })
+
+  $effect(() => {
     // Register select callback so the keyboard module can trigger navigation
     keyboard.onMailboxSelect = () => {
       const mb = mailboxes[keyboard.focusedMailboxIndex]
@@ -614,6 +740,11 @@
     void fetchDrafts('mount')
     void registerPush()
 
+    const onSavedSearchesChanged = () => {
+      void fetchSavedSearches()
+    }
+    window.addEventListener('mail:saved-searches-changed', onSavedSearchesChanged)
+
     const onMailboxStateChanged = (event: Event) => {
       const reason =
         event instanceof CustomEvent && typeof event.detail?.reason === 'string'
@@ -639,6 +770,7 @@
         syncPollTimer = null
       }
       window.removeEventListener(MAILBOX_STATE_CHANGED_EVENT, onMailboxStateChanged)
+      window.removeEventListener('mail:saved-searches-changed', onSavedSearchesChanged)
       clearInterval(draftsInterval)
       clearInterval(unreadInterval)
       navigator.clearAppBadge?.().catch(() => {})
@@ -722,7 +854,7 @@
 <svelte:window bind:innerWidth={viewportWidth} />
 
 <div
-  class="flex h-screen overflow-hidden bg-[#0d0d10] text-zinc-100"
+  class="app-shell flex h-screen overflow-hidden text-zinc-100"
   class:cursor-col-resize={resizing}
   class:select-none={resizing}
 >
@@ -738,7 +870,7 @@
   <aside
     style={isMobile ? undefined : `width: ${sidebarWidth}px; min-width: ${sidebarWidth}px`}
     class={[
-      'flex flex-col bg-[#0a0a0d]',
+      'app-sidebar flex flex-col',
       isMobile
         ? [
             'absolute inset-y-0 left-0 z-40 w-[85vw] max-w-xs transition-transform duration-200 ease-out',
@@ -893,6 +1025,57 @@
             {/if}
           </div>
         {/each}
+
+        {#if savedSearches.length > 0}
+          <div class="pt-3">
+            <p class="px-3 pb-2 text-xs font-semibold tracking-widest text-zinc-500 uppercase">
+              Smart folders
+            </p>
+            <div class="space-y-1">
+              {#each savedSearches as savedSearch (savedSearch.id)}
+                {@const href = resolve(`/inbox?q=${encodeURIComponent(savedSearch.query)}`)}
+                {@const activeSmartFolder = page.url.searchParams.get('q') === savedSearch.query}
+                <div
+                  class={[
+                    'group flex items-center gap-1 rounded-xl transition',
+                    activeSmartFolder
+                      ? 'bg-white/8 text-white'
+                      : 'text-zinc-400 hover:bg-white/4 hover:text-zinc-200'
+                  ]}
+                >
+                  <a
+                    {href}
+                    title={savedSearch.query}
+                    onclick={() => {
+                      mobileNavOpen = false
+                      keyboard.panel = 'list'
+                    }}
+                    class="flex min-w-0 flex-1 items-center gap-2.5 rounded-xl px-3 py-2 text-sm transition"
+                  >
+                    <Bookmark size={15} class="shrink-0" />
+                    <span class="truncate">{savedSearch.name}</span>
+                  </a>
+                  <button
+                    type="button"
+                    class="rounded-lg p-1.5 text-zinc-600 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 hover:bg-white/8 hover:text-zinc-200"
+                    aria-label={`Rename smart folder ${savedSearch.name}`}
+                    onclick={() => void renameSmartFolder(savedSearch)}
+                  >
+                    <Pencil size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    class="mr-1 rounded-lg p-1.5 text-zinc-600 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 hover:bg-white/8 hover:text-red-300"
+                    aria-label={`Delete smart folder ${savedSearch.name}`}
+                    onclick={() => void deleteSmartFolder(savedSearch)}
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/if}
       </nav>
 
       <div class="mt-auto shrink-0 space-y-1 pt-4">
@@ -915,6 +1098,21 @@
               ]}
             ></span>
           </span>
+        </button>
+        <button
+          type="button"
+          onclick={() => (shortcutHelpOpen = true)}
+          aria-keyshortcuts="?"
+          class="flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-sm text-zinc-400 transition hover:bg-white/4 hover:text-zinc-200"
+        >
+          <span class="flex items-center gap-2.5">
+            <CircleHelp size={15} />
+            Shortcuts
+          </span>
+          <kbd
+            class="rounded border border-white/15 bg-white/6 px-1.5 py-0.5 font-mono text-[11px] text-zinc-500"
+            >?</kbd
+          >
         </button>
         <div class="relative">
           <button
@@ -948,7 +1146,7 @@
             ></button>
             <div
               role="menu"
-              class="absolute bottom-full left-0 z-30 mb-2 w-full overflow-hidden rounded-2xl border border-white/10 bg-zinc-950/95 p-1.5 shadow-2xl ring-1 shadow-black/50 ring-black/20 backdrop-blur-xl"
+              class="app-popover absolute bottom-full left-0 z-30 mb-2 w-full overflow-hidden rounded-2xl border border-white/10 p-1.5 shadow-2xl ring-1 shadow-black/50 ring-black/20 backdrop-blur-xl"
             >
               <a
                 href={resolve('/contacts')}
@@ -1116,11 +1314,6 @@
                       </div>
                     {/if}
 
-                    <ErrorDialog
-                      message={draftsError}
-                      title="Mail error"
-                      onclose={() => (draftsError = null)}
-                    />
                   </div>
                 </div>
               </div>
@@ -1162,7 +1355,7 @@
 
   <div class="min-w-0 flex-1 overflow-hidden">
     <div class="flex h-full min-h-0 flex-col">
-      <div class="flex items-center gap-3 bg-[#0b0b0e] px-4 py-3 md:hidden">
+      <div class="app-mobile-header flex items-center gap-3 px-4 py-3 md:hidden">
         <button
           type="button"
           class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-200 transition hover:bg-white/6"
@@ -1192,6 +1385,15 @@
         <div class="flex items-center gap-2">
           <button
             type="button"
+            class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-200 transition hover:bg-white/6"
+            aria-label="Open keyboard shortcut help"
+            aria-keyshortcuts="?"
+            onclick={() => (shortcutHelpOpen = true)}
+          >
+            <CircleHelp size={16} />
+          </button>
+          <button
+            type="button"
             class="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-blue-500"
             onclick={() => void openCompose()}
           >
@@ -1208,3 +1410,25 @@
 </div>
 
 <Composer />
+<ShortcutHelpOverlay open={shortcutHelpOpen} onclose={() => (shortcutHelpOpen = false)} />
+
+<ErrorDialog message={draftsError} title="Mail error" onclose={() => (draftsError = null)} />
+<ErrorDialog
+  message={smartFolderError}
+  title="Smart folder error"
+  onclose={() => (smartFolderError = null)}
+/>
+
+{#if actionModal}
+  <ActionModal
+    title={actionModal.title}
+    message={actionModal.message}
+    confirmLabel={actionModal.confirmLabel}
+    cancelLabel={actionModal.cancelLabel}
+    tone={actionModal.tone}
+    inputLabel={actionModal.inputLabel}
+    inputValue={actionModal.inputValue}
+    onconfirm={(value) => closeActionModal(value ?? true)}
+    oncancel={() => closeActionModal(null)}
+  />
+{/if}

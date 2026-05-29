@@ -1,10 +1,10 @@
 import type { LayoutServerLoad } from './$types'
 import { db } from '$lib/server/db'
-import { mailMessage, mailMessageMailbox } from '$lib/server/db/schema'
+import { mailMessage, mailMessageMailbox, savedSearch } from '$lib/server/db/schema'
 import { getImapMailboxes } from '$lib/server/mail'
 import { isAlwaysReadMailbox } from '$lib/mailbox'
 import { getSimplifiedViewEnabled, getTranslationTargetLanguage } from '$lib/server/preferences'
-import { eq, notLike, sql } from 'drizzle-orm'
+import { asc, eq, notLike, sql } from 'drizzle-orm'
 import { getDemoUnreadCounts, isDemoModeEnabled } from '$lib/server/demo'
 
 export const load: LayoutServerLoad = async ({ locals, cookies }) => {
@@ -14,11 +14,12 @@ export const load: LayoutServerLoad = async ({ locals, cookies }) => {
       unreadCounts: getDemoUnreadCounts(),
       user: locals.user ?? null,
       simplifiedView: getSimplifiedViewEnabled(cookies),
-      translationTargetLanguage: getTranslationTargetLanguage(cookies)
+      translationTargetLanguage: getTranslationTargetLanguage(cookies),
+      savedSearches: []
     }
   }
 
-  const [imapMailboxes, unreadRows] = await Promise.all([
+  const [imapMailboxes, unreadRows, savedSearchRows] = await Promise.all([
     getImapMailboxes(),
     db
       .select({
@@ -28,7 +29,8 @@ export const load: LayoutServerLoad = async ({ locals, cookies }) => {
       .from(mailMessageMailbox)
       .innerJoin(mailMessage, eq(mailMessageMailbox.messageId, mailMessage.messageId))
       .where(notLike(mailMessageMailbox.flags, '%\\\\Seen%'))
-      .groupBy(mailMessageMailbox.mailbox)
+      .groupBy(mailMessageMailbox.mailbox),
+    db.select().from(savedSearch).orderBy(asc(savedSearch.name))
   ])
 
   return {
@@ -40,6 +42,7 @@ export const load: LayoutServerLoad = async ({ locals, cookies }) => {
     ) as Record<string, number>,
     user: locals.user ?? null,
     simplifiedView: getSimplifiedViewEnabled(cookies),
-    translationTargetLanguage: getTranslationTargetLanguage(cookies)
+    translationTargetLanguage: getTranslationTargetLanguage(cookies),
+    savedSearches: savedSearchRows
   }
 }

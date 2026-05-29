@@ -2,9 +2,16 @@
   import favicon from '$lib/assets/favicon.svg'
   import ErrorDialog from '$lib/components/ErrorDialog.svelte'
   import { errorMessageFromUnknown, readErrorMessage } from '$lib/http'
+  import { clearOfflineCache } from '$lib/offline-cache'
+  import { onMount } from 'svelte'
 
   let loading = $state(false)
   let error = $state<string | null>(null)
+
+  onMount(() => {
+    void clearOfflineCache()
+    navigator.serviceWorker?.controller?.postMessage({ type: 'CLEAR_OFFLINE_CACHE' })
+  })
 
   async function signIn() {
     loading = true

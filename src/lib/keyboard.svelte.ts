@@ -6,7 +6,9 @@ export const keyboard = $state({
   panel: 'list' as KeyPanel, // which visual panel has keyboard focus
   focusedMailboxIndex: 0, // focused row in the mailbox sidebar
   mailboxCount: 0, // total mailboxes (set by sidebar)
-  onMailboxSelect: null as (() => void) | null
+  onMailboxSelect: null as (() => void) | null,
+  onShortcutHelp: null as (() => void) | null,
+  shortcutHelpOpen: false
 })
 
 type Handler = () => void
@@ -44,6 +46,23 @@ function isEditableTarget(el: EventTarget | null): boolean {
 function handleKeyDown(e: KeyboardEvent) {
   if (e.metaKey || e.ctrlKey || e.altKey) return
   if (isEditableTarget(e.target)) return
+
+  if (e.key === '?' && keyboard.onShortcutHelp) {
+    e.preventDefault()
+    keyboard.onShortcutHelp()
+    return
+  }
+
+  if (e.key === 'Escape' && keyboard.shortcutHelpOpen && keyboard.onShortcutHelp) {
+    e.preventDefault()
+    keyboard.onShortcutHelp()
+    return
+  }
+
+  if (keyboard.shortcutHelpOpen) {
+    e.preventDefault()
+    return
+  }
 
   const ctx = activeContext()
   const handlers = ctx ? (handlersByContext[ctx] ?? {}) : {}
@@ -141,6 +160,10 @@ function ensureListener() {
   if (listenerAttached) return
   document.addEventListener('keydown', handleKeyDown)
   listenerAttached = true
+}
+
+export function setupKeyboardShortcuts(): void {
+  ensureListener()
 }
 
 /**

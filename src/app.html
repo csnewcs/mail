@@ -9,6 +9,21 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Mail" />
+    <script>
+      ;(() => {
+        const match = document.cookie.match(/(?:^|; )mail_theme_preference=([^;]+)/)
+        const preference = match ? decodeURIComponent(match[1]) : 'system'
+        const theme =
+          preference === 'light' || preference === 'dark'
+            ? preference
+            : window.matchMedia('(prefers-color-scheme: light)').matches
+              ? 'light'
+              : 'dark'
+        document.documentElement.dataset.theme = theme
+        document.documentElement.dataset.themePreference = preference
+        document.documentElement.style.colorScheme = theme
+      })()
+    </script>
     <link rel="manifest" href="/manifest.json" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     %sveltekit.head%

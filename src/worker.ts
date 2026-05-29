@@ -1,6 +1,7 @@
 import 'dotenv/config'
 import { setTimeout as delay } from 'node:timers/promises'
 import { isDemoModeEnabled } from './lib/server/demo'
+import { maybeRunCleanupRulesFromWorker } from './lib/server/cleanup-rules'
 import { runMigrations } from './lib/server/db'
 import { drainImapQueue, recoverInterruptedImapJobs } from './lib/server/imap-worker'
 import {
@@ -53,6 +54,7 @@ async function tick() {
     await heartbeat()
     await drainImapQueue()
     await drainSmtpQueue()
+    await maybeRunCleanupRulesFromWorker()
 
     // The sync clock is paused while SMTP jobs are pending/running/retrying.
     if (await hasUnfinishedSmtpJobs()) return

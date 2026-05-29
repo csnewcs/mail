@@ -180,6 +180,31 @@ async function runMove(config: MailConfig, job: ImapJobRow) {
   }
 }
 
+async function runAddFlag(config: MailConfig, job: ImapJobRow) {
+  if (!job.targetMailbox) {
+    throw new Error('Missing flag for add-flag job')
+  }
+
+  let client: ImapFlow | null = null
+  try {
+    client = await connectImap(config, `add-flag ${job.mailbox}`)
+    const lock = await client.getMailboxLock(job.mailbox)
+    try {
+      await client.messageFlagsAdd(String(job.uid), [job.targetMailbox], { uid: true })
+    } finally {
+      lock.release()
+    }
+  } finally {
+    if (client) {
+      try {
+        await client.logout()
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
 async function runJob(job: ImapJobRow) {
   const config = await getImapConfig()
   if ('missing' in config) {
@@ -198,6 +223,11 @@ async function runJob(job: ImapJobRow) {
 
   if (job.type === 'move') {
     await runMove(toConfig(config), job)
+    return
+  }
+
+  if (job.type === 'add_flag') {
+    await runAddFlag(toConfig(config), job)
     return
   }
 

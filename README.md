@@ -69,6 +69,13 @@ For local container deployment, `docker compose up --build` starts both `web` an
 
 `.env` template is [here](./.env.example)
 
+## Secret storage
+
+Set `MAIL_SECRET_KEY` in both the web and worker environments to encrypt IMAP and
+SMTP passwords saved from the settings UI. Existing plaintext database passwords
+remain readable without the key, and migrate to `enc:v1` encrypted values after
+the key is configured and settings are loaded.
+
 ## Contributors
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->

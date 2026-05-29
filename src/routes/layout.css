@@ -2,25 +2,81 @@
 
 :root {
   color-scheme: dark;
+  --app-bg: #0d0d10;
+  --app-sidebar-bg: #0a0a0d;
+  --app-mobile-header-bg: #0b0b0e;
+  --app-popover-bg: rgba(9, 9, 11, 0.95);
+  --app-surface-bg: rgba(255, 255, 255, 0.03);
+  --app-field-bg: rgb(24 24 27);
+  --app-field-text: rgb(228 228 231);
+  --app-field-placeholder: rgb(113 113 122);
+  --app-scrollbar-thumb: rgba(255, 255, 255, 0.12);
+  --app-scrollbar-thumb-hover: rgba(255, 255, 255, 0.22);
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --app-bg: #f4f6fb;
+  --app-sidebar-bg: #ffffff;
+  --app-mobile-header-bg: rgba(255, 255, 255, 0.94);
+  --app-popover-bg: rgba(255, 255, 255, 0.96);
+  --app-surface-bg: rgba(15, 23, 42, 0.03);
+  --app-field-bg: #ffffff;
+  --app-field-text: rgb(24 24 27);
+  --app-field-placeholder: rgb(113 113 122);
+  --app-scrollbar-thumb: rgba(15, 23, 42, 0.18);
+  --app-scrollbar-thumb-hover: rgba(15, 23, 42, 0.28);
+}
+
+body {
+  background: var(--app-bg);
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+html[data-theme='light'] body {
+  color: #0f172a;
+}
+
+.app-shell {
+  background: var(--app-bg);
+}
+
+.app-sidebar {
+  background: var(--app-sidebar-bg);
+}
+
+.app-mobile-header {
+  background: var(--app-mobile-header-bg);
+}
+
+.app-popover {
+  background: var(--app-popover-bg);
+}
+
+.app-surface {
+  background: var(--app-surface-bg);
 }
 
 input,
 select,
 textarea {
-  color-scheme: dark;
-  background-color: rgb(24 24 27);
-  color: rgb(228 228 231);
+  background-color: var(--app-field-bg);
+  color: var(--app-field-text);
 }
 
 select option,
 select optgroup {
-  background-color: rgb(24 24 27);
-  color: rgb(228 228 231);
+  background-color: var(--app-field-bg);
+  color: var(--app-field-text);
 }
 
 input::placeholder,
 textarea::placeholder {
-  color: rgb(113 113 122);
+  color: var(--app-field-placeholder);
 }
 
 button,
@@ -30,7 +86,7 @@ a {
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+  scrollbar-color: var(--app-scrollbar-thumb) transparent;
 }
 
 *::-webkit-scrollbar {
@@ -43,12 +99,12 @@ a {
 }
 
 *::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--app-scrollbar-thumb);
   border-radius: 999px;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.22);
+  background: var(--app-scrollbar-thumb-hover);
 }
 
 .route-loading-bar {
@@ -81,6 +137,178 @@ a {
 
 .route-loading-bar.active::before {
   animation: route-loading-bar 900ms ease-in-out infinite;
+}
+
+:root[data-theme='light'] .bg-\[\#0d0d10\],
+:root[data-theme='light'] .bg-\[\#0a0a0d\],
+:root[data-theme='light'] .bg-\[\#0b0b0e\],
+:root[data-theme='light'] .bg-\[\#111116\],
+:root[data-theme='light'] .bg-\[\#131319\],
+:root[data-theme='light'] .bg-\[\#1a1b20\],
+:root[data-theme='light'] .bg-\[\#16161a\],
+:root[data-theme='light'] .bg-\[\#18181c\],
+:root[data-theme='light'] .bg-\[\#1e1e24\],
+:root[data-theme='light'] .bg-zinc-800,
+:root[data-theme='light'] .bg-zinc-950,
+:root[data-theme='light'] .bg-zinc-900,
+:root[data-theme='light'] .bg-black,
+:root[data-theme='light'] .bg-black\/20,
+:root[data-theme='light'] .bg-black\/30,
+:root[data-theme='light'] .bg-black\/40,
+:root[data-theme='light'] .bg-zinc-950\/85,
+:root[data-theme='light'] .bg-zinc-950\/95 {
+  background-color: #ffffff !important;
+}
+
+:root[data-theme='light'] .bg-white\/3,
+:root[data-theme='light'] .bg-white\/4,
+:root[data-theme='light'] .bg-white\/5,
+:root[data-theme='light'] .bg-white\/6,
+:root[data-theme='light'] .bg-white\/8,
+:root[data-theme='light'] .bg-white\/10,
+:root[data-theme='light'] .bg-white\/15 {
+  background-color: rgba(15, 23, 42, 0.05) !important;
+}
+
+:root[data-theme='light'] .text-white,
+:root[data-theme='light'] .text-zinc-100,
+:root[data-theme='light'] .text-zinc-200,
+:root[data-theme='light'] .text-zinc-300 {
+  color: #0f172a !important;
+}
+
+:root[data-theme='light'] .text-zinc-400,
+:root[data-theme='light'] .text-zinc-500,
+:root[data-theme='light'] .text-zinc-600 {
+  color: #475569 !important;
+}
+
+:root[data-theme='light'] .bg-blue-600,
+:root[data-theme='light'] .bg-blue-500,
+:root[data-theme='light'] .hover\:bg-blue-500:hover {
+  background-color: #2563eb !important;
+}
+
+:root[data-theme='light'] .bg-rose-600,
+:root[data-theme='light'] .bg-red-600,
+:root[data-theme='light'] .hover\:bg-rose-500:hover,
+:root[data-theme='light'] .hover\:bg-red-500:hover {
+  background-color: #dc2626 !important;
+}
+
+:root[data-theme='light'] .bg-emerald-600,
+:root[data-theme='light'] .bg-green-600,
+:root[data-theme='light'] .hover\:bg-emerald-500:hover,
+:root[data-theme='light'] .hover\:bg-green-500:hover {
+  background-color: #059669 !important;
+}
+
+:root[data-theme='light'] .bg-amber-500,
+:root[data-theme='light'] .bg-yellow-500 {
+  background-color: #d97706 !important;
+}
+
+:root[data-theme='light'] .bg-blue-600.text-white,
+:root[data-theme='light'] .bg-blue-500.text-white,
+:root[data-theme='light'] .bg-rose-600.text-white,
+:root[data-theme='light'] .bg-red-600.text-white,
+:root[data-theme='light'] .bg-emerald-600.text-white,
+:root[data-theme='light'] .bg-green-600.text-white,
+:root[data-theme='light'] .bg-amber-500.text-white,
+:root[data-theme='light'] .bg-yellow-500.text-white,
+:root[data-theme='light'] .bg-blue-600 .text-white,
+:root[data-theme='light'] .bg-rose-600 .text-white,
+:root[data-theme='light'] .bg-red-600 .text-white,
+:root[data-theme='light'] .bg-emerald-600 .text-white,
+:root[data-theme='light'] .bg-green-600 .text-white {
+  color: #ffffff !important;
+}
+
+:root[data-theme='light'] .bg-rose-500\/10,
+:root[data-theme='light'] .bg-rose-500\/20,
+:root[data-theme='light'] .bg-red-500\/10,
+:root[data-theme='light'] .hover\:bg-rose-500\/20:hover {
+  background-color: #fee2e2 !important;
+}
+
+:root[data-theme='light'] .bg-emerald-500\/10,
+:root[data-theme='light'] .bg-green-500\/10 {
+  background-color: #dcfce7 !important;
+}
+
+:root[data-theme='light'] .bg-amber-400\/10,
+:root[data-theme='light'] .bg-amber-500\/10,
+:root[data-theme='light'] .bg-amber-300\/10,
+:root[data-theme='light'] .hover\:bg-amber-300\/20:hover,
+:root[data-theme='light'] .hover\:bg-amber-500\/20:hover,
+:root[data-theme='light'] .bg-yellow-400\/10 {
+  background-color: #fef3c7 !important;
+}
+
+:root[data-theme='light'] .text-rose-200,
+:root[data-theme='light'] .text-rose-300,
+:root[data-theme='light'] .text-rose-400,
+:root[data-theme='light'] .text-red-200,
+:root[data-theme='light'] .text-red-300 {
+  color: #991b1b !important;
+}
+
+:root[data-theme='light'] .text-emerald-300,
+:root[data-theme='light'] .text-emerald-400,
+:root[data-theme='light'] .text-green-300 {
+  color: #166534 !important;
+}
+
+:root[data-theme='light'] .text-amber-50,
+:root[data-theme='light'] .text-amber-100,
+:root[data-theme='light'] .text-amber-100\/70,
+:root[data-theme='light'] .text-amber-200,
+:root[data-theme='light'] .text-amber-300,
+:root[data-theme='light'] .text-amber-400,
+:root[data-theme='light'] .text-yellow-300 {
+  color: #92400e !important;
+}
+
+:root[data-theme='light'] .border-rose-500\/30 {
+  border-color: rgba(153, 27, 27, 0.28) !important;
+}
+
+:root[data-theme='light'] .border-amber-300\/20,
+:root[data-theme='light'] .border-amber-500\/20,
+:root[data-theme='light'] .border-amber-500\/30 {
+  border-color: rgba(146, 64, 14, 0.28) !important;
+}
+
+:root[data-theme='light'] [role='tooltip'],
+:root[data-theme='light'] .tooltip {
+  background-color: #0f172a !important;
+  color: #ffffff !important;
+  border-color: rgba(15, 23, 42, 0.2) !important;
+}
+
+:root[data-theme='light'] .border-white\/8,
+:root[data-theme='light'] .border-white\/10,
+:root[data-theme='light'] .border-white\/15,
+:root[data-theme='light'] .border-white\/20,
+:root[data-theme='light'] .border-l-white\/8 {
+  border-color: rgba(15, 23, 42, 0.12) !important;
+}
+
+:root[data-theme='light'] .hover\:bg-white\/4:hover,
+:root[data-theme='light'] .hover\:bg-white\/6:hover,
+:root[data-theme='light'] .hover\:bg-white\/8:hover,
+:root[data-theme='light'] .hover\:bg-white\/10:hover {
+  background-color: rgba(15, 23, 42, 0.08) !important;
+}
+
+:root[data-theme='light'] .shadow-black\/20,
+:root[data-theme='light'] .shadow-black\/30,
+:root[data-theme='light'] .shadow-black\/40 {
+  --tw-shadow-color: rgba(15, 23, 42, 0.14) !important;
+}
+
+:root[data-theme='light'] .composer-editor-wrap .ProseMirror {
+  color: #0f172a !important;
 }
 
 @keyframes route-loading-bar {

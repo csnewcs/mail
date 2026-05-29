@@ -3,6 +3,8 @@ import { db } from './db'
 import { mailConfig, mailPushSubscription } from './db/schema'
 import { logServerError } from './perf'
 import { eq } from 'drizzle-orm'
+import { getQuietHoursConfig } from './config'
+import { isQuietHoursActive } from './quiet-hours'
 
 let initialized = false
 
@@ -31,8 +33,11 @@ export async function sendPushToAll(payload: {
   title: string
   body: string
   url?: string
+  messageId?: number
   unreadCount?: number
 }): Promise<void> {
+  if (isQuietHoursActive(await getQuietHoursConfig())) return
+
   const ready = await ensureInit()
   if (!ready) return
 

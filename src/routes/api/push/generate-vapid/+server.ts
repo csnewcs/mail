@@ -5,8 +5,10 @@ import { db } from '$lib/server/db'
 import { mailConfig } from '$lib/server/db/schema'
 import { resetPushInit } from '$lib/server/push'
 import { generateDemoVapidKeys, isDemoModeEnabled } from '$lib/server/demo'
+import { writeAuditLog } from '$lib/server/audit-log'
 
-export const POST: RequestHandler = async ({ url }) => {
+export const POST: RequestHandler = async (event) => {
+  const { url } = event
   if (isDemoModeEnabled()) {
     return json(generateDemoVapidKeys())
   }
@@ -32,6 +34,14 @@ export const POST: RequestHandler = async ({ url }) => {
     })
 
   resetPushInit()
+
+  await writeAuditLog({
+    action: 'security.vapid.generate',
+    entityType: 'security',
+    summary: 'Generated VAPID keys',
+    metadata: { publicKey: vapidKeys.publicKey, privateKey: vapidKeys.privateKey, subject },
+    event
+  })
 
   return json({ publicKey: vapidKeys.publicKey, subject })
 }

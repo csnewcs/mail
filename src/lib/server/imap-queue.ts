@@ -92,3 +92,33 @@ export async function enqueueMoveMessage(
       }
     })
 }
+
+export async function enqueueAddFlag(uid: number, mailbox: string, flag: string) {
+  const now = new Date()
+  await db
+    .insert(imapJob)
+    .values({
+      type: 'add_flag',
+      mailbox,
+      uid,
+      targetMailbox: flag,
+      status: 'pending',
+      dedupeKey: `add_flag:${mailbox}:${uid}:${flag}`,
+      attemptCount: 0,
+      availableAt: now,
+      lastError: null,
+      createdAt: now,
+      updatedAt: now
+    })
+    .onConflictDoUpdate({
+      target: imapJob.dedupeKey,
+      set: {
+        targetMailbox: flag,
+        status: 'pending',
+        attemptCount: 0,
+        availableAt: now,
+        lastError: null,
+        updatedAt: now
+      }
+    })
+}

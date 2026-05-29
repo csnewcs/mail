@@ -6,6 +6,8 @@ import { invalidateConfigCache, isOidcConfigured } from '$lib/server/config'
 import { invalidateAuth } from '$lib/server/auth'
 import { env } from '$env/dynamic/private'
 import { isDemoModeEnabled } from '$lib/server/demo'
+import { encryptSecret } from '$lib/server/secrets'
+import { writeAuditLog } from '$lib/server/audit-log'
 
 export const load: PageServerLoad = async () => {
   if (isDemoModeEnabled()) {
@@ -18,7 +20,8 @@ export const load: PageServerLoad = async () => {
 }
 
 export const actions: Actions = {
-  default: async ({ request }) => {
+  default: async (event) => {
+    const { request } = event
     if (isDemoModeEnabled()) {
       redirect(302, '/')
     }
@@ -52,7 +55,7 @@ export const actions: Actions = {
     if (imapHost) values.imapHost = imapHost
     if (imapPort > 0) values.imapPort = imapPort
     if (imapUser) values.imapUser = imapUser
-    if (imapPassword) values.imapPassword = imapPassword
+    if (imapPassword) values.imapPassword = encryptSecret(imapPassword)
     if (imapMailbox) values.imapMailbox = imapMailbox
     if (imapPollSeconds > 0) values.imapPollSeconds = imapPollSeconds
     values.imapSecure = imapSecure
@@ -68,7 +71,7 @@ export const actions: Actions = {
     if (smtpHost) values.smtpHost = smtpHost
     if (smtpPort > 0) values.smtpPort = smtpPort
     if (smtpUser) values.smtpUser = smtpUser
-    if (smtpPassword) values.smtpPassword = smtpPassword
+    if (smtpPassword) values.smtpPassword = encryptSecret(smtpPassword)
     if (smtpFrom) values.smtpFrom = smtpFrom
     values.smtpSecure = smtpSecure
 
@@ -79,6 +82,25 @@ export const actions: Actions = {
 
     invalidateConfigCache()
     invalidateAuth()
+
+    await writeAuditLog({
+      action: 'security.setup.complete',
+      entityType: 'settings',
+      summary: 'Completed initial application setup',
+      metadata: {
+        sections: {
+          oidc: true,
+          imap: Boolean(imapHost || imapPort || imapUser || imapPassword || imapMailbox),
+          smtp: Boolean(smtpHost || smtpPort || smtpUser || smtpPassword || smtpFrom)
+        },
+        secretsUpdated: {
+          oidcClientSecret: true,
+          imapPassword: Boolean(imapPassword),
+          smtpPassword: Boolean(smtpPassword)
+        }
+      },
+      event
+    })
 
     redirect(302, '/login')
   }
