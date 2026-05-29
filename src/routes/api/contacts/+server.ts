@@ -3,10 +3,16 @@ import type { RequestHandler } from './$types'
 import { db } from '$lib/server/db'
 import { mailContact } from '$lib/server/db/schema'
 import {
+  contactCsvInputs,
+  deleteContact,
   findContactByEmail,
   importContactsFromMessages,
+  listContactGroups,
+  listContactsForExport,
   listContacts,
   normalizeEmail,
+  previewContactCsv,
+  serializeContactsCsv,
   upsertContacts
 } from '$lib/server/contacts'
 import { eq } from 'drizzle-orm'
@@ -15,6 +21,7 @@ import {
   findDemoContactByEmail,
   importDemoContactsFromMessages,
   isDemoModeEnabled,
+  listDemoContactGroups,
   listDemoContacts,
   updateDemoContact,
   upsertDemoContacts
@@ -30,18 +37,31 @@ function readString(value: unknown) {
 }
 
 export const GET: RequestHandler = async ({ url }) => {
-  const q = url.searchParams.get('q') ?? ''
-  const limit = Number(url.searchParams.get('limit') ?? 50)
-  if (isDemoModeEnabled()) {
-    return json({
-      contacts: listDemoContacts(q, Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 100) : 50)
+  if (url.searchParams.get('format') === 'csv') {
+    const contacts = isDemoModeEnabled()
+      ? listDemoContacts('', 10000)
+      : await listContactsForExport()
+    return new Response(serializeContactsCsv(contacts), {
+      headers: {
+        'content-type': 'text/csv; charset=utf-8',
+        'content-disposition': 'attachment; filename="contacts.csv"'
+      }
     })
   }
-  const contacts = await listContacts(
-    q,
-    Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 100) : 50
-  )
-  return json({ contacts })
+
+  const q = url.searchParams.get('q') ?? ''
+  const limit = Number(url.searchParams.get('limit') ?? 50)
+  const includeGroups = url.searchParams.get('includeGroups') === '1'
+  const normalizedLimit = Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 100) : 50
+  if (isDemoModeEnabled()) {
+    return json({
+      contacts: listDemoContacts(q, normalizedLimit),
+      groups: includeGroups ? listDemoContactGroups(q, normalizedLimit) : []
+    })
+  }
+  const contacts = await listContacts(q, normalizedLimit)
+  const groups = includeGroups ? await listContactGroups(q, normalizedLimit) : []
+  return json({ contacts, groups })
 }
 
 export const POST: RequestHandler = async ({ request }) => {
@@ -54,6 +74,22 @@ export const POST: RequestHandler = async ({ request }) => {
     }
     const imported = await importContactsFromMessages()
     return json({ imported })
+  }
+
+  if (body?.action === 'preview-csv' || body?.action === 'import-csv') {
+    const csv = readString(body?.csv)
+    if (!csv) return error(400, 'CSV file is required')
+    const preview = previewContactCsv(csv)
+    if (body.action === 'preview-csv') return json({ preview })
+
+    const contacts = contactCsvInputs(csv)
+    if (contacts.length === 0) return error(400, 'CSV has no valid contacts to import')
+    if (isDemoModeEnabled()) {
+      await upsertDemoContacts(contacts)
+    } else {
+      await upsertContacts(contacts)
+    }
+    return json({ imported: contacts.length, preview })
   }
 
   const email = normalizeEmail(readString(body?.email))
@@ -119,6 +155,6 @@ export const DELETE: RequestHandler = async ({ url }) => {
     return json({ success: true })
   }
 
-  await db.delete(mailContact).where(eq(mailContact.id, id))
+  await deleteContact(id)
   return json({ success: true })
 }
