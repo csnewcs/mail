@@ -12,7 +12,7 @@ export type SmtpSendJobPayload = {
   attachments: ComposerAttachment[]
 }
 
-export async function enqueueSmtpSendJob(payload: SmtpSendJobPayload) {
+export async function enqueueSmtpSendJob(payload: SmtpSendJobPayload, availableAt = new Date()) {
   const now = new Date()
   const [job] = await db
     .insert(smtpJob)
@@ -20,7 +20,7 @@ export async function enqueueSmtpSendJob(payload: SmtpSendJobPayload) {
       payload: JSON.stringify(payload),
       status: 'pending',
       attemptCount: 0,
-      availableAt: now,
+      availableAt,
       lastError: null,
       createdAt: now,
       updatedAt: now

@@ -12,6 +12,7 @@ export const POST: RequestHandler = async ({ request }) => {
     subject,
     html,
     inReplyTo,
+    sendAt,
     attachments: rawAttachments
   } = await request.json()
   if (!to || !subject) {
@@ -36,15 +37,23 @@ export const POST: RequestHandler = async ({ request }) => {
     return json({ success: true, demo: true })
   }
 
-  const jobId = await enqueueSmtpSendJob({
-    to,
-    cc: cc || null,
-    bcc: bcc || null,
-    subject,
-    html: html ?? null,
-    inReplyTo: inReplyTo || null,
-    attachments: parsedAttachments.attachments
-  })
+  const availableAt = typeof sendAt === 'string' && sendAt ? new Date(sendAt) : new Date()
+  if (Number.isNaN(availableAt.getTime())) {
+    return error(400, 'Invalid sendAt value')
+  }
 
-  return json({ success: true, queued: true, jobId })
+  const jobId = await enqueueSmtpSendJob(
+    {
+      to,
+      cc: cc || null,
+      bcc: bcc || null,
+      subject,
+      html: html ?? null,
+      inReplyTo: inReplyTo || null,
+      attachments: parsedAttachments.attachments
+    },
+    availableAt
+  )
+
+  return json({ success: true, queued: true, jobId, sendAt: availableAt.toISOString() })
 }

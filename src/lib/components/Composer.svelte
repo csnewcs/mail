@@ -63,6 +63,7 @@
   let viewportWidth = $state(1024)
   let composingAi = $state(false)
   let errorDialogMessage = $state<string | null>(null)
+  let sendLaterAt = $state('')
 
   const isMobile = $derived(viewportWidth < 640)
   const useFullscreenLayout = $derived(composer.fullscreen || (isMobile && !composer.minimized))
@@ -287,7 +288,16 @@
   async function send() {
     if (!editor || sending) return
     const html = editor.getHTML()
-    const payload = {
+    const payload: {
+      to: string
+      cc: string | null
+      bcc: string | null
+      subject: string
+      html: string
+      attachments: ComposerAttachment[]
+      inReplyTo: string | null
+      sendAt?: string
+    } = {
       to: composer.to,
       cc: composer.cc || null,
       bcc: composer.bcc || null,
@@ -296,6 +306,7 @@
       attachments: composer.attachments,
       inReplyTo: composer.inReplyTo
     }
+    if (sendLaterAt) payload.sendAt = new Date(sendLaterAt).toISOString()
     sending = true
     try {
       const res = await fetch('/api/send', {
@@ -305,6 +316,7 @@
       })
       if (res.ok) {
         await deleteDraft()
+        sendLaterAt = ''
         closeComposer()
       } else {
         errorDialogMessage = await readErrorMessage(res, 'Failed to send message.')
@@ -836,6 +848,17 @@
           <Send size={14} />
           {sending ? 'Sending…' : 'Send'}
         </button>
+        <label
+          class="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-zinc-400"
+        >
+          Send later
+          <input
+            type="datetime-local"
+            bind:value={sendLaterAt}
+            disabled={sending}
+            class="w-36 bg-transparent text-zinc-200 outline-none disabled:opacity-40"
+          />
+        </label>
         <button
           type="button"
           disabled={sending}
