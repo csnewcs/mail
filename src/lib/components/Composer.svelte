@@ -34,7 +34,9 @@
     Paperclip,
     FileText,
     Trash2,
-    Sparkles
+    Sparkles,
+    Clock3,
+    ChevronDown
   } from 'lucide-svelte'
   import { composer, closeComposer } from '$lib/composer.svelte'
   import AddressInput from '$lib/components/AddressInput.svelte'
@@ -64,6 +66,7 @@
   let composingAi = $state(false)
   let errorDialogMessage = $state<string | null>(null)
   let sendLaterAt = $state('')
+  let showSendLaterMenu = $state(false)
 
   const isMobile = $derived(viewportWidth < 640)
   const useFullscreenLayout = $derived(composer.fullscreen || (isMobile && !composer.minimized))
@@ -210,6 +213,27 @@
       editor.isActive('paragraph', { textAlign: align }) ||
       editor.isActive('heading', { textAlign: align })
     )
+  }
+
+  function localDateTimeValue(date: Date) {
+    const offsetMs = date.getTimezoneOffset() * 60_000
+    return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16)
+  }
+
+  function setSendLater(minutesFromNow: number) {
+    sendLaterAt = localDateTimeValue(new Date(Date.now() + minutesFromNow * 60_000))
+    showSendLaterMenu = false
+  }
+
+  function sendLaterLabel() {
+    if (!sendLaterAt) return 'Send later'
+
+    return new Intl.DateTimeFormat(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit'
+    }).format(new Date(sendLaterAt))
   }
 
   function btnClass(active: boolean) {
@@ -848,17 +872,74 @@
           <Send size={14} />
           {sending ? 'Sending…' : 'Send'}
         </button>
-        <label
-          class="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-zinc-400"
-        >
-          Send later
-          <input
-            type="datetime-local"
-            bind:value={sendLaterAt}
+        <div class="relative">
+          <button
+            type="button"
             disabled={sending}
-            class="w-36 bg-transparent text-zinc-200 outline-none disabled:opacity-40"
-          />
-        </label>
+            onclick={() => (showSendLaterMenu = !showSendLaterMenu)}
+            class={[
+              'flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition disabled:cursor-not-allowed disabled:opacity-40',
+              sendLaterAt
+                ? 'border-blue-400/20 bg-blue-400/10 text-blue-200 hover:bg-blue-400/15'
+                : 'border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10'
+            ]}
+          >
+            <Clock3 size={14} />
+            {sendLaterLabel()}
+            <ChevronDown size={13} />
+          </button>
+
+          {#if showSendLaterMenu}
+            <div
+              class="absolute bottom-full left-0 z-20 mb-2 w-56 overflow-hidden rounded-xl border border-white/10 bg-zinc-950 shadow-2xl shadow-black/40"
+            >
+              <div class="p-1">
+                <button
+                  type="button"
+                  onclick={() => setSendLater(60)}
+                  class="block w-full rounded-lg px-3 py-2 text-left text-sm text-zinc-200 hover:bg-white/8"
+                >
+                  In 1 hour
+                </button>
+                <button
+                  type="button"
+                  onclick={() => setSendLater(240)}
+                  class="block w-full rounded-lg px-3 py-2 text-left text-sm text-zinc-200 hover:bg-white/8"
+                >
+                  In 4 hours
+                </button>
+                <button
+                  type="button"
+                  onclick={() => setSendLater(1440)}
+                  class="block w-full rounded-lg px-3 py-2 text-left text-sm text-zinc-200 hover:bg-white/8"
+                >
+                  Tomorrow
+                </button>
+                <button
+                  type="button"
+                  onclick={() => {
+                    sendLaterAt = ''
+                    showSendLaterMenu = false
+                  }}
+                  class="block w-full rounded-lg px-3 py-2 text-left text-sm text-zinc-400 hover:bg-white/8"
+                >
+                  Send immediately
+                </button>
+              </div>
+              <div class="border-t border-white/8 p-3">
+                <label class="block text-xs text-zinc-500" for="composer-send-later-custom">
+                  Custom time
+                </label>
+                <input
+                  id="composer-send-later-custom"
+                  type="datetime-local"
+                  bind:value={sendLaterAt}
+                  class="mt-1 w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-sm text-zinc-200 outline-none focus:border-blue-400/40"
+                />
+              </div>
+            </div>
+          {/if}
+        </div>
         <button
           type="button"
           disabled={sending}
