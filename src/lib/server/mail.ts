@@ -1737,19 +1737,12 @@ export async function searchMessages(query: string, limit: number, offset: numbe
     return []
   }
 
-  const pattern = `%${query}%`
+  const where = buildSearchWhere(query)
   const rows = await db
     .select(listSelect)
     .from(mailMessage)
     .innerJoin(mailMessageMailbox, eq(mailMessageMailbox.messageId, mailMessage.messageId))
-    .where(
-      or(
-        ilike(mailMessage.subject, pattern),
-        ilike(mailMessage.from, pattern),
-        ilike(mailMessage.to, pattern),
-        ilike(mailMessage.textContent, pattern)
-      )
-    )
+    .where(where)
     .orderBy(desc(mailMessage.receivedAt))
     .limit(limit + offset)
 
@@ -1778,12 +1771,55 @@ export async function countSearchMessages(query: string) {
   const trimmed = query.trim()
   if (!trimmed) return 0
 
-  const pattern = `%${trimmed}%`
+  const where = buildSearchWhere(trimmed)
   const [row] = await db
     .select({ value: sql<number>`count(distinct ${mailMessage.messageId})` })
     .from(mailMessage)
     .innerJoin(mailMessageMailbox, eq(mailMessageMailbox.messageId, mailMessage.messageId))
-    .where(
+    .where(where)
+
+  return Number(row?.value ?? 0)
+}
+
+function buildSearchWhere(query: string) {
+  const terms = query.match(/(?:[^\s"]+|"[^"]*")+/g) ?? []
+  const freeText: string[] = []
+  const conditions = []
+
+  for (const rawTerm of terms) {
+    const term = rawTerm.replace(/^"|"$/g, '')
+    const separator = term.indexOf(':')
+    if (separator === -1) {
+      freeText.push(term)
+      continue
+    }
+
+    const key = term.slice(0, separator).toLowerCase()
+    const value = term.slice(separator + 1)
+    if (!value) continue
+
+    if (key === 'from') conditions.push(ilike(mailMessage.from, `%${value}%`))
+    else if (key === 'to') conditions.push(ilike(mailMessage.to, `%${value}%`))
+    else if (key === 'subject') conditions.push(ilike(mailMessage.subject, `%${value}%`))
+    else if (key === 'before') {
+      const date = new Date(value)
+      if (!Number.isNaN(date.getTime())) conditions.push(sql`${mailMessage.receivedAt} < ${date}`)
+    } else if (key === 'after') {
+      const date = new Date(value)
+      if (!Number.isNaN(date.getTime())) conditions.push(sql`${mailMessage.receivedAt} > ${date}`)
+    } else if (key === 'has' && value.toLowerCase() === 'attachment') {
+      conditions.push(
+        sql`exists (select 1 from mail_attachment where mail_attachment.message_id = ${mailMessage.messageId})`
+      )
+    } else {
+      freeText.push(term)
+    }
+  }
+
+  const textQuery = freeText.join(' ').trim()
+  if (textQuery) {
+    const pattern = `%${textQuery}%`
+    conditions.push(
       or(
         ilike(mailMessage.subject, pattern),
         ilike(mailMessage.from, pattern),
@@ -1791,8 +1827,10 @@ export async function countSearchMessages(query: string) {
         ilike(mailMessage.textContent, pattern)
       )
     )
+  }
 
-  return Number(row?.value ?? 0)
+  if (conditions.length === 0) return sql`true`
+  return conditions.length === 1 ? conditions[0] : and(...conditions)
 }
 
 export async function getStoredMessageById(id: string | number): Promise<MailRow | null> {
