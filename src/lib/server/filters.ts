@@ -1,7 +1,12 @@
 import { db } from './db'
 import { mailFilter, mailMessage, mailMessageMailbox } from './db/schema'
 import { desc, eq, inArray } from 'drizzle-orm'
-import { enqueueMarkRead, enqueueMoveMessage } from './imap-queue'
+import { enqueueAddFlag, enqueueMarkRead, enqueueMoveMessage } from './imap-queue'
+import {
+  normalizeFilterConditions,
+  type FilterCondition,
+  type FilterConditionSet
+} from '$lib/filter-conditions'
 
 type Filter = typeof mailFilter.$inferSelect
 
@@ -14,10 +19,18 @@ export type FilterPreviewRow = {
   receivedAt: Date | null
 }
 
-function matchesRule(filter: Filter, value: string): boolean {
+function getConditionSet(filter: Filter): FilterConditionSet {
+  return normalizeFilterConditions(filter.conditions, {
+    field: filter.field,
+    operator: filter.operator,
+    value: filter.value
+  })
+}
+
+function matchesCondition(condition: FilterCondition, value: string): boolean {
   const v = value.toLowerCase()
-  const target = filter.value.toLowerCase()
-  switch (filter.operator) {
+  const target = condition.value.toLowerCase()
+  switch (condition.operator) {
     case 'contains':
       return v.includes(target)
     case 'equals':
@@ -32,10 +45,10 @@ function matchesRule(filter: Filter, value: string): boolean {
 }
 
 function getFieldValue(
-  filter: Filter,
+  condition: Pick<FilterCondition, 'field'>,
   msg: Pick<typeof mailMessage.$inferSelect, 'from' | 'to' | 'subject' | 'cc'>
 ): string {
-  switch (filter.field) {
+  switch (condition.field) {
     case 'from':
       return msg.from
     case 'to':
@@ -49,10 +62,39 @@ function getFieldValue(
   }
 }
 
+function filterFlag(filter: Filter): string | null {
+  if (filter.action === 'star') return '\\Flagged'
+  if (filter.action !== 'label') return null
+
+  const label = filter.target?.trim()
+  if (!label) return null
+  return label.startsWith('$') || label.startsWith('\\') ? label : `$${label.replace(/\s+/g, '-')}`
+}
+
+function matchesFilter(
+  filter: Filter,
+  msg: Pick<typeof mailMessage.$inferSelect, 'from' | 'to' | 'subject' | 'cc'>
+): boolean {
+  const conditionSet = getConditionSet(filter)
+  if (conditionSet.conditions.length === 0) return false
+
+  const check = (condition: FilterCondition) =>
+    matchesCondition(condition, getFieldValue(condition, msg))
+
+  return conditionSet.match === 'any'
+    ? conditionSet.conditions.some(check)
+    : conditionSet.conditions.every(check)
+}
+
 export async function runFiltersOnMessages(messageIds: string[]): Promise<void> {
   if (messageIds.length === 0) return
 
   const touchedThreadKeysByMailbox = new Map<string, Set<string>>()
+  const { applySenderRulesToMessages } = await import('./sender-rules')
+  const blockedMessageIds = await applySenderRulesToMessages(messageIds)
+  const filterableMessageIds = messageIds.filter((messageId) => !blockedMessageIds.has(messageId))
+
+  if (filterableMessageIds.length === 0) return
 
   // Load all enabled filters ordered by sort_order
   const filters = await db
@@ -67,12 +109,11 @@ export async function runFiltersOnMessages(messageIds: string[]): Promise<void> 
   const messages = await db
     .select()
     .from(mailMessage)
-    .where(inArray(mailMessage.messageId, messageIds))
+    .where(inArray(mailMessage.messageId, filterableMessageIds))
 
   for (const msg of messages) {
     for (const filter of filters) {
-      const fieldValue = getFieldValue(filter, msg)
-      if (!matchesRule(filter, fieldValue)) continue
+      if (!matchesFilter(filter, msg)) continue
 
       // Match! Execute action.
       if (filter.action === 'mark_read') {
@@ -91,7 +132,30 @@ export async function runFiltersOnMessages(messageIds: string[]): Promise<void> 
             await enqueueMarkRead(entry.uid, entry.mailbox)
           }
         }
-      } else if (filter.action === 'trash' || filter.action === 'move') {
+      } else if (filter.action === 'star' || filter.action === 'label') {
+        const flag = filterFlag(filter)
+        if (!flag) break
+
+        const entries = await db
+          .select()
+          .from(mailMessageMailbox)
+          .where(eq(mailMessageMailbox.messageId, msg.messageId))
+
+        for (const entry of entries) {
+          const flags: string[] = JSON.parse(entry.flags)
+          if (flags.includes(flag)) continue
+
+          await db
+            .update(mailMessageMailbox)
+            .set({ flags: JSON.stringify([...flags, flag]) })
+            .where(eq(mailMessageMailbox.id, entry.id))
+          await enqueueAddFlag(entry.uid, entry.mailbox, flag)
+        }
+      } else if (
+        filter.action === 'trash' ||
+        filter.action === 'delete' ||
+        filter.action === 'move'
+      ) {
         const targetMailbox = filter.action === 'move' ? filter.target : null
         if (filter.action === 'move' && !targetMailbox) break
 
@@ -103,7 +167,7 @@ export async function runFiltersOnMessages(messageIds: string[]): Promise<void> 
         for (const entry of entries) {
           let destination = targetMailbox
 
-          if (filter.action === 'trash') {
+          if (filter.action === 'trash' || filter.action === 'delete') {
             // Find trash mailbox from known mailboxes
             const { getImapMailboxes } = await import('./mail')
             const mailboxes = await getImapMailboxes()
@@ -157,7 +221,7 @@ export async function previewFilterMatches(
     .orderBy(desc(mailMessage.receivedAt))
     .limit(500)
 
-  return rows.filter((row) => matchesRule(filter, getFieldValue(filter, row))).slice(0, limit)
+  return rows.filter((row) => matchesFilter(filter, row)).slice(0, limit)
 }
 
 export async function runFiltersOnExistingMessages(): Promise<number> {
