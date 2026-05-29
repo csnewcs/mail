@@ -36,12 +36,14 @@
     Trash2,
     Sparkles,
     Clock3,
-    ChevronDown
+    ChevronDown,
+    Braces
   } from 'lucide-svelte'
-  import { composer, closeComposer } from '$lib/composer.svelte'
+  import { composer, closeComposer, type SignatureProfile } from '$lib/composer.svelte'
   import AddressInput from '$lib/components/AddressInput.svelte'
   import ErrorDialog from '$lib/components/ErrorDialog.svelte'
   import { errorMessageFromUnknown, readErrorMessage } from '$lib/http'
+  import { markdownToHtml } from '$lib/markdown'
   import { notifyMailboxStateChanged } from '$lib/mailbox-state'
   import {
     attachmentSignature,
@@ -50,6 +52,7 @@
     MAX_TOTAL_ATTACHMENT_SIZE_BYTES,
     type ComposerAttachment
   } from '$lib/mail-attachments'
+  import { normalizeRecipientList, validateRecipientFields } from '$lib/recipients'
 
   let editorEl = $state<HTMLElement | undefined>(undefined)
   let editor: Editor | null = null
@@ -64,12 +67,64 @@
   let attachmentInput = $state<HTMLInputElement | undefined>(undefined)
   let viewportWidth = $state(1024)
   let composingAi = $state(false)
+  let aiRewriteMode = $state<RewriteMode | null>(null)
+  let aiPreviewHtml = $state('')
+  let aiPreviewQuotedHtml = $state('')
   let errorDialogMessage = $state<string | null>(null)
+  let attachmentError = $state<string | null>(null)
+  let attachmentDragDepth = $state(0)
   let sendLaterAt = $state('')
   let showSendLaterMenu = $state(false)
+  let pendingSendWarnings = $state<string[]>([])
+  let templates = $state<MessageTemplate[]>([])
+  let templatesLoaded = $state(false)
+  let loadingTemplates = $state(false)
+  let showTemplateMenu = $state(false)
+  let showAiMenu = $state(false)
+  let markdownMode = $state(false)
+  let markdownSource = $state('')
+
+  type MessageTemplate = {
+    id: number
+    name: string
+    subject: string
+    html: string
+    isSnippet: boolean
+  }
+
+  type RewriteMode = 'concise' | 'formal' | 'friendly'
+  const rewriteModes: RewriteMode[] = ['concise', 'formal', 'friendly']
+
+  type SendPayload = {
+    to: string
+    cc: string | null
+    bcc: string | null
+    subject: string
+    html: string
+    attachments: ComposerAttachment[]
+    inReplyTo: string | null
+    sendAt?: string
+  }
+
+  type PendingUndoSend = {
+    jobId: number
+    delaySeconds: number
+    payload: SendPayload
+    timeout: ReturnType<typeof setTimeout>
+    canceling: boolean
+  }
+
+  let pendingUndoSend = $state<PendingUndoSend | null>(null)
 
   const isMobile = $derived(viewportWidth < 640)
   const useFullscreenLayout = $derived(composer.fullscreen || (isMobile && !composer.minimized))
+  const isAttachmentDragActive = $derived(attachmentDragDepth > 0 && !composer.minimized)
+  const recipientValidation = $derived(
+    validateRecipientFields({ to: composer.to, cc: composer.cc, bcc: composer.bcc })
+  )
+  const canSend = $derived(
+    !sending && !!composer.subject && recipientValidation.errors.length === 0
+  )
 
   // Create the editor once when the element is first available
   $effect(() => {
@@ -90,6 +145,7 @@
       },
       onTransaction: () => {
         editorTick += 1
+        if (aiPreviewHtml) clearAiPreview()
       }
     })
   })
@@ -105,9 +161,22 @@
       showCc = !!composer.cc
       showBcc = !!composer.bcc
       lastSavedContent = draftSnapshot(composer.initialHtml || '<p></p>')
+      clearAiPreview()
       errorDialogMessage = null
+      attachmentError = null
+      attachmentDragDepth = 0
+      pendingSendWarnings = []
+      void loadTemplates()
+      markdownMode = false
+      markdownSource = ''
     }
-    if (!composer.open && prevOpen) lastSavedContent = ''
+    if (!composer.open && prevOpen) {
+      lastSavedContent = ''
+      attachmentDragDepth = 0
+      pendingSendWarnings = []
+      markdownMode = false
+      markdownSource = ''
+    }
     prevOpen = composer.open
   })
 
@@ -123,9 +192,14 @@
     return draftSnapshot(html) !== lastSavedContent
   }
 
+  function currentHtml() {
+    if (markdownMode) return markdownToHtml(markdownSource)
+    return editor?.getHTML() ?? '<p></p>'
+  }
+
   async function saveDraft() {
     if (!composer.open || !editor) return
-    const html = editor.getHTML()
+    const html = currentHtml()
     const key = draftSnapshot(html)
     if (key === lastSavedContent) return // nothing changed
 
@@ -174,7 +248,7 @@
 
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
       if (!composer.open || !editor) return
-      const html = editor.getHTML()
+      const html = currentHtml()
 
       if (composer.attachments.length > 0 && isDirty(html)) {
         event.preventDefault()
@@ -197,6 +271,7 @@
 
     return () => {
       if (saveDraftTimer) clearInterval(saveDraftTimer)
+      if (pendingUndoSend) clearTimeout(pendingUndoSend.timeout)
       window.removeEventListener('beforeunload', handleBeforeUnload)
     }
   })
@@ -255,10 +330,86 @@
     linkInputValue = ''
   }
 
+  async function selectSignature(profile: SignatureProfile | null) {
+    if (!editor) return
+
+    const currentHtml = editor.getHTML()
+    let nextHtml = currentHtml
+    if (composer.currentSignatureHtml && currentHtml.endsWith(composer.currentSignatureHtml)) {
+      nextHtml = currentHtml.slice(0, -composer.currentSignatureHtml.length)
+    }
+
+    if (profile?.html) {
+      nextHtml = nextHtml.endsWith('<p></p>')
+        ? `${nextHtml}${profile.html}`
+        : `${nextHtml}<p></p>${profile.html}`
+    }
+
+    composer.selectedSignatureId = profile?.id ?? null
+    composer.currentSignatureHtml = profile?.html ?? ''
+    editor.commands.setContent(nextHtml || '<p></p>')
+    editor.commands.focus('end')
+    await saveDraft()
+  }
+
+  function handleSignatureChange(event: Event) {
+    const id = Number((event.currentTarget as HTMLSelectElement).value)
+    const profile = composer.signatureProfiles.find((signature) => signature.id === id) ?? null
+    void selectSignature(profile)
+  }
+
   function openLinkInput() {
     const existing = editor?.getAttributes('link').href as string | undefined
     linkInputValue = existing ?? ''
     showLinkInput = true
+  }
+
+  async function loadTemplates(force = false) {
+    if ((templatesLoaded && !force) || loadingTemplates) return
+    loadingTemplates = true
+    try {
+      const res = await fetch('/api/message-templates')
+      if (!res.ok) throw new Error(await readErrorMessage(res, 'Failed to load templates.'))
+      const data = (await res.json()) as { templates: MessageTemplate[] }
+      templates = data.templates
+      templatesLoaded = true
+    } catch (error) {
+      errorDialogMessage = errorMessageFromUnknown(error, 'Failed to load templates.')
+    } finally {
+      loadingTemplates = false
+    }
+  }
+
+  async function toggleTemplateMenu() {
+    if (!showTemplateMenu) await loadTemplates()
+    showTemplateMenu = !showTemplateMenu
+  }
+
+  function insertTemplate(template: MessageTemplate) {
+    if (!editor) return
+    if (markdownMode) {
+      editor.commands.setContent(markdownToHtml(markdownSource))
+      markdownMode = false
+    }
+    if (template.subject && !composer.subject.trim()) composer.subject = template.subject
+    editor.chain().focus().insertContent(template.html).run()
+    showTemplateMenu = false
+    void saveDraft()
+  }
+
+  function toggleMarkdownMode() {
+    if (!editor) return
+
+    if (markdownMode) {
+      editor.commands.setContent(markdownToHtml(markdownSource))
+      editor.commands.focus('end')
+      markdownMode = false
+      return
+    }
+
+    markdownSource = editor.getText({ blockSeparator: '\n\n' })
+    markdownMode = true
+    showLinkInput = false
   }
 
   function splitQuotedHtml(html: string) {
@@ -271,12 +422,37 @@
     }
   }
 
-  async function composeWithAi() {
+  function rewriteModeLabel(mode: RewriteMode) {
+    if (mode === 'concise') return 'Concise'
+    if (mode === 'formal') return 'Formal'
+    return 'Friendly'
+  }
+
+  function clearAiPreview() {
+    aiRewriteMode = null
+    aiPreviewHtml = ''
+    aiPreviewQuotedHtml = ''
+  }
+
+  function previewText(html: string) {
+    if (typeof document === 'undefined') return html.replace(/<[^>]*>/g, ' ').trim()
+    const preview = document.createElement('div')
+    preview.innerHTML = html
+    return preview.textContent?.trim() || ''
+  }
+
+  async function composeWithAi(rewriteMode?: RewriteMode) {
     if (!editor || composingAi) return
 
     composingAi = true
+    clearAiPreview()
 
     try {
+      if (markdownMode) {
+        editor.commands.setContent(markdownToHtml(markdownSource))
+        markdownMode = false
+      }
+
       const currentHtml = editor.getHTML()
       const { editableHtml, quotedHtml } = splitQuotedHtml(currentHtml)
       const res = await fetch('/api/ai/compose', {
@@ -288,7 +464,8 @@
           cc: composer.cc,
           bcc: composer.bcc,
           subject: composer.subject,
-          html: editableHtml
+          html: editableHtml,
+          rewriteMode
         })
       })
 
@@ -298,6 +475,13 @@
 
       const data = (await res.json()) as { html?: string }
       if (!data.html) throw new Error('AI compose returned an empty draft.')
+
+      if (rewriteMode) {
+        aiRewriteMode = rewriteMode
+        aiPreviewHtml = data.html
+        aiPreviewQuotedHtml = quotedHtml
+        return
+      }
 
       editor.commands.setContent(`${data.html}${quotedHtml}`)
       editor.commands.focus('end')
@@ -309,9 +493,36 @@
     }
   }
 
+  async function applyAiPreview() {
+    if (!editor || !aiPreviewHtml) return
+    editor.commands.setContent(`${aiPreviewHtml}${aiPreviewQuotedHtml}`)
+    editor.commands.focus('end')
+    clearAiPreview()
+    await saveDraft()
+  }
+
   async function send() {
     if (!editor || sending) return
-    const html = editor.getHTML()
+    const validation = validateRecipientFields({
+      to: composer.to,
+      cc: composer.cc,
+      bcc: composer.bcc
+    })
+    if (validation.errors.length > 0) {
+      errorDialogMessage = validation.errors.map((issue) => issue.message).join('\n')
+      return
+    }
+
+    const warningMessages = validation.warnings.map((issue) => issue.message)
+    if (
+      warningMessages.length > 0 &&
+      warningMessages.join('\n') !== pendingSendWarnings.join('\n')
+    ) {
+      pendingSendWarnings = warningMessages
+      return
+    }
+
+    const html = currentHtml()
     const payload: {
       to: string
       cc: string | null
@@ -322,9 +533,9 @@
       inReplyTo: string | null
       sendAt?: string
     } = {
-      to: composer.to,
-      cc: composer.cc || null,
-      bcc: composer.bcc || null,
+      to: normalizeRecipientList(composer.to),
+      cc: normalizeRecipientList(composer.cc) || null,
+      bcc: normalizeRecipientList(composer.bcc) || null,
       subject: composer.subject,
       html,
       attachments: composer.attachments,
@@ -339,9 +550,18 @@
         body: JSON.stringify(payload)
       })
       if (res.ok) {
+        const data = (await res.json()) as {
+          jobId?: number
+          undoable?: boolean
+          undoSendSeconds?: number
+        }
         await deleteDraft()
         sendLaterAt = ''
+        pendingSendWarnings = []
         closeComposer()
+        if (data.undoable && typeof data.jobId === 'number') {
+          showUndoSend(data.jobId, data.undoSendSeconds ?? 0, payload)
+        }
       } else {
         errorDialogMessage = await readErrorMessage(res, 'Failed to send message.')
       }
@@ -352,7 +572,63 @@
     }
   }
 
+  function showUndoSend(jobId: number, delaySeconds: number, payload: SendPayload) {
+    if (pendingUndoSend) clearTimeout(pendingUndoSend.timeout)
+
+    const timeout = setTimeout(
+      () => {
+        pendingUndoSend = null
+      },
+      Math.max(1, delaySeconds) * 1000
+    )
+
+    pendingUndoSend = {
+      jobId,
+      delaySeconds,
+      payload: {
+        ...payload,
+        attachments: payload.attachments.map((attachment) => ({ ...attachment }))
+      },
+      timeout,
+      canceling: false
+    }
+  }
+
+  async function undoSend() {
+    if (!pendingUndoSend || pendingUndoSend.canceling) return
+
+    pendingUndoSend.canceling = true
+    try {
+      const res = await fetch(`/api/send/${pendingUndoSend.jobId}/cancel`, { method: 'POST' })
+      if (!res.ok) {
+        throw new Error(await readErrorMessage(res, 'Message is already being sent.'))
+      }
+
+      const restored = pendingUndoSend.payload
+      clearTimeout(pendingUndoSend.timeout)
+      pendingUndoSend = null
+
+      composer.mode = 'compose'
+      composer.to = restored.to
+      composer.cc = restored.cc ?? ''
+      composer.bcc = restored.bcc ?? ''
+      composer.subject = restored.subject
+      composer.initialHtml = restored.html
+      composer.attachments = restored.attachments
+      composer.inReplyTo = restored.inReplyTo
+      composer.draftId = null
+      composer.lastSavedAt = 0
+      composer.minimized = false
+      composer.fullscreen = false
+      composer.open = true
+    } catch (error) {
+      errorDialogMessage = errorMessageFromUnknown(error, 'Failed to undo send.')
+      if (pendingUndoSend) pendingUndoSend.canceling = false
+    }
+  }
+
   function discard() {
+    pendingSendWarnings = []
     discardDialogWasMinimized = composer.minimized
 
     if (composer.minimized) {
@@ -386,6 +662,7 @@
   }
 
   function toggleMinimized() {
+    pendingSendWarnings = []
     if (composer.minimized) {
       composer.minimized = false
       return
@@ -412,6 +689,23 @@
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   }
 
+  function fileIdentity(file: File) {
+    return `${file.name}:${file.size}`
+  }
+
+  function attachmentIdentity(attachment: ComposerAttachment) {
+    return `${attachment.name}:${attachment.size}`
+  }
+
+  function hasDraggedFiles(event: DragEvent) {
+    return Array.from(event.dataTransfer?.types ?? []).includes('Files')
+  }
+
+  function showAttachmentError(message: string) {
+    attachmentError = message
+    errorDialogMessage = message
+  }
+
   function arrayBufferToBase64(buffer: ArrayBuffer) {
     const bytes = new Uint8Array(buffer)
     const chunkSize = 0x8000
@@ -435,15 +729,25 @@
     }
   }
 
-  async function handleAttachmentChange(event: Event) {
-    const input = event.currentTarget as HTMLInputElement
-    const files = Array.from(input.files ?? [])
-    input.value = ''
-
+  async function addAttachmentFiles(files: File[]) {
     if (files.length === 0) return
 
     if (composer.attachments.length + files.length > MAX_ATTACHMENT_COUNT) {
-      errorDialogMessage = `You can attach up to ${MAX_ATTACHMENT_COUNT} files.`
+      showAttachmentError(`You can attach up to ${MAX_ATTACHMENT_COUNT} files.`)
+      return
+    }
+
+    const existingFiles = composer.attachments.map(attachmentIdentity)
+    const newFiles: string[] = []
+    const duplicate = files.find((file) => {
+      const identity = fileIdentity(file)
+      if (existingFiles.includes(identity) || newFiles.includes(identity)) return true
+      newFiles.push(identity)
+      return false
+    })
+
+    if (duplicate) {
+      showAttachmentError(`${duplicate.name} is already attached.`)
       return
     }
 
@@ -454,22 +758,58 @@
     const newTotal = files.reduce((sum, file) => sum + file.size, 0)
 
     if (files.some((file) => file.size > MAX_ATTACHMENT_SIZE_BYTES)) {
-      errorDialogMessage = `Each file must be ${formatBytes(MAX_ATTACHMENT_SIZE_BYTES)} or smaller.`
+      showAttachmentError(`Each file must be ${formatBytes(MAX_ATTACHMENT_SIZE_BYTES)} or smaller.`)
       return
     }
 
     if (currentTotal + newTotal > MAX_TOTAL_ATTACHMENT_SIZE_BYTES) {
-      errorDialogMessage = `Attachments can total up to ${formatBytes(MAX_TOTAL_ATTACHMENT_SIZE_BYTES)}.`
+      showAttachmentError(
+        `Attachments can total up to ${formatBytes(MAX_TOTAL_ATTACHMENT_SIZE_BYTES)}.`
+      )
       return
     }
 
     try {
       const attachments = await Promise.all(files.map((file) => fileToAttachment(file)))
       composer.attachments = [...composer.attachments, ...attachments]
+      attachmentError = null
       await saveDraft()
     } catch (error) {
-      errorDialogMessage = errorMessageFromUnknown(error, 'Failed to attach file.')
+      showAttachmentError(errorMessageFromUnknown(error, 'Failed to attach file.'))
     }
+  }
+
+  async function handleAttachmentChange(event: Event) {
+    const input = event.currentTarget as HTMLInputElement
+    const files = Array.from(input.files ?? [])
+    input.value = ''
+
+    await addAttachmentFiles(files)
+  }
+
+  function handleAttachmentDragEnter(event: DragEvent) {
+    if (!hasDraggedFiles(event) || composer.minimized) return
+    event.preventDefault()
+    attachmentDragDepth += 1
+  }
+
+  function handleAttachmentDragOver(event: DragEvent) {
+    if (!hasDraggedFiles(event) || composer.minimized) return
+    event.preventDefault()
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+  }
+
+  function handleAttachmentDragLeave(event: DragEvent) {
+    if (!hasDraggedFiles(event) || composer.minimized) return
+    event.preventDefault()
+    attachmentDragDepth = Math.max(0, attachmentDragDepth - 1)
+  }
+
+  async function handleAttachmentDrop(event: DragEvent) {
+    if (!hasDraggedFiles(event) || composer.minimized) return
+    event.preventDefault()
+    attachmentDragDepth = 0
+    await addAttachmentFiles(Array.from(event.dataTransfer?.files ?? []))
   }
 
   async function removeAttachment(index: number) {
@@ -492,9 +832,16 @@
         : 'inset-x-0 top-0 bottom-0 rounded-none sm:top-auto sm:right-4 sm:left-auto sm:rounded-t-xl'
   ]}
   style:width={useFullscreenLayout || isMobile ? null : '580px'}
-  style:height={useFullscreenLayout || isMobile || composer.minimized ? null : '520px'}
+  style:height={useFullscreenLayout || isMobile || composer.minimized ? null : '680px'}
   style:max-height={useFullscreenLayout || isMobile || composer.minimized ? null : '90vh'}
   style:display={composer.open ? 'flex' : 'none'}
+  role="dialog"
+  aria-label={titleLabel()}
+  tabindex="-1"
+  ondragenter={handleAttachmentDragEnter}
+  ondragover={handleAttachmentDragOver}
+  ondragleave={handleAttachmentDragLeave}
+  ondrop={handleAttachmentDrop}
 >
   <!-- Title bar -->
   <div class="flex shrink-0 items-center justify-between bg-[#1e1e24] px-4 py-3 select-none">
@@ -561,6 +908,12 @@
         </div>
       </div>
 
+      {#if recipientValidation.errors.length > 0}
+        <div class="border-b border-rose-400/20 bg-rose-500/10 px-4 py-2 text-xs text-rose-200">
+          {recipientValidation.errors[0].message}
+        </div>
+      {/if}
+
       {#if showCc}
         <div class="flex flex-wrap items-start gap-2 border-b border-white/8 px-4 py-2">
           <AddressInput
@@ -598,186 +951,201 @@
     <div
       class="flex shrink-0 flex-wrap items-center gap-0.5 border-b border-white/8 bg-[#16161a] px-2 py-1.5"
     >
-      <!-- Undo / Redo -->
-      <button
-        type="button"
-        aria-label="Undo"
-        onclick={() => editor?.chain().focus().undo().run()}
-        class={btnClass(false)}
-      >
-        <Undo2 size={14} />
-      </button>
-      <button
-        type="button"
-        aria-label="Redo"
-        onclick={() => editor?.chain().focus().redo().run()}
-        class={btnClass(false)}
-      >
-        <Redo2 size={14} />
-      </button>
+      {#if !markdownMode}
+        <!-- Undo / Redo -->
+        <button
+          type="button"
+          aria-label="Undo"
+          onclick={() => editor?.chain().focus().undo().run()}
+          class={btnClass(false)}
+        >
+          <Undo2 size={14} />
+        </button>
+        <button
+          type="button"
+          aria-label="Redo"
+          onclick={() => editor?.chain().focus().redo().run()}
+          class={btnClass(false)}
+        >
+          <Redo2 size={14} />
+        </button>
+
+        <div class="mx-1 h-4 w-px bg-white/10"></div>
+
+        <!-- Headings -->
+        <button
+          type="button"
+          aria-label="Heading 1"
+          onclick={() => editor?.chain().focus().toggleHeading({ level: 1 }).run()}
+          class={btnClass(isActive('heading', { level: 1 }))}
+        >
+          <Heading1 size={14} />
+        </button>
+        <button
+          type="button"
+          aria-label="Heading 2"
+          onclick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()}
+          class={btnClass(isActive('heading', { level: 2 }))}
+        >
+          <Heading2 size={14} />
+        </button>
+        <button
+          type="button"
+          aria-label="Heading 3"
+          onclick={() => editor?.chain().focus().toggleHeading({ level: 3 }).run()}
+          class={btnClass(isActive('heading', { level: 3 }))}
+        >
+          <Heading3 size={14} />
+        </button>
+
+        <div class="mx-1 h-4 w-px bg-white/10"></div>
+
+        <!-- Inline marks -->
+        <button
+          type="button"
+          aria-label="Bold"
+          onclick={() => editor?.chain().focus().toggleBold().run()}
+          class={btnClass(isActive('bold'))}
+        >
+          <Bold size={14} />
+        </button>
+        <button
+          type="button"
+          aria-label="Italic"
+          onclick={() => editor?.chain().focus().toggleItalic().run()}
+          class={btnClass(isActive('italic'))}
+        >
+          <Italic size={14} />
+        </button>
+        <button
+          type="button"
+          aria-label="Underline"
+          onclick={() => editor?.chain().focus().toggleUnderline().run()}
+          class={btnClass(isActive('underline'))}
+        >
+          <UnderlineIcon size={14} />
+        </button>
+        <button
+          type="button"
+          aria-label="Strikethrough"
+          onclick={() => editor?.chain().focus().toggleStrike().run()}
+          class={btnClass(isActive('strike'))}
+        >
+          <Strikethrough size={14} />
+        </button>
+        <button
+          type="button"
+          aria-label="Inline code"
+          onclick={() => editor?.chain().focus().toggleCode().run()}
+          class={btnClass(isActive('code'))}
+        >
+          <Code size={14} />
+        </button>
+
+        <div class="mx-1 h-4 w-px bg-white/10"></div>
+
+        <!-- Link -->
+        <button
+          type="button"
+          aria-label="Link"
+          onclick={openLinkInput}
+          class={btnClass(isActive('link'))}
+        >
+          <LinkIcon size={14} />
+        </button>
+
+        <div class="mx-1 h-4 w-px bg-white/10"></div>
+
+        <!-- Lists -->
+        <button
+          type="button"
+          aria-label="Bullet list"
+          onclick={() => editor?.chain().focus().toggleBulletList().run()}
+          class={btnClass(isActive('bulletList'))}
+        >
+          <List size={14} />
+        </button>
+        <button
+          type="button"
+          aria-label="Ordered list"
+          onclick={() => editor?.chain().focus().toggleOrderedList().run()}
+          class={btnClass(isActive('orderedList'))}
+        >
+          <ListOrdered size={14} />
+        </button>
+        <button
+          type="button"
+          aria-label="Blockquote"
+          onclick={() => editor?.chain().focus().toggleBlockquote().run()}
+          class={btnClass(isActive('blockquote'))}
+        >
+          <Quote size={14} />
+        </button>
+        <button
+          type="button"
+          aria-label="Code block"
+          onclick={() => editor?.chain().focus().toggleCodeBlock().run()}
+          class={btnClass(isActive('codeBlock'))}
+        >
+          <Code2 size={14} />
+        </button>
+        <button
+          type="button"
+          aria-label="Horizontal rule"
+          onclick={() => editor?.chain().focus().setHorizontalRule().run()}
+          class={btnClass(false)}
+        >
+          <HrIcon size={14} />
+        </button>
+
+        <div class="mx-1 h-4 w-px bg-white/10"></div>
+
+        <!-- Alignment -->
+        <button
+          type="button"
+          aria-label="Align left"
+          onclick={() => editor?.chain().focus().setTextAlign('left').run()}
+          class={btnClass(isAlignActive('left'))}
+        >
+          <AlignLeft size={14} />
+        </button>
+        <button
+          type="button"
+          aria-label="Align center"
+          onclick={() => editor?.chain().focus().setTextAlign('center').run()}
+          class={btnClass(isAlignActive('center'))}
+        >
+          <AlignCenter size={14} />
+        </button>
+        <button
+          type="button"
+          aria-label="Align right"
+          onclick={() => editor?.chain().focus().setTextAlign('right').run()}
+          class={btnClass(isAlignActive('right'))}
+        >
+          <AlignRight size={14} />
+        </button>
+        <button
+          type="button"
+          aria-label="Justify"
+          onclick={() => editor?.chain().focus().setTextAlign('justify').run()}
+          class={btnClass(isAlignActive('justify'))}
+        >
+          <AlignJustify size={14} />
+        </button>
+      {/if}
 
       <div class="mx-1 h-4 w-px bg-white/10"></div>
 
-      <!-- Headings -->
       <button
         type="button"
-        aria-label="Heading 1"
-        onclick={() => editor?.chain().focus().toggleHeading({ level: 1 }).run()}
-        class={btnClass(isActive('heading', { level: 1 }))}
+        aria-label={markdownMode ? 'Switch to rich text mode' : 'Switch to markdown mode'}
+        aria-pressed={markdownMode}
+        onclick={toggleMarkdownMode}
+        class={btnClass(markdownMode)}
+        title="Markdown mode"
       >
-        <Heading1 size={14} />
-      </button>
-      <button
-        type="button"
-        aria-label="Heading 2"
-        onclick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()}
-        class={btnClass(isActive('heading', { level: 2 }))}
-      >
-        <Heading2 size={14} />
-      </button>
-      <button
-        type="button"
-        aria-label="Heading 3"
-        onclick={() => editor?.chain().focus().toggleHeading({ level: 3 }).run()}
-        class={btnClass(isActive('heading', { level: 3 }))}
-      >
-        <Heading3 size={14} />
-      </button>
-
-      <div class="mx-1 h-4 w-px bg-white/10"></div>
-
-      <!-- Inline marks -->
-      <button
-        type="button"
-        aria-label="Bold"
-        onclick={() => editor?.chain().focus().toggleBold().run()}
-        class={btnClass(isActive('bold'))}
-      >
-        <Bold size={14} />
-      </button>
-      <button
-        type="button"
-        aria-label="Italic"
-        onclick={() => editor?.chain().focus().toggleItalic().run()}
-        class={btnClass(isActive('italic'))}
-      >
-        <Italic size={14} />
-      </button>
-      <button
-        type="button"
-        aria-label="Underline"
-        onclick={() => editor?.chain().focus().toggleUnderline().run()}
-        class={btnClass(isActive('underline'))}
-      >
-        <UnderlineIcon size={14} />
-      </button>
-      <button
-        type="button"
-        aria-label="Strikethrough"
-        onclick={() => editor?.chain().focus().toggleStrike().run()}
-        class={btnClass(isActive('strike'))}
-      >
-        <Strikethrough size={14} />
-      </button>
-      <button
-        type="button"
-        aria-label="Inline code"
-        onclick={() => editor?.chain().focus().toggleCode().run()}
-        class={btnClass(isActive('code'))}
-      >
-        <Code size={14} />
-      </button>
-
-      <div class="mx-1 h-4 w-px bg-white/10"></div>
-
-      <!-- Link -->
-      <button
-        type="button"
-        aria-label="Link"
-        onclick={openLinkInput}
-        class={btnClass(isActive('link'))}
-      >
-        <LinkIcon size={14} />
-      </button>
-
-      <div class="mx-1 h-4 w-px bg-white/10"></div>
-
-      <!-- Lists -->
-      <button
-        type="button"
-        aria-label="Bullet list"
-        onclick={() => editor?.chain().focus().toggleBulletList().run()}
-        class={btnClass(isActive('bulletList'))}
-      >
-        <List size={14} />
-      </button>
-      <button
-        type="button"
-        aria-label="Ordered list"
-        onclick={() => editor?.chain().focus().toggleOrderedList().run()}
-        class={btnClass(isActive('orderedList'))}
-      >
-        <ListOrdered size={14} />
-      </button>
-      <button
-        type="button"
-        aria-label="Blockquote"
-        onclick={() => editor?.chain().focus().toggleBlockquote().run()}
-        class={btnClass(isActive('blockquote'))}
-      >
-        <Quote size={14} />
-      </button>
-      <button
-        type="button"
-        aria-label="Code block"
-        onclick={() => editor?.chain().focus().toggleCodeBlock().run()}
-        class={btnClass(isActive('codeBlock'))}
-      >
-        <Code2 size={14} />
-      </button>
-      <button
-        type="button"
-        aria-label="Horizontal rule"
-        onclick={() => editor?.chain().focus().setHorizontalRule().run()}
-        class={btnClass(false)}
-      >
-        <HrIcon size={14} />
-      </button>
-
-      <div class="mx-1 h-4 w-px bg-white/10"></div>
-
-      <!-- Alignment -->
-      <button
-        type="button"
-        aria-label="Align left"
-        onclick={() => editor?.chain().focus().setTextAlign('left').run()}
-        class={btnClass(isAlignActive('left'))}
-      >
-        <AlignLeft size={14} />
-      </button>
-      <button
-        type="button"
-        aria-label="Align center"
-        onclick={() => editor?.chain().focus().setTextAlign('center').run()}
-        class={btnClass(isAlignActive('center'))}
-      >
-        <AlignCenter size={14} />
-      </button>
-      <button
-        type="button"
-        aria-label="Align right"
-        onclick={() => editor?.chain().focus().setTextAlign('right').run()}
-        class={btnClass(isAlignActive('right'))}
-      >
-        <AlignRight size={14} />
-      </button>
-      <button
-        type="button"
-        aria-label="Justify"
-        onclick={() => editor?.chain().focus().setTextAlign('justify').run()}
-        class={btnClass(isAlignActive('justify'))}
-      >
-        <AlignJustify size={14} />
+        <Braces size={14} />
       </button>
     </div>
 
@@ -819,9 +1187,74 @@
     {/if}
 
     <!-- Editor -->
-    <div class="composer-editor-wrap min-h-0 flex-1 overflow-y-auto">
-      <div bind:this={editorEl}></div>
+    <div class="composer-editor-wrap relative min-h-0 flex-1 overflow-y-auto">
+      {#if markdownMode}
+        <div
+          class="border-b border-amber-400/15 bg-amber-400/8 px-4 py-2 text-xs text-amber-100/85"
+        >
+          Markdown mode sends and saves converted HTML. Switching from rich text starts from plain
+          text, so some existing formatting may not be preserved.
+        </div>
+        <textarea
+          bind:value={markdownSource}
+          aria-label="Markdown message body"
+          class="min-h-[180px] w-full resize-none bg-transparent p-4 font-mono text-sm leading-6 text-zinc-200 placeholder:text-zinc-600 focus:outline-none"
+          placeholder="Write markdown, e.g. **bold**, [link](https://example.com), - lists, > quotes"
+        ></textarea>
+      {/if}
+      <div class:hidden={markdownMode} bind:this={editorEl}></div>
+
+      {#if isAttachmentDragActive}
+        <div
+          class="pointer-events-none absolute inset-3 z-10 flex items-center justify-center rounded-xl border-2 border-dashed border-blue-400/70 bg-blue-500/10 text-center shadow-[0_0_40px_rgba(59,130,246,0.18)] backdrop-blur-sm"
+        >
+          <div class="rounded-xl border border-white/10 bg-zinc-950/85 px-5 py-4">
+            <Paperclip size={22} class="mx-auto mb-2 text-blue-300" />
+            <p class="text-sm font-medium text-blue-100">Drop files to attach</p>
+            <p class="mt-1 text-xs text-zinc-400">
+              Up to {MAX_ATTACHMENT_COUNT} files, {formatBytes(MAX_TOTAL_ATTACHMENT_SIZE_BYTES)} total
+            </p>
+          </div>
+        </div>
+      {/if}
     </div>
+
+    {#if attachmentError}
+      <div class="border-t border-rose-400/20 bg-rose-500/10 px-4 py-2 text-xs text-rose-200">
+        {attachmentError}
+      </div>
+    {/if}
+
+    {#if aiPreviewHtml && aiRewriteMode}
+      <div class="shrink-0 border-t border-sky-400/20 bg-sky-400/8 px-4 py-3">
+        <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <p class="text-xs font-medium tracking-wide text-sky-200 uppercase">
+            {rewriteModeLabel(aiRewriteMode)} rewrite preview
+          </p>
+          <div class="flex gap-2">
+            <button
+              type="button"
+              onclick={applyAiPreview}
+              class="rounded-lg bg-sky-600 px-3 py-1 text-xs font-medium text-white hover:bg-sky-500"
+            >
+              Apply
+            </button>
+            <button
+              type="button"
+              onclick={clearAiPreview}
+              class="rounded-lg border border-white/10 bg-white/5 px-3 py-1 text-xs text-zinc-300 hover:bg-white/10"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+        <div
+          class="max-h-40 overflow-y-auto rounded-lg border border-white/10 bg-black/20 p-3 text-sm leading-6 whitespace-pre-wrap text-zinc-200"
+        >
+          {previewText(aiPreviewHtml)}
+        </div>
+      </div>
+    {/if}
 
     {#if composer.attachments.length > 0}
       <div class="border-t border-white/8 bg-[#16161a] px-4 py-3">
@@ -865,7 +1298,7 @@
         />
         <button
           type="button"
-          disabled={sending || !composer.to || !composer.subject}
+          disabled={!canSend}
           onclick={send}
           class="flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-1.5 text-sm font-medium text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
         >
@@ -949,15 +1382,98 @@
           <Paperclip size={14} />
           Attach
         </button>
-        <button
-          type="button"
-          disabled={sending || composingAi}
-          onclick={composeWithAi}
-          class="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-zinc-300 transition hover:bg-white/10 hover:text-sky-300 disabled:cursor-wait disabled:opacity-40"
-        >
-          <Sparkles size={14} class={composingAi ? 'animate-pulse' : ''} />
-          {composingAi ? 'Writing...' : 'AI'}
-        </button>
+        <div class="relative">
+          <button
+            type="button"
+            disabled={sending || loadingTemplates}
+            onclick={() => void toggleTemplateMenu()}
+            class="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-zinc-300 transition hover:bg-white/10 disabled:cursor-wait disabled:opacity-40"
+          >
+            <FileText size={14} />
+            {loadingTemplates ? 'Loading...' : 'Templates'}
+            <ChevronDown size={13} />
+          </button>
+
+          {#if showTemplateMenu}
+            <div
+              class="absolute bottom-full left-0 z-20 mb-2 max-h-72 w-72 overflow-y-auto rounded-xl border border-white/10 bg-zinc-950 p-1 shadow-2xl shadow-black/40"
+            >
+              {#if templates.length === 0}
+                <p class="px-3 py-2 text-sm text-zinc-500">
+                  No templates yet. Add them in Settings.
+                </p>
+              {:else}
+                {#each templates as template (template.id)}
+                  <button
+                    type="button"
+                    onclick={() => insertTemplate(template)}
+                    class="block w-full rounded-lg px-3 py-2 text-left hover:bg-white/8"
+                  >
+                    <span class="block truncate text-sm text-zinc-200">{template.name}</span>
+                    <span class="mt-0.5 block truncate text-xs text-zinc-500">
+                      {template.isSnippet ? 'Snippet' : template.subject || 'Template'}
+                    </span>
+                  </button>
+                {/each}
+              {/if}
+            </div>
+          {/if}
+        </div>
+        {#if composer.mode === 'compose' && composer.draftId === null && composer.signatureProfiles.length > 0}
+          <label class="sr-only" for="composer-signature">Signature</label>
+          <select
+            id="composer-signature"
+            value={composer.selectedSignatureId ?? ''}
+            onchange={handleSignatureChange}
+            disabled={sending}
+            class="max-w-40 rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-sm text-zinc-300 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <option value="">No signature</option>
+            {#each composer.signatureProfiles as signature (signature.id)}
+              <option value={signature.id}>{signature.name}</option>
+            {/each}
+          </select>
+        {/if}
+        <div class="relative">
+          <button
+            type="button"
+            disabled={sending || composingAi}
+            onclick={() => (showAiMenu = !showAiMenu)}
+            class="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-zinc-300 transition hover:bg-white/10 hover:text-sky-300 disabled:cursor-wait disabled:opacity-40"
+          >
+            <Sparkles size={14} class={composingAi ? 'animate-pulse' : ''} />
+            {composingAi ? 'Writing...' : 'AI'}
+            <ChevronDown size={13} />
+          </button>
+          {#if showAiMenu}
+            <div
+              class="absolute right-0 bottom-full z-20 mb-2 w-40 rounded-xl border border-white/10 bg-zinc-950 p-1 shadow-xl shadow-black/30"
+            >
+              <button
+                type="button"
+                onclick={() => {
+                  showAiMenu = false
+                  void composeWithAi()
+                }}
+                class="block w-full rounded-lg px-3 py-2 text-left text-sm text-zinc-200 hover:bg-white/8"
+              >
+                Improve
+              </button>
+              {#each rewriteModes as mode (mode)}
+                <button
+                  type="button"
+                  onclick={() => {
+                    showAiMenu = false
+                    void composeWithAi(mode)
+                  }}
+                  class="block w-full rounded-lg px-3 py-2 text-left text-sm text-zinc-200 hover:bg-white/8"
+                >
+                  {rewriteModeLabel(mode)}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
       </div>
       <button type="button" onclick={discard} class="text-xs text-zinc-500 hover:text-zinc-300">
         Discard
@@ -965,10 +1481,43 @@
     </div>
   {/if}
 
+  {#if pendingSendWarnings.length > 0}
+    <div
+      class="app-popover absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 p-6"
+    >
+      <div
+        class="max-w-md rounded-xl border border-amber-400/20 bg-amber-500/10 p-4 text-sm text-amber-100"
+      >
+        <p class="font-medium">Review recipients before sending</p>
+        <ul class="mt-2 list-disc space-y-1 pl-5 text-xs text-amber-100/90">
+          {#each pendingSendWarnings as warning (warning)}
+            <li>{warning}</li>
+          {/each}
+        </ul>
+      </div>
+      <div class="flex flex-wrap justify-center gap-3">
+        <button
+          type="button"
+          onclick={send}
+          class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500"
+        >
+          Send anyway
+        </button>
+        <button
+          type="button"
+          onclick={() => (pendingSendWarnings = [])}
+          class="rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm text-zinc-300 hover:bg-white/10"
+        >
+          Review recipients
+        </button>
+      </div>
+    </div>
+  {/if}
+
   <!-- Discard dialog -->
   {#if showDiscardDialog}
     <div
-      class="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-[#18181c]/95"
+      class="app-popover absolute inset-0 z-10 flex flex-col items-center justify-center gap-4"
     >
       <p class="text-sm text-zinc-300">Save this draft?</p>
       <div class="flex flex-wrap justify-center gap-3">
@@ -998,6 +1547,37 @@
   {/if}
 </div>
 
+{#if pendingUndoSend}
+  <div
+    class="fixed right-4 bottom-4 z-[60] max-w-sm rounded-xl border border-blue-400/20 bg-zinc-950 p-4 shadow-2xl shadow-black/40"
+  >
+    <p class="text-sm font-medium text-zinc-100">Message queued</p>
+    <p class="mt-1 text-sm text-zinc-400">
+      Sending starts after {pendingUndoSend.delaySeconds} seconds.
+    </p>
+    <div class="mt-3 flex items-center gap-3">
+      <button
+        type="button"
+        onclick={undoSend}
+        disabled={pendingUndoSend.canceling}
+        class="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:cursor-wait disabled:opacity-60"
+      >
+        {pendingUndoSend.canceling ? 'Undoing...' : 'Undo send'}
+      </button>
+      <button
+        type="button"
+        onclick={() => {
+          if (pendingUndoSend) clearTimeout(pendingUndoSend.timeout)
+          pendingUndoSend = null
+        }}
+        class="text-sm text-zinc-500 hover:text-zinc-300"
+      >
+        Dismiss
+      </button>
+    </div>
+  </div>
+{/if}
+
 <ErrorDialog
   message={errorDialogMessage}
   title="Composer error"
@@ -1006,7 +1586,7 @@
 
 <style>
   :global(.composer-editor-wrap .ProseMirror) {
-    min-height: 180px;
+    min-height: 300px;
     padding: 1rem;
     color: #e4e4e7; /* zinc-200 */
     font-size: 0.875rem;

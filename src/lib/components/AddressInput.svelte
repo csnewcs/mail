@@ -1,7 +1,16 @@
 <script lang="ts">
   import { X } from 'lucide-svelte'
+  import { parseRecipientList, splitRecipientList } from '$lib/recipients'
 
-  type Contact = { name: string; email: string; display: string }
+  type Contact = { name: string; email: string; display: string; type?: 'contact' }
+  type ContactGroup = {
+    id: number
+    name: string
+    display: string
+    members: Contact[]
+    type: 'group'
+  }
+  type Suggestion = Contact | ContactGroup
 
   type Props = {
     value: string
@@ -16,19 +25,17 @@
   let pills = $state<string[]>([])
   // The partial text being typed right now
   let partial = $state('')
-  let suggestions = $state<Contact[]>([])
+  let suggestions = $state<Suggestion[]>([])
   let highlightIndex = $state(-1)
   let showDropdown = $state(false)
   let inputEl = $state<HTMLInputElement | undefined>(undefined)
   const listboxId = $derived(id ? `${id}-listbox` : undefined)
+  const invalidPills = $derived(parseRecipientList(value).filter((recipient) => !recipient.valid))
   let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
   // Sync `value` → pills on mount and when value changes externally
   $effect(() => {
-    const entries = value
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean)
+    const entries = value ? splitRecipientList(value) : []
     // Only reset pills if they differ from what we have (avoids infinite loop)
     const current = pills.join(', ')
     const incoming = entries.join(', ')
@@ -42,10 +49,21 @@
     value = pills.join(', ')
   }
 
+  function emailKey(text: string) {
+    return (text.match(/<([^>]+)>/)?.[1] ?? text).trim().toLowerCase()
+  }
+
   function addPill(text: string) {
     const trimmed = text.trim()
     if (!trimmed) return
-    pills = [...pills, trimmed]
+    const entries = splitRecipientList(trimmed).filter(
+      (entry) => !pills.some((pill) => emailKey(pill) === emailKey(entry))
+    )
+    if (entries.length === 0) {
+      partial = ''
+      return
+    }
+    pills = [...pills, ...entries]
     partial = ''
     syncValue()
     showDropdown = false
@@ -67,18 +85,31 @@
       return
     }
     debounceTimer = setTimeout(async () => {
-      const res = await fetch(`/api/contacts?q=${encodeURIComponent(q)}`)
+      const res = await fetch(`/api/contacts?includeGroups=1&q=${encodeURIComponent(q)}`)
       if (res.ok) {
         const data = await res.json()
-        suggestions = data.contacts as Contact[]
+        suggestions = [
+          ...((data.groups ?? []) as ContactGroup[]).map((group) => ({
+            ...group,
+            type: 'group' as const
+          })),
+          ...((data.contacts ?? []) as Contact[]).map((contact) => ({
+            ...contact,
+            type: 'contact' as const
+          }))
+        ]
         highlightIndex = -1
         showDropdown = suggestions.length > 0
       }
     }, 200)
   }
 
-  function selectSuggestion(c: Contact) {
-    addPill(c.display)
+  function selectSuggestion(suggestion: Suggestion) {
+    if (suggestion.type === 'group') {
+      for (const member of suggestion.members) addPill(member.display)
+    } else {
+      addPill(suggestion.display)
+    }
     inputEl?.focus()
   }
 
@@ -122,7 +153,16 @@
   {/if}
 
   {#each pills as pill, i (`${pill}-${i}`)}
-    <span class="flex items-center gap-1 rounded bg-zinc-700 px-1.5 py-0.5 text-xs text-zinc-200">
+    {@const parsedPill = parseRecipientList(pill)[0]}
+    <span
+      class={[
+        'flex items-center gap-1 rounded px-1.5 py-0.5 text-xs',
+        parsedPill?.valid === false
+          ? 'border border-rose-400/30 bg-rose-500/15 text-rose-100'
+          : 'border border-white/10 bg-white/10 text-zinc-200'
+      ].join(' ')}
+      title={parsedPill?.valid === false ? parsedPill.reason : undefined}
+    >
       {pill}
       <button
         type="button"
@@ -150,8 +190,15 @@
     aria-expanded={showDropdown}
     aria-controls={listboxId}
     aria-haspopup="listbox"
+    aria-invalid={invalidPills.length > 0}
     class="min-w-[120px] flex-1 basis-[180px] bg-transparent py-1 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none"
   />
+
+  {#if invalidPills.length > 0}
+    <p class="w-full pl-0 text-xs text-rose-300 sm:pl-10">
+      Invalid recipient: {invalidPills.map((recipient) => recipient.raw).join(', ')}
+    </p>
+  {/if}
 
   {#if showDropdown && suggestions.length > 0}
     <ul
@@ -159,7 +206,7 @@
       role="listbox"
       class="absolute top-full left-0 z-50 mt-1 max-h-48 w-full overflow-auto rounded-lg border border-white/10 bg-[#1e1e24] shadow-xl"
     >
-      {#each suggestions as suggestion, i (`${suggestion.email}-${i}`)}
+      {#each suggestions as suggestion, i (`${suggestion.type === 'group' ? `group-${suggestion.id}` : suggestion.email}-${i}`)}
         <li
           role="option"
           aria-selected={i === highlightIndex}
@@ -169,8 +216,12 @@
           ].join(' ')}
           onmousedown={() => selectSuggestion(suggestion)}
         >
-          <span class="font-medium">{suggestion.name || suggestion.email}</span>
-          {#if suggestion.name}
+          <span class="font-medium">
+            {suggestion.type === 'group' ? suggestion.name : suggestion.name || suggestion.email}
+          </span>
+          {#if suggestion.type === 'group'}
+            <span class="ml-1 text-xs text-blue-300">Group · {suggestion.members.length}</span>
+          {:else if suggestion.name}
             <span class="ml-1 text-xs text-zinc-500">{suggestion.email}</span>
           {/if}
         </li>

@@ -55,14 +55,16 @@ function parsePayload(job: SmtpJobRow): SmtpSendJobPayload {
 }
 
 async function markJobRunning(job: SmtpJobRow) {
-  await db
+  const [updated] = await db
     .update(smtpJob)
     .set({
       status: 'running',
       updatedAt: new Date(),
       lastError: null
     })
-    .where(eq(smtpJob.id, job.id))
+    .where(and(eq(smtpJob.id, job.id), eq(smtpJob.status, 'pending')))
+    .returning({ id: smtpJob.id })
+  return Boolean(updated)
 }
 
 async function markJobDone(job: SmtpJobRow) {
@@ -171,7 +173,7 @@ async function drainQueueOnce(): Promise<boolean> {
 
   if (!job) return false
 
-  await markJobRunning(job)
+  if (!(await markJobRunning(job))) return true
 
   try {
     await runJob(job)

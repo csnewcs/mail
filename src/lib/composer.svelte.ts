@@ -25,6 +25,13 @@ export type DraftRow = {
   updatedAt: string
 }
 
+export type SignatureProfile = {
+  id: number
+  name: string
+  html: string
+  isDefault: boolean
+}
+
 type ComposerState = {
   open: boolean
   minimized: boolean
@@ -39,6 +46,9 @@ type ComposerState = {
   inReplyTo: string | null
   draftId: number | null
   lastSavedAt: number
+  signatureProfiles: SignatureProfile[]
+  selectedSignatureId: number | null
+  currentSignatureHtml: string
 }
 
 export const composer = $state<ComposerState>({
@@ -54,30 +64,46 @@ export const composer = $state<ComposerState>({
   attachments: [],
   inReplyTo: null as string | null,
   draftId: null as number | null,
-  lastSavedAt: 0
+  lastSavedAt: 0,
+  signatureProfiles: [],
+  selectedSignatureId: null,
+  currentSignatureHtml: ''
 })
 
-// Cached signature — fetched once from the server, invalidated on settings save
-let cachedSignature: string | null = null
+// Cached signatures — fetched once from the server, invalidated on settings save
+let cachedSignatures: SignatureProfile[] | null = null
 
 export function invalidateSignatureCache() {
-  cachedSignature = null
+  cachedSignatures = null
 }
 
-async function fetchSignature(): Promise<string> {
-  if (cachedSignature !== null) return cachedSignature
+async function fetchSignatures(): Promise<SignatureProfile[]> {
+  if (cachedSignatures !== null) return cachedSignatures
   try {
     const res = await fetch('/api/settings')
     if (res.ok) {
       const data = await res.json()
-      cachedSignature = (data.signature as string) ?? ''
+      const profiles = Array.isArray(data.signatureProfiles)
+        ? (data.signatureProfiles as SignatureProfile[])
+        : []
+      const legacySignature = (data.signature as string) ?? ''
+      cachedSignatures =
+        profiles.length > 0
+          ? profiles
+          : legacySignature
+            ? [{ id: 0, name: 'Default', html: legacySignature, isDefault: true }]
+            : []
     } else {
-      cachedSignature = ''
+      cachedSignatures = []
     }
   } catch {
-    cachedSignature = ''
+    cachedSignatures = []
   }
-  return cachedSignature
+  return cachedSignatures
+}
+
+function defaultSignature(profiles: SignatureProfile[]) {
+  return profiles.find((profile) => profile.isDefault) ?? profiles[0] ?? null
 }
 
 function extractEmail(addr: string | null): string {
@@ -115,6 +141,11 @@ function buildReplyQuote(msg: ComposerMessage): string {
   return `<p></p><blockquote data-type="quote"><p>On ${date}, ${label} wrote:</p>${body}</blockquote>`
 }
 
+function buildReplyBody(msg: ComposerMessage, draftHtml?: string): string {
+  if (!draftHtml?.trim()) return buildReplyQuote(msg)
+  return `${draftHtml}${buildReplyQuote(msg).replace(/^<p><\/p>/, '')}`
+}
+
 function buildForwardBody(msg: ComposerMessage): string {
   const date = formatQuoteDate(msg.receivedAt)
   const body = msg.htmlContent
@@ -131,39 +162,46 @@ ${body}`
 }
 
 export async function openCompose() {
-  const sig = await fetchSignature()
+  const signatures = await fetchSignatures()
+  const signature = defaultSignature(signatures)
   composer.mode = 'compose'
   composer.to = ''
   composer.cc = ''
   composer.bcc = ''
   composer.subject = ''
-  composer.initialHtml = sig ? `<p></p>${sig}` : ''
+  composer.initialHtml = signature?.html ? `<p></p>${signature.html}` : ''
   composer.attachments = []
   composer.inReplyTo = null
   composer.draftId = null
   composer.lastSavedAt = 0
+  composer.signatureProfiles = signatures
+  composer.selectedSignatureId = signature?.id ?? null
+  composer.currentSignatureHtml = signature?.html ?? ''
   composer.minimized = false
   composer.fullscreen = false
   composer.open = true
 }
 
-export function openReply(msg: ComposerMessage) {
+export function openReply(msg: ComposerMessage, draftHtml?: string) {
   composer.mode = 'reply'
   composer.to = msg.from ?? ''
   composer.cc = ''
   composer.bcc = ''
   composer.subject = msg.subject?.startsWith('Re:') ? msg.subject : `Re: ${msg.subject ?? ''}`
-  composer.initialHtml = buildReplyQuote(msg)
+  composer.initialHtml = buildReplyBody(msg, draftHtml)
   composer.attachments = []
   composer.inReplyTo = msg.messageId ?? null
   composer.draftId = null
   composer.lastSavedAt = 0
+  composer.signatureProfiles = []
+  composer.selectedSignatureId = null
+  composer.currentSignatureHtml = ''
   composer.minimized = false
   composer.fullscreen = false
   composer.open = true
 }
 
-export function openReplyAll(msg: ComposerMessage) {
+export function openReplyAll(msg: ComposerMessage, draftHtml?: string) {
   const fromEmail = extractEmail(msg.from)
   const toAddrs = (msg.to ?? '')
     .split(',')
@@ -174,11 +212,14 @@ export function openReplyAll(msg: ComposerMessage) {
   composer.cc = toAddrs.join(', ')
   composer.bcc = ''
   composer.subject = msg.subject?.startsWith('Re:') ? msg.subject : `Re: ${msg.subject ?? ''}`
-  composer.initialHtml = buildReplyQuote(msg)
+  composer.initialHtml = buildReplyBody(msg, draftHtml)
   composer.attachments = []
   composer.inReplyTo = msg.messageId ?? null
   composer.draftId = null
   composer.lastSavedAt = 0
+  composer.signatureProfiles = []
+  composer.selectedSignatureId = null
+  composer.currentSignatureHtml = ''
   composer.minimized = false
   composer.fullscreen = false
   composer.open = true
@@ -195,6 +236,9 @@ export function openForward(msg: ComposerMessage) {
   composer.inReplyTo = null
   composer.draftId = null
   composer.lastSavedAt = 0
+  composer.signatureProfiles = []
+  composer.selectedSignatureId = null
+  composer.currentSignatureHtml = ''
   composer.minimized = false
   composer.fullscreen = false
   composer.open = true
@@ -211,6 +255,9 @@ export function openDraft(draft: DraftRow) {
   composer.inReplyTo = draft.inReplyTo
   composer.draftId = draft.id
   composer.lastSavedAt = Date.parse(draft.updatedAt)
+  composer.signatureProfiles = []
+  composer.selectedSignatureId = null
+  composer.currentSignatureHtml = ''
   composer.minimized = false
   composer.fullscreen = false
   composer.open = true
