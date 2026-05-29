@@ -72,6 +72,8 @@
   let refreshing = $state(false)
   let errorMessage = $state<string | null>(null)
   let autoRefresh = $state(true)
+  let retryingJob = $state<string | null>(null)
+  let resyncing = $state(false)
 
   const totalJobs = $derived((health?.queues.imap.total ?? 0) + (health?.queues.smtp.total ?? 0))
   const activeJobs = $derived(
@@ -157,6 +159,37 @@
     }
   }
 
+  async function retryJob(job: QueueError) {
+    retryingJob = `${job.queue}-${job.id}`
+    try {
+      const response = await fetch('/api/queue-health/retry', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ queue: job.queue, id: job.id })
+      })
+      if (!response.ok) throw new Error(await readErrorMessage(response, 'Failed to retry job.'))
+      await loadHealth('manual')
+    } catch (error) {
+      errorMessage = errorMessageFromUnknown(error, 'Failed to retry job.')
+    } finally {
+      retryingJob = null
+    }
+  }
+
+  async function resyncMailboxes() {
+    resyncing = true
+    try {
+      const response = await fetch('/api/resync', { method: 'POST' })
+      if (!response.ok)
+        throw new Error(await readErrorMessage(response, 'Failed to request resync.'))
+      await loadHealth('manual')
+    } catch (error) {
+      errorMessage = errorMessageFromUnknown(error, 'Failed to request resync.')
+    } finally {
+      resyncing = false
+    }
+  }
+
   onMount(() => {
     void loadHealth('initial')
     const interval = window.setInterval(() => {
@@ -212,6 +245,15 @@
         >
           <RefreshCw size={15} class={refreshing ? 'animate-spin' : ''} />
           Refresh
+        </button>
+        <button
+          type="button"
+          onclick={() => void resyncMailboxes()}
+          disabled={resyncing}
+          class="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/8 px-3 py-2 text-sm font-medium text-white transition hover:bg-white/12 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <DatabaseZap size={15} class={resyncing ? 'animate-pulse' : ''} />
+          Resync mailboxes
         </button>
       </div>
     </header>
@@ -484,6 +526,14 @@
                       <div>UID: <span class="text-zinc-200">{job.uid}</span></div>
                     {/if}
                     <div>Status: <span class="text-zinc-200">{job.status}</span></div>
+                    <button
+                      type="button"
+                      onclick={() => void retryJob(job)}
+                      disabled={retryingJob === `${job.queue}-${job.id}`}
+                      class="mt-2 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-zinc-200 hover:bg-white/10 disabled:opacity-50"
+                    >
+                      {retryingJob === `${job.queue}-${job.id}` ? 'Retrying...' : 'Retry job'}
+                    </button>
                   </div>
                 </div>
               </article>
