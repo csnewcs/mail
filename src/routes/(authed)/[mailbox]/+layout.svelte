@@ -59,6 +59,12 @@
     threadCount?: number
   }
 
+  type SavedSearch = {
+    id: number
+    name: string
+    query: string
+  }
+
   let threadedMode = $state(true)
 
   type ImapMailbox = {
@@ -169,6 +175,8 @@
   let searchResults = $state<Message[]>([])
   let searchTotalCount = $state(0)
   let isSearching = $state(false)
+  let savedSearches = $state<SavedSearch[]>([])
+  let savingSearch = $state(false)
   let searchRequestId = 0
   let searchTimer: ReturnType<typeof setTimeout> | null = null
   let pendingMailboxNavigationScrollTop: number | null = null
@@ -324,6 +332,41 @@
       }
     }, 300)
   })
+
+  async function loadSavedSearches() {
+    try {
+      const response = await fetch('/api/saved-searches')
+      if (!response.ok)
+        throw new Error(await readErrorMessage(response, 'Failed to load saved searches.'))
+      const payload = (await response.json()) as { searches: SavedSearch[] }
+      savedSearches = payload.searches
+    } catch (error) {
+      errorDialogMessage = errorMessageFromUnknown(error, 'Failed to load saved searches.')
+    }
+  }
+
+  async function saveCurrentSearch() {
+    const query = searchQuery.trim()
+    if (!query || savingSearch) return
+    const defaultName = query.length > 36 ? `${query.slice(0, 33)}...` : query
+    const name = window.prompt('Saved search name', defaultName)?.trim()
+    if (!name) return
+
+    savingSearch = true
+    try {
+      const response = await fetch('/api/saved-searches', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name, query })
+      })
+      if (!response.ok) throw new Error(await readErrorMessage(response, 'Failed to save search.'))
+      await loadSavedSearches()
+    } catch (error) {
+      errorDialogMessage = errorMessageFromUnknown(error, 'Failed to save search.')
+    } finally {
+      savingSearch = false
+    }
+  }
 
   // Scroll focused row into view when keyboard.focusedIndex changes
   $effect(() => {
@@ -1035,7 +1078,7 @@
     void refreshVisibleListWindow(seed ? 'route-threaded-reload' : 'detail-hydration-reload')
   })
 
-  let lastActiveFilter = activeFilter
+  let lastActiveFilter = $state<'all' | 'unread'>('all')
   $effect(() => {
     const filter = activeFilter
     if (filter === untrack(() => lastActiveFilter)) return
@@ -1068,6 +1111,7 @@
 
   onMount(() => {
     keyboard.panel = 'list'
+    void loadSavedSearches()
 
     const intervalMs = refreshIntervalMs
     const interval = setInterval(() => {
@@ -1562,6 +1606,28 @@
             class="w-full rounded-xl border border-transparent bg-black/20 px-4 py-3 text-sm text-white outline-none placeholder:text-zinc-500 focus:border-white/8 md:border-white/8"
           />
         </label>
+        <div class="mt-2 flex flex-wrap items-center gap-2">
+          {#each savedSearches as savedSearch (savedSearch.id)}
+            <button
+              type="button"
+              onclick={() => (searchQuery = savedSearch.query)}
+              class="rounded-full border border-white/8 bg-white/5 px-2.5 py-1 text-xs text-zinc-300 hover:bg-white/10"
+              title={savedSearch.query}
+            >
+              {savedSearch.name}
+            </button>
+          {/each}
+          {#if searchQuery.trim()}
+            <button
+              type="button"
+              onclick={() => void saveCurrentSearch()}
+              disabled={savingSearch}
+              class="rounded-full border border-blue-400/20 bg-blue-400/10 px-2.5 py-1 text-xs text-blue-200 disabled:opacity-50"
+            >
+              Save search
+            </button>
+          {/if}
+        </div>
       {/if}
 
       {#if recentSummary !== null || summarizing}
@@ -1876,6 +1942,28 @@
               class="w-full rounded-xl border border-transparent bg-black/20 px-4 py-3 text-sm text-white outline-none placeholder:text-zinc-500 focus:border-white/8 md:border-white/8"
             />
           </label>
+          <div class="mt-2 flex flex-wrap items-center gap-2">
+            {#each savedSearches as savedSearch (savedSearch.id)}
+              <button
+                type="button"
+                onclick={() => (searchQuery = savedSearch.query)}
+                class="rounded-full border border-white/8 bg-white/5 px-2.5 py-1 text-xs text-zinc-300 hover:bg-white/10"
+                title={savedSearch.query}
+              >
+                {savedSearch.name}
+              </button>
+            {/each}
+            {#if searchQuery.trim()}
+              <button
+                type="button"
+                onclick={() => void saveCurrentSearch()}
+                disabled={savingSearch}
+                class="rounded-full border border-blue-400/20 bg-blue-400/10 px-2.5 py-1 text-xs text-blue-200 disabled:opacity-50"
+              >
+                Save search
+              </button>
+            {/if}
+          </div>
         {/if}
 
         {#if recentSummary !== null || summarizing}

@@ -248,6 +248,17 @@ export const mailFilter = pgTable('mail_filter', {
   target: text('target')
 })
 
+export const savedSearch = pgTable('saved_search', {
+  id: serial('id').primaryKey(),
+  name: text('name').notNull(),
+  query: text('query').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' })
+    .defaultNow()
+    .$onUpdate(() => /* @__PURE__ */ new Date())
+    .notNull()
+})
+
 export const mailPushSubscription = pgTable('mail_push_subscription', {
   id: serial('id').primaryKey(),
   endpoint: text('endpoint').notNull().unique(),

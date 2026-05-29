@@ -29,6 +29,13 @@
       "when": 1778724072123,
       "tag": "0003_smtp_worker_queue",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1779940800000,
+      "tag": "0004_saved_searches",
+      "breakpoints": true
     }
   ]
 }
