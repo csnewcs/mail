@@ -1,4 +1,5 @@
 import type { Cookies } from '@sveltejs/kit'
+import { LIST_RATIO_COOKIE, parseListRatio } from '$lib/list-width'
 
 const SIMPLIFIED_VIEW_COOKIE = 'mail_simplified_view'
 const COMPACT_MODE_COOKIE = 'mail_compact_mode'
@@ -117,6 +118,10 @@ export function setRemoteContentAllowedSenders(
     sameSite: 'lax',
     maxAge: ONE_YEAR_SECONDS
   })
+}
+
+export function getListRatio(cookies: Pick<Cookies, 'get'>) {
+  return parseListRatio(cookies.get(LIST_RATIO_COOKIE))
 }
 
 export function getThemePreference(cookies: Pick<Cookies, 'get'>) {

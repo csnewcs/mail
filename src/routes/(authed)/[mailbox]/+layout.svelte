@@ -38,6 +38,13 @@
   import { encodeThreadId } from '$lib/thread-url'
   import { keyboard, setupKeyboardHandler } from '$lib/keyboard.svelte'
   import { readOfflineList, saveOfflineList, type OfflineListCache } from '$lib/offline-cache'
+  import {
+    LIST_RATIO_COOKIE,
+    LIST_RATIO_COOKIE_MAX_AGE,
+    DEFAULT_LIST_RATIO,
+    MIN_LIST_PX,
+    MIN_DETAIL_PX
+  } from '$lib/list-width'
 
   type DensityPreference = 'comfortable' | 'compact' | 'condensed'
 
@@ -116,6 +123,7 @@
       simplifiedView: boolean
       density: DensityPreference
       compactMode: boolean
+      listRatio: number
       user?: { name: string; email: string } | null
     }
     children: import('svelte').Snippet
@@ -299,7 +307,7 @@
   })
   const showSearchAutocomplete = $derived(
     searchInputFocused &&
-      ((syntaxSuggestions.length > 0) || (showContactSuggestions && contactSuggestions.length > 0))
+      (syntaxSuggestions.length > 0 || (showContactSuggestions && contactSuggestions.length > 0))
   )
 
   const relativeFormatter = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
@@ -1485,7 +1493,9 @@
 
   function updateThreadMetadataRows(threadId: string, values: Partial<Message>) {
     const update = (message: Message) =>
-      message.threadId === threadId || message.messageId === threadId ? { ...message, ...values } : message
+      message.threadId === threadId || message.messageId === threadId
+        ? { ...message, ...values }
+        : message
     messages = messages.map(update)
     searchResults = searchResults.map(update)
   }
@@ -1966,19 +1976,11 @@
     return () => observer.disconnect()
   })
 
-  function readStorage(key: string, fallback: number): number {
-    if (typeof window === 'undefined') return fallback
-    try {
-      const raw = localStorage.getItem(key)
-      const parsed = raw !== null ? Number(raw) : NaN
-      return Number.isFinite(parsed) ? parsed : fallback
-    } catch {
-      return fallback
-    }
-  }
-
-  let listWidth = $state(readStorage('mail:listWidth', 440))
+  // Snapshot the SSR/cookie-seeded value once; the divider drag owns it afterward.
+  let listRatio = $state(untrack(() => data.listRatio))
   let resizing = $state(false)
+  let splitEl = $state<HTMLDivElement | null>(null)
+  const listBasis = $derived(`${(listRatio * 100).toFixed(3)}%`)
   let refreshing = $state(false)
   let summarizing = $state(false)
   let recentSummary = $state<string | null>(null)
@@ -2043,21 +2045,48 @@
     }
   }
 
+  function persistListRatio() {
+    try {
+      document.cookie = `${LIST_RATIO_COOKIE}=${listRatio.toFixed(4)}; path=/; max-age=${LIST_RATIO_COOKIE_MAX_AGE}; samesite=lax`
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // Translate a desired list width (px) into a stored ratio, enforcing the
+  // per-viewport pixel floors so neither the list nor the reading pane vanishes.
+  // Only the rendered width is clamped — the stored ratio keeps the user's intent
+  // so the separator returns to its proportional spot when the window grows back.
+  function ratioFromPx(px: number, container: number) {
+    if (container <= 0) return listRatio
+    const lower = MIN_LIST_PX / container
+    const upper = Math.max(lower, (container - MIN_DETAIL_PX) / container)
+    return Math.min(Math.max(px / container, lower), upper)
+  }
+
+  function resetListRatio() {
+    listRatio = DEFAULT_LIST_RATIO
+    persistListRatio()
+  }
+
   function startResize(e: PointerEvent) {
     e.preventDefault()
+    const container = splitEl?.clientWidth ?? 0
+    if (container <= 0) return
+
     const handle = e.currentTarget as HTMLElement
     handle.setPointerCapture(e.pointerId)
     resizing = true
     const startX = e.clientX
-    const startWidth = listWidth
+    const startPx = listRatio * container
 
     function onMove(ev: PointerEvent) {
-      listWidth = Math.max(240, Math.min(700, startWidth + (ev.clientX - startX)))
+      listRatio = ratioFromPx(startPx + (ev.clientX - startX), container)
     }
 
     function stop() {
       resizing = false
-      localStorage.setItem('mail:listWidth', String(listWidth))
+      persistListRatio()
       handle.removeEventListener('pointermove', onMove)
       handle.removeEventListener('pointerup', stop)
       handle.removeEventListener('pointercancel', stop)
@@ -2066,6 +2095,36 @@
     handle.addEventListener('pointermove', onMove)
     handle.addEventListener('pointerup', stop)
     handle.addEventListener('pointercancel', stop)
+  }
+
+  function onHandleKeydown(e: KeyboardEvent) {
+    const container = splitEl?.clientWidth ?? 0
+    if (container <= 0) return
+
+    const stepPx = e.shiftKey ? 48 : 16
+    const currentPx = listRatio * container
+    let nextPx: number
+
+    switch (e.key) {
+      case 'ArrowLeft':
+        nextPx = currentPx - stepPx
+        break
+      case 'ArrowRight':
+        nextPx = currentPx + stepPx
+        break
+      case 'Home':
+        nextPx = 0
+        break
+      case 'End':
+        nextPx = container
+        break
+      default:
+        return
+    }
+
+    e.preventDefault()
+    listRatio = ratioFromPx(nextPx, container)
+    persistListRatio()
   }
 
   // Derived so Svelte tracks keyboard.focusedIndex as a reactive dependency
@@ -2603,11 +2662,17 @@
     </div>
   </section>
 {:else}
-  <div class="flex h-full" class:cursor-col-resize={resizing} class:select-none={resizing}>
+  <div
+    bind:this={splitEl}
+    class="flex h-full"
+    class:cursor-col-resize={resizing}
+    class:select-none={resizing}
+  >
     <section
-      style={isDesktop ? `width: ${listWidth}px; min-width: ${listWidth}px` : undefined}
+      id="message-list-pane"
+      style:--list-basis={listBasis}
       class={[
-        'flex flex-col overflow-x-hidden bg-[#0d0d10] md:border-r',
+        'mail-list-pane flex flex-col overflow-x-hidden bg-[#0d0d10] md:border-r',
         'md:border-white/8',
         isMailboxRoot ? 'flex min-w-0 flex-1 md:flex-none' : 'hidden md:flex'
       ]}
@@ -2775,7 +2840,8 @@
                         <span class="block truncate text-sm font-medium text-zinc-200">
                           {savedSearch.name}
                         </span>
-                        <span class="block truncate text-xs text-zinc-500">{savedSearch.query}</span>
+                        <span class="block truncate text-xs text-zinc-500">{savedSearch.query}</span
+                        >
                       </button>
                       <button
                         type="button"
@@ -3296,12 +3362,22 @@
     </section>
 
     <!-- Resize handle: list ↔ detail -->
+    <!-- A focusable separator is the WAI-ARIA "window splitter" pattern; the
+         checker classifies role="separator" as non-interactive (false positive). -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
     <div
       role="separator"
       aria-orientation="vertical"
-      tabindex="-1"
+      aria-label="Resize message list"
+      aria-controls="message-list-pane"
+      aria-valuemin={5}
+      aria-valuemax={95}
+      aria-valuenow={Math.round(listRatio * 100)}
+      tabindex="0"
       class="group relative z-10 hidden w-2 shrink-0 cursor-col-resize md:block"
       onpointerdown={startResize}
+      onkeydown={onHandleKeydown}
+      ondblclick={resetListRatio}
     >
       <div
         class="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-white/8 transition-colors group-hover:bg-white/25"

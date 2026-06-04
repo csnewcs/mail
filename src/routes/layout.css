@@ -335,3 +335,14 @@ a {
     animation: none;
   }
 }
+
+/* Message list ↔ detail separator (desktop only).
+   `--list-basis` carries the stored ratio as a percentage; clamp() keeps both
+   panes usable and recomputes on every container resize without JavaScript.
+   `section.mail-list-pane` (0,1,1) outranks Tailwind width/flex utilities. */
+@media (min-width: 768px) {
+  section.mail-list-pane {
+    width: clamp(280px, var(--list-basis, 40%), calc(100% - 360px));
+    flex: none;
+  }
+}
