@@ -104,6 +104,7 @@
       }
       origin: string
       simplifiedView: boolean
+      threadModeOnPageLoad: boolean
       density: DensityPreference
       compactMode: boolean
       themePreference: ThemePreference
@@ -148,6 +149,7 @@
     signature = $state('')
     signatureProfiles = $state<SignatureProfile[]>([])
     simplifiedView = $state(false)
+    threadModeOnPageLoad = $state(true)
     compactMode = $state(false)
     themePreference = $state<ThemePreference>('system')
     density = $state<DensityPreference>('comfortable')
@@ -159,6 +161,7 @@
     constructor(
       config: Props['data']['config'],
       simplifiedView: boolean,
+      threadModeOnPageLoad: boolean,
       compactMode: boolean,
       themePreference: ThemePreference,
       density: DensityPreference,
@@ -186,6 +189,7 @@
             }))
           : [{ name: 'Default', html: config.signature, isDefault: true }]
       this.simplifiedView = simplifiedView
+      this.threadModeOnPageLoad = threadModeOnPageLoad
       this.compactMode = compactMode
       this.themePreference = themePreference
       this.density = density
@@ -203,6 +207,7 @@
       new SettingsFormState(
         data.config,
         data.simplifiedView,
+        data.threadModeOnPageLoad,
         data.compactMode,
         data.themePreference,
         data.density,
@@ -214,6 +219,7 @@
   let smtp = $derived(form.smtp)
   let oidc = $derived(form.oidc)
   let simplifiedView = $derived(form.simplifiedView)
+  let threadModeOnPageLoad = $derived(form.threadModeOnPageLoad)
   let compactMode = $derived(form.compactMode)
   let themePreference = $derived(form.themePreference)
   let density = $derived(form.density)
@@ -1200,6 +1206,7 @@
       signature: defaultSignatureHtml(),
       signatureProfiles,
       simplifiedView,
+      threadModeOnPageLoad,
       compactMode,
       themePreference,
       density,
@@ -1342,6 +1349,7 @@
           signature: defaultSignatureHtml(),
           signatureProfiles,
           simplifiedView,
+          threadModeOnPageLoad,
           compactMode: density !== 'comfortable',
           themePreference,
           density,
@@ -1949,6 +1957,29 @@
             <option value="light">Light</option>
             <option value="dark">Dark</option>
           </select>
+        </label>
+      </div>
+      <div class="rounded-lg border border-white/8 bg-white/3 p-4">
+        <label class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p class="text-sm font-medium text-zinc-200">Use thread mode on page load</p>
+            <p class="mt-1 text-sm text-zinc-500">
+              Open mailbox root pages grouped by conversation. You can still toggle this per mailbox
+              session.
+            </p>
+          </div>
+
+          <span class="relative inline-flex cursor-pointer items-center">
+            <input
+              type="checkbox"
+              bind:checked={threadModeOnPageLoad}
+              onchange={autosaveToggleChange}
+              class="peer sr-only"
+            />
+            <span
+              class="h-5 w-9 rounded-full bg-zinc-700 transition peer-checked:bg-blue-600 after:absolute after:top-0.5 after:left-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-4"
+            ></span>
+          </span>
         </label>
       </div>
       <div class="rounded-lg border border-white/8 bg-white/3 p-4">
@@ -2721,7 +2752,9 @@
     <section class="space-y-4">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h2 class="text-sm font-semibold tracking-widest text-zinc-500 uppercase">Sender Rules</h2>
+          <h2 class="text-sm font-semibold tracking-widest text-zinc-500 uppercase">
+            Sender Rules
+          </h2>
           <p class="mt-1 text-xs text-zinc-600">
             Blocked senders are moved to trash during sync. Allowlisted senders override blocks.
           </p>
@@ -2740,15 +2773,25 @@
       {/if}
 
       {#each senderRules as rule (rule.id)}
-        <div class="flex flex-wrap items-center gap-3 rounded-lg border border-white/8 bg-white/3 px-3 py-2 sm:flex-nowrap">
-          <span class="rounded-full px-2 py-0.5 text-xs font-medium {rule.type === 'allow' ? 'bg-emerald-500/10 text-emerald-300' : 'bg-rose-500/10 text-rose-300'}">
+        <div
+          class="flex flex-wrap items-center gap-3 rounded-lg border border-white/8 bg-white/3 px-3 py-2 sm:flex-nowrap"
+        >
+          <span
+            class="rounded-full px-2 py-0.5 text-xs font-medium {rule.type === 'allow'
+              ? 'bg-emerald-500/10 text-emerald-300'
+              : 'bg-rose-500/10 text-rose-300'}"
+          >
             {rule.type === 'allow' ? 'Allow' : 'Block'}
           </span>
           <div class="min-w-0 flex-1">
             <p class="truncate text-sm text-zinc-200">{rule.sender}</p>
             <p class="truncate text-xs text-zinc-600">{rule.normalizedSender}</p>
           </div>
-          <button type="button" onclick={() => void deleteSenderRule(rule.id)} class="shrink-0 text-zinc-600 hover:text-rose-400">
+          <button
+            type="button"
+            onclick={() => void deleteSenderRule(rule.id)}
+            class="shrink-0 text-zinc-600 hover:text-rose-400"
+          >
             <Trash2 size={14} />
           </button>
         </div>
@@ -2759,20 +2802,44 @@
           <h3 class="text-xs font-medium text-zinc-400">New sender rule</h3>
           <div class="grid grid-cols-1 gap-3 sm:grid-cols-[160px_minmax(0,1fr)]">
             <div>
-              <label class="mb-1 block text-xs text-zinc-500" for="new-sender-rule-type">Type</label>
-              <select id="new-sender-rule-type" bind:value={newSenderRule.type} class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none">
+              <label class="mb-1 block text-xs text-zinc-500" for="new-sender-rule-type">Type</label
+              >
+              <select
+                id="new-sender-rule-type"
+                bind:value={newSenderRule.type}
+                class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
+              >
                 <option value="block">Block</option>
                 <option value="allow">Allow</option>
               </select>
             </div>
             <div>
-              <label class="mb-1 block text-xs text-zinc-500" for="new-sender-rule-sender">Sender</label>
-              <input id="new-sender-rule-sender" type="text" bind:value={newSenderRule.sender} placeholder="newsletter@example.com" class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none" />
+              <label class="mb-1 block text-xs text-zinc-500" for="new-sender-rule-sender"
+                >Sender</label
+              >
+              <input
+                id="new-sender-rule-sender"
+                type="text"
+                bind:value={newSenderRule.sender}
+                placeholder="newsletter@example.com"
+                class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+              />
             </div>
           </div>
           <div class="flex flex-wrap gap-2">
-            <button type="button" onclick={() => void addSenderRule()} disabled={!newSenderRule.sender.trim()} class="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50">Add sender</button>
-            <button type="button" onclick={() => (showAddSenderRule = false)} class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-zinc-300 hover:bg-white/10">Cancel</button>
+            <button
+              type="button"
+              onclick={() => void addSenderRule()}
+              disabled={!newSenderRule.sender.trim()}
+              class="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+              >Add sender</button
+            >
+            <button
+              type="button"
+              onclick={() => (showAddSenderRule = false)}
+              class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-zinc-300 hover:bg-white/10"
+              >Cancel</button
+            >
           </div>
         </div>
       {/if}

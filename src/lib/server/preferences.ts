@@ -2,6 +2,7 @@ import type { Cookies } from '@sveltejs/kit'
 import { LIST_RATIO_COOKIE, parseListRatio } from '$lib/list-width'
 
 const SIMPLIFIED_VIEW_COOKIE = 'mail_simplified_view'
+const THREAD_MODE_ON_PAGE_LOAD_COOKIE = 'mail_thread_mode_on_page_load'
 const COMPACT_MODE_COOKIE = 'mail_compact_mode'
 const DENSITY_COOKIE = 'mail_density'
 const TRANSLATION_TARGET_LANGUAGE_COOKIE = 'mail_translation_target_language'
@@ -31,6 +32,18 @@ export function getSimplifiedViewEnabled(cookies: Pick<Cookies, 'get'>) {
 
 export function setSimplifiedViewEnabled(cookies: Pick<Cookies, 'set'>, enabled: boolean) {
   cookies.set(SIMPLIFIED_VIEW_COOKIE, enabled ? '1' : '0', {
+    path: '/',
+    sameSite: 'lax',
+    maxAge: ONE_YEAR_SECONDS
+  })
+}
+
+export function getThreadModeOnPageLoadEnabled(cookies: Pick<Cookies, 'get'>) {
+  return cookies.get(THREAD_MODE_ON_PAGE_LOAD_COOKIE) !== '0'
+}
+
+export function setThreadModeOnPageLoadEnabled(cookies: Pick<Cookies, 'set'>, enabled: boolean) {
+  cookies.set(THREAD_MODE_ON_PAGE_LOAD_COOKIE, enabled ? '1' : '0', {
     path: '/',
     sameSite: 'lax',
     maxAge: ONE_YEAR_SECONDS

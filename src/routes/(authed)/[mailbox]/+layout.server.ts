@@ -5,7 +5,8 @@ import {
   getCompactModeEnabled,
   getDensityPreference,
   getListRatio,
-  getSimplifiedViewEnabled
+  getSimplifiedViewEnabled,
+  getThreadModeOnPageLoadEnabled
 } from '$lib/server/preferences'
 
 export const load: LayoutServerLoad = async ({ params, parent, cookies }) => {
@@ -20,6 +21,7 @@ export const load: LayoutServerLoad = async ({ params, parent, cookies }) => {
     simplifiedView: getSimplifiedViewEnabled(cookies),
     density: getDensityPreference(cookies),
     compactMode: getCompactModeEnabled(cookies),
+    threadModeOnPageLoad: getThreadModeOnPageLoadEnabled(cookies),
     listRatio: getListRatio(cookies)
   }
 

@@ -7,6 +7,7 @@ import {
   getRemoteContentAllowedSenders,
   getSimplifiedViewEnabled,
   getThemePreference,
+  getThreadModeOnPageLoadEnabled,
   getTranslationTargetLanguage
 } from '$lib/server/preferences'
 import { env } from '$env/dynamic/private'
@@ -19,6 +20,7 @@ export const load: PageServerLoad = async ({ cookies }) => {
     config,
     origin: env.ORIGIN ?? '',
     simplifiedView: getSimplifiedViewEnabled(cookies),
+    threadModeOnPageLoad: getThreadModeOnPageLoadEnabled(cookies),
     density: getDensityPreference(cookies),
     compactMode: getCompactModeEnabled(cookies),
     themePreference: getThemePreference(cookies),

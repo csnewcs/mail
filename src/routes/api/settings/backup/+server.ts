@@ -8,9 +8,11 @@ import { getDisplayConfig, invalidateConfigCache } from '$lib/server/config'
 import {
   getCompactModeEnabled,
   getSimplifiedViewEnabled,
+  getThreadModeOnPageLoadEnabled,
   getTranslationTargetLanguage,
   setCompactModeEnabled,
   setSimplifiedViewEnabled,
+  setThreadModeOnPageLoadEnabled,
   setTranslationTargetLanguage
 } from '$lib/server/preferences'
 import {
@@ -58,6 +60,7 @@ export const GET: RequestHandler = async ({ cookies }) => {
     },
     preferences: {
       simplifiedView: getSimplifiedViewEnabled(cookies),
+      threadModeOnPageLoad: getThreadModeOnPageLoadEnabled(cookies),
       compactMode: getCompactModeEnabled(cookies),
       translationTargetLanguage: getTranslationTargetLanguage(cookies)
     },
@@ -92,6 +95,9 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
     if (selection.preferences && backup.preferences) {
       if (backup.preferences.simplifiedView != null) {
         setSimplifiedViewEnabled(cookies, backup.preferences.simplifiedView)
+      }
+      if (backup.preferences.threadModeOnPageLoad != null) {
+        setThreadModeOnPageLoadEnabled(cookies, backup.preferences.threadModeOnPageLoad)
       }
       if (backup.preferences.compactMode != null) {
         setCompactModeEnabled(cookies, backup.preferences.compactMode)
@@ -146,6 +152,9 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
   if (selection.preferences && backup.preferences) {
     if (backup.preferences.simplifiedView != null) {
       setSimplifiedViewEnabled(cookies, backup.preferences.simplifiedView)
+    }
+    if (backup.preferences.threadModeOnPageLoad != null) {
+      setThreadModeOnPageLoadEnabled(cookies, backup.preferences.threadModeOnPageLoad)
     }
     if (backup.preferences.compactMode != null) {
       setCompactModeEnabled(cookies, backup.preferences.compactMode)

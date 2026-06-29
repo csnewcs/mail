@@ -1,14 +1,21 @@
 import type { PageServerLoad } from './$types'
 import {
   countStoredThreads,
+  countStoredMessages,
+  listStoredMessages,
   listStoredThreads,
   resolveMailboxPath
 } from '$lib/server/mail'
 import { payloadBytes, perfLog, perfMs, perfNow } from '$lib/server/perf'
+import { getThreadModeOnPageLoadEnabled } from '$lib/server/preferences'
 
 const PAGE_SIZE = 50
 
-function serializeMessage(message: Awaited<ReturnType<typeof listStoredThreads>>[number]) {
+type ListRow =
+  | Awaited<ReturnType<typeof listStoredThreads>>[number]
+  | Awaited<ReturnType<typeof listStoredMessages>>[number]
+
+function serializeMessage(message: ListRow) {
   return {
     id: message.id,
     messageId: message.messageId,
@@ -22,22 +29,24 @@ function serializeMessage(message: Awaited<ReturnType<typeof listStoredThreads>>
     receivedAt: message.receivedAt?.toISOString() ?? null,
     snoozedUntil: message.snoozedUntil?.toISOString() ?? null,
     threadId: message.threadId ?? null,
-    hasThreadNote: Boolean(message.hasThreadNote),
-    threadCount: message.threadCount,
-    hasUnread: message.hasUnread,
-    threadStarred: message.threadStarred ?? false,
-    threadPinned: message.threadPinned ?? false
+    hasThreadNote: 'hasThreadNote' in message ? Boolean(message.hasThreadNote) : false,
+    ...('threadCount' in message ? { threadCount: message.threadCount } : {}),
+    ...('hasUnread' in message ? { hasUnread: message.hasUnread } : {}),
+    threadStarred: 'threadStarred' in message ? (message.threadStarred ?? false) : false,
+    threadPinned: 'threadPinned' in message ? (message.threadPinned ?? false) : false
   }
 }
 
-export const load: PageServerLoad = async ({ params, parent }) => {
+export const load: PageServerLoad = async ({ params, parent, cookies }) => {
   const startedAt = perfNow()
   const { imapMailboxes } = await parent()
   const mailboxPath = await resolveMailboxPath(params.mailbox, imapMailboxes)
-  const [rawMessages, total] = await Promise.all([
-    listStoredThreads(mailboxPath, PAGE_SIZE + 1, 0),
-    countStoredThreads(mailboxPath)
-  ])
+  const threaded = getThreadModeOnPageLoadEnabled(cookies)
+  const [rawMessages, total] = await Promise.all(
+    threaded
+      ? [listStoredThreads(mailboxPath, PAGE_SIZE + 1, 0), countStoredThreads(mailboxPath)]
+      : [listStoredMessages(mailboxPath, PAGE_SIZE + 1, 0), countStoredMessages(mailboxPath)]
+  )
   const hasMore = rawMessages.length > PAGE_SIZE
 
   const body = {
@@ -45,7 +54,7 @@ export const load: PageServerLoad = async ({ params, parent }) => {
     hasMore,
     pageSize: PAGE_SIZE,
     total,
-    threaded: true
+    threaded
   }
 
   perfLog('load.mailboxPage', {

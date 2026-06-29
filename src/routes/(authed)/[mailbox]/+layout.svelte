@@ -108,8 +108,6 @@
     { label: 'After', value: 'after:', description: 'After a date, e.g. after:2026-01-01' }
   ]
 
-  let threadedMode = $state(true)
-
   type ImapMailbox = {
     path: string
     name: string
@@ -123,6 +121,7 @@
       simplifiedView: boolean
       density: DensityPreference
       compactMode: boolean
+      threadModeOnPageLoad: boolean
       listRatio: number
       user?: { name: string; email: string } | null
     }
@@ -131,6 +130,7 @@
 
   let { data, children }: Props = $props()
   const { setSidebarSimplifiedModeAction } = getSimplifiedModeSidebarActionContext()
+  let threadedMode = $state(untrack(() => data.threadModeOnPageLoad))
 
   const perfPrefix = '[perf-client]'
 
@@ -237,8 +237,6 @@
   let pendingMailboxNavigationScrollTop: number | null = null
   let viewportHeight = $state(768)
   let online = $state(true)
-  let cachedListSavedAt = $state<number | null>(null)
-
   // Bulk selection
   let selectedIds = new SvelteSet<number>()
   const selectionMode = $derived(selectedIds.size > 0)
@@ -790,7 +788,6 @@
     hasMore = seed.hasMore
     loadedCount = seed.messages.length
     totalCount = seed.total
-    cachedListSavedAt = null
     loadMoreError = null
     void cacheCurrentList()
     restoreListScrollTop(scrollTop)
@@ -813,7 +810,6 @@
     hasMore = cache.hasMore
     loadedCount = cache.messages.length
     totalCount = cache.total
-    cachedListSavedAt = cache.savedAt
     loadMoreError = null
     restoreListScrollTop(scrollTop)
     logPerf('applyOfflineList', { reason, mailbox, rows: messages.length })
@@ -865,7 +861,6 @@
       hasMore = payload.hasMore
       loadedCount = payload.messages.length
       totalCount = payload.total
-      cachedListSavedAt = null
       loadMoreError = null
       void cacheCurrentList()
       restoreListScrollTop(scrollTop)
@@ -913,7 +908,6 @@
       hasMore = payload.hasMore
       loadedCount = messages.length
       totalCount = payload.total
-      cachedListSavedAt = null
       void cacheCurrentList()
     } catch (error) {
       loadMoreError = error instanceof Error ? error.message : 'Failed to load more messages.'

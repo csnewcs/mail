@@ -11,6 +11,7 @@ import {
   getDensityPreference,
   getSimplifiedViewEnabled,
   getThemePreference,
+  getThreadModeOnPageLoadEnabled,
   getTranslationTargetLanguage,
   normalizeDensityPreference,
   setBlockRemoteContentEnabled,
@@ -19,6 +20,7 @@ import {
   setRemoteContentAllowedSenders,
   setSimplifiedViewEnabled,
   setThemePreference,
+  setThreadModeOnPageLoadEnabled,
   setTranslationTargetLanguage
 } from '$lib/server/preferences'
 import { logServerError } from '$lib/server/perf'
@@ -44,6 +46,7 @@ export const GET: RequestHandler = async ({ cookies }) => {
   return json({
     ...config,
     simplifiedView: getSimplifiedViewEnabled(cookies),
+    threadModeOnPageLoad: getThreadModeOnPageLoadEnabled(cookies),
     density: getDensityPreference(cookies),
     compactMode: getCompactModeEnabled(cookies),
     themePreference: getThemePreference(cookies),
@@ -64,6 +67,10 @@ export const POST: RequestHandler = async (event) => {
 
     if (typeof body.simplifiedView === 'boolean') {
       setSimplifiedViewEnabled(cookies, body.simplifiedView)
+    }
+
+    if (typeof body.threadModeOnPageLoad === 'boolean') {
+      setThreadModeOnPageLoadEnabled(cookies, body.threadModeOnPageLoad)
     }
 
     if (typeof body.compactMode === 'boolean') {
@@ -235,6 +242,10 @@ export const POST: RequestHandler = async (event) => {
       setSimplifiedViewEnabled(cookies, body.simplifiedView)
     }
 
+    if (typeof body.threadModeOnPageLoad === 'boolean') {
+      setThreadModeOnPageLoadEnabled(cookies, body.threadModeOnPageLoad)
+    }
+
     if (typeof body.compactMode === 'boolean') {
       setCompactModeEnabled(cookies, body.compactMode)
     }
@@ -273,6 +284,7 @@ export const POST: RequestHandler = async (event) => {
     const changedSettings = Object.keys(values).filter((key) => key !== 'id' && key !== 'updatedAt')
     const preferenceChanges = [
       typeof body.simplifiedView === 'boolean' ? 'simplifiedView' : null,
+      typeof body.threadModeOnPageLoad === 'boolean' ? 'threadModeOnPageLoad' : null,
       typeof body.compactMode === 'boolean' ? 'compactMode' : null,
       typeof body.translationTargetLanguage === 'string' ? 'translationTargetLanguage' : null
     ].filter(Boolean)
@@ -310,6 +322,8 @@ export const POST: RequestHandler = async (event) => {
       density: normalizeDensityPreference(body.density) ?? 'unchanged',
       compactMode: typeof body.compactMode === 'boolean' ? body.compactMode : 'unchanged',
       simplifiedView: typeof body.simplifiedView === 'boolean' ? body.simplifiedView : 'unchanged',
+      threadModeOnPageLoad:
+        typeof body.threadModeOnPageLoad === 'boolean' ? body.threadModeOnPageLoad : 'unchanged',
       themePreference:
         typeof body.themePreference === 'string' ? body.themePreference : 'unchanged',
       translationTargetLanguage:

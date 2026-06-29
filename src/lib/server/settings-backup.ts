@@ -30,6 +30,7 @@ export type SettingsBackup = {
   }
   preferences?: {
     simplifiedView?: boolean
+    threadModeOnPageLoad?: boolean
     compactMode?: boolean
     translationTargetLanguage?: string
   }
@@ -202,6 +203,11 @@ export function validateSettingsBackup(value: unknown): {
       simplifiedView: optionalBoolean(
         preferencesObject.simplifiedView,
         'preferences.simplifiedView',
+        errors
+      ),
+      threadModeOnPageLoad: optionalBoolean(
+        preferencesObject.threadModeOnPageLoad,
+        'preferences.threadModeOnPageLoad',
         errors
       ),
       compactMode: optionalBoolean(
