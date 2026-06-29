@@ -149,6 +149,7 @@
   let savedNoteBody = $state('')
   let savedNoteUpdatedAt = $state<string | null>(null)
   let savingNote = $state(false)
+  let notesCollapsed = $state(false)
 
   function gotoMailbox() {
     return goto(resolve(`/${page.params.mailbox}`), { noScroll: true, keepFocus: true })
@@ -494,6 +495,12 @@
 
   const hasSavedNote = $derived(savedNoteBody.trim().length > 0)
   const noteDirty = $derived(noteDraft.trim() !== savedNoteBody.trim())
+  const notesExpanded = $derived(!notesCollapsed || noteDirty)
+
+  function toggleNotesCollapsed() {
+    if (noteDirty) return
+    notesCollapsed = !notesCollapsed
+  }
 
   async function saveNote() {
     if (savingNote) return
@@ -792,6 +799,7 @@
     savedNoteBody = data.threadNote?.body ?? ''
     savedNoteUpdatedAt = data.threadNote?.updatedAt ?? null
     savingNote = false
+    notesCollapsed = !data.threadNote?.body?.trim()
     initializedThreadId = data.threadId
     void settleThreadScrollAtBottom()
   })
@@ -1102,11 +1110,22 @@
       </div>
     {/if}
     <div class="mt-3 rounded-lg border border-white/8 bg-white/[0.03] p-3">
-      <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <div class="flex items-center gap-2">
+      <div class="flex flex-wrap items-center justify-between gap-2 {notesExpanded ? 'mb-2' : ''}">
+        <button
+          type="button"
+          onclick={toggleNotesCollapsed}
+          aria-expanded={notesExpanded}
+          class="flex items-center gap-2 rounded-md text-left transition hover:text-zinc-200 disabled:cursor-default disabled:hover:text-inherit"
+          disabled={noteDirty}
+          title={noteDirty ? 'Save or clear changes before collapsing notes' : undefined}
+        >
           <StickyNote size={14} class={hasSavedNote ? 'text-amber-300' : 'text-zinc-500'} />
           <p class="text-xs font-medium tracking-wide text-zinc-400 uppercase">Private Notes</p>
-        </div>
+          <ChevronDown
+            size={13}
+            class="text-zinc-600 transition-transform {notesExpanded ? 'rotate-180' : ''}"
+          />
+        </button>
         <div class="flex items-center gap-2">
           {#if savedNoteUpdatedAt && !noteDirty}
             <p class="text-xs text-zinc-500">Saved {formatFullDate(savedNoteUpdatedAt)}</p>
@@ -1123,13 +1142,15 @@
           </button>
         </div>
       </div>
-      <textarea
-        bind:value={noteDraft}
-        rows="3"
-        maxlength="10000"
-        placeholder="Add a private note for this thread. It stays in this mail app and is never sent."
-        class="w-full resize-y rounded-lg border border-white/8 bg-black/20 px-3 py-2 text-sm leading-6 text-zinc-200 transition outline-none placeholder:text-zinc-600 focus:border-amber-300/40 focus:ring-2 focus:ring-amber-300/10"
-      ></textarea>
+      {#if notesExpanded}
+        <textarea
+          bind:value={noteDraft}
+          rows="3"
+          maxlength="10000"
+          placeholder="Add a private note for this thread. It stays in this mail app and is never sent."
+          class="w-full resize-y rounded-lg border border-white/8 bg-black/20 px-3 py-2 text-sm leading-6 text-zinc-200 transition outline-none placeholder:text-zinc-600 focus:border-amber-300/40 focus:ring-2 focus:ring-amber-300/10"
+        ></textarea>
+      {/if}
     </div>
   </div>
 
