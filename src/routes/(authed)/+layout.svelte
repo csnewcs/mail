@@ -23,6 +23,7 @@
     Layers,
     Bookmark,
     CircleHelp,
+    ShieldCheck,
     ChevronRight,
     ChevronDown,
     X
@@ -315,7 +316,7 @@
     imapMailboxes.find((candidate) => pathToSlug(candidate.path) === mailbox)?.name ?? 'Mail'
   )
   const utilityNavActive = $derived(
-    ['/contacts', '/settings', '/queue-status', '/manual'].includes(page.url.pathname)
+    ['/contacts', '/settings', '/queue-status', '/audit-log', '/manual'].includes(page.url.pathname)
   )
 
   function toggleMailboxExpanded(key: string) {
@@ -1227,6 +1228,23 @@
               >
                 <ServerCog size={14} />
                 Queue status
+              </a>
+              <a
+                href={resolve('/audit-log')}
+                role="menuitem"
+                onclick={() => {
+                  mobileNavOpen = false
+                  utilityNavOpen = false
+                }}
+                class={[
+                  'flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm transition',
+                  page.url.pathname === '/audit-log'
+                    ? 'bg-white/8 font-medium text-white'
+                    : 'text-zinc-400 hover:bg-white/6 hover:text-zinc-100'
+                ]}
+              >
+                <ShieldCheck size={14} />
+                Audit log
               </a>
               <a
                 href={resolve('/manual')}
