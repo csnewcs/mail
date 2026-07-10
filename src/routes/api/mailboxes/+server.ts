@@ -7,11 +7,14 @@ import { isAlwaysReadMailbox } from '$lib/mailbox'
 import { payloadBytes, perfLog, perfMs, perfNow } from '$lib/server/perf'
 import { eq, notLike, sql } from 'drizzle-orm'
 import { getDemoUnreadCounts, isDemoModeEnabled } from '$lib/server/demo'
+import { applyMailboxPreferences, getMailboxPreferences } from '$lib/server/preferences'
 
-export const GET: RequestHandler = async () => {
+export const GET: RequestHandler = async ({ cookies }) => {
   const startedAt = perfNow()
+  const mailboxPreferences = getMailboxPreferences(cookies)
+
   if (isDemoModeEnabled()) {
-    const mailboxes = await getImapMailboxes()
+    const mailboxes = applyMailboxPreferences(await getImapMailboxes(), mailboxPreferences)
     const unreadCounts = getDemoUnreadCounts()
     const body = { mailboxes, unreadCounts }
 
@@ -42,7 +45,7 @@ export const GET: RequestHandler = async () => {
       .filter((row) => !isAlwaysReadMailbox(row.mailbox))
       .map((row) => [row.mailbox, Number(row.count ?? 0)])
   ) as Record<string, number>
-  const body = { mailboxes, unreadCounts }
+  const body = { mailboxes: applyMailboxPreferences(mailboxes, mailboxPreferences), unreadCounts }
 
   perfLog('api.mailboxes.GET', {
     rows: mailboxes.length,
