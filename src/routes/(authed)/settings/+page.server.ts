@@ -11,8 +11,6 @@ import {
   getTranslationTargetLanguage
 } from '$lib/server/preferences'
 import { env } from '$env/dynamic/private'
-import { listAuditLogs } from '$lib/server/audit-log'
-import { isDemoModeEnabled } from '$lib/server/demo'
 
 export const load: PageServerLoad = async ({ cookies }) => {
   const config = await getDisplayConfig()
@@ -28,7 +26,6 @@ export const load: PageServerLoad = async ({ cookies }) => {
     remoteContent: {
       blockRemoteContent: getBlockRemoteContentEnabled(cookies),
       allowedSenders: getRemoteContentAllowedSenders(cookies)
-    },
-    auditLog: isDemoModeEnabled() ? [] : await listAuditLogs(25)
+    }
   }
 }

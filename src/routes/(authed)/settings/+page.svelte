@@ -117,24 +117,10 @@
         blockRemoteContent: boolean
         allowedSenders: string[]
       }
-      auditLog: AuditLogEntry[]
     }
   }
 
   type ThemePreference = 'light' | 'dark' | 'system'
-
-  type AuditLogEntry = {
-    id: number
-    action: string
-    entityType: string
-    entityId: string | null
-    summary: string
-    metadata: string
-    actorEmail: string | null
-    ipAddress: string | null
-    userAgent: string | null
-    createdAt: string | Date
-  }
 
   type ImapForm = Props['data']['config']['imap'] & { password: string }
   type SmtpForm = Props['data']['config']['smtp'] & { password: string; undoSendSeconds: number }
@@ -352,7 +338,6 @@
   }
 
   let filters = $state<Filter[]>([])
-  let auditLog = $state<AuditLogEntry[]>([])
   let templates = $state<MessageTemplate[]>([])
   let cleanupRules = $state<CleanupRule[]>([])
   let senderRules = $state<SenderRule[]>([])
@@ -621,17 +606,6 @@
     }
   }
 
-  async function loadAuditLog() {
-    try {
-      const res = await fetch('/api/audit-log?limit=25')
-      if (!res.ok) return
-      const payload = (await res.json()) as { auditLog: AuditLogEntry[] }
-      auditLog = payload.auditLog
-    } catch {
-      // Audit history is supporting context; avoid interrupting the primary settings flow.
-    }
-  }
-
   async function loadSessions() {
     loadingSessions = true
     try {
@@ -830,7 +804,6 @@
       }
 
       await loadFilters()
-      await loadAuditLog()
       showAddFilter = false
       resetNewFilter()
     } catch (error) {
@@ -1080,7 +1053,6 @@
       }
 
       await loadFilters()
-      await loadAuditLog()
     } catch (error) {
       errorDialogMessage = errorMessageFromUnknown(error, 'Failed to delete filter.')
     }
@@ -1111,7 +1083,6 @@
       }
 
       await loadFilters()
-      await loadAuditLog()
     } catch (error) {
       errorDialogMessage = errorMessageFromUnknown(error, 'Failed to update filter.')
     }
@@ -1148,7 +1119,6 @@
     autosaveReady = true
     void loadFilters()
     void loadTemplates()
-    void loadAuditLog()
     void loadSessions()
     void loadCleanupRules()
     void loadSenderRules()
@@ -1245,7 +1215,6 @@
         const data = await res.json()
         notifPublicKey = data.publicKey
         notifStatus = 'done'
-        await loadAuditLog()
       } else {
         notifStatus = 'idle'
         errorDialogMessage = await readErrorMessage(res, 'Failed to generate VAPID keys.')
@@ -1459,7 +1428,6 @@
         lastSavedSettingsSnapshot = settingsSnapshot()
       }
       if (options.invalidate) await invalidateAll()
-      await loadAuditLog()
     } catch (err) {
       if (options.manual)
         errorDialogMessage = errorMessageFromUnknown(err, 'Failed to save settings.')
@@ -1522,33 +1490,6 @@
     setTimeout(() => scheduleAutosave(0), 0)
   }
 
-  function formatAuditDate(value: string | Date) {
-    return new Intl.DateTimeFormat(undefined, {
-      dateStyle: 'medium',
-      timeStyle: 'short'
-    }).format(new Date(value))
-  }
-
-  function auditMetadataSummary(entry: AuditLogEntry) {
-    try {
-      const metadata = JSON.parse(entry.metadata) as Record<string, unknown>
-      const changedSettings = Array.isArray(metadata.changedSettings)
-        ? metadata.changedSettings.join(', ')
-        : ''
-      const preferenceChanges = Array.isArray(metadata.preferenceChanges)
-        ? metadata.preferenceChanges.join(', ')
-        : ''
-      const parts = [changedSettings, preferenceChanges].filter(Boolean)
-      return parts.length > 0 ? parts.join(', ') : entry.action
-    } catch {
-      return entry.action
-    }
-  }
-
-  $effect(() => {
-    auditLog = data.auditLog
-  })
-
   $effect(() => {
     settingsSnapshot()
     scheduleAutosave()
@@ -1601,7 +1542,7 @@
   }
 </script>
 
-<div class="h-dvh min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6 lg:p-10">
+<div class="h-full min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6 lg:p-10">
   <div class="mx-auto max-w-3xl space-y-10">
     <div>
       <h1 class="text-xl font-semibold text-white">Settings</h1>
@@ -3264,58 +3205,6 @@
         </div>
       {/if}
     </section>
-
-    <div class="border-t border-white/8"></div>
-
-    <!-- Audit Log -->
-    <section class="space-y-4">
-      <div class="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h2 class="text-sm font-semibold tracking-widest text-zinc-500 uppercase">
-            Security audit log
-          </h2>
-          <p class="mt-1 text-xs text-zinc-600">
-            Recent settings, security, and filter changes. Secrets are redacted before storage.
-          </p>
-        </div>
-        <button
-          type="button"
-          onclick={() => void loadAuditLog()}
-          class="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-zinc-300 hover:bg-white/10"
-        >
-          Refresh
-        </button>
-      </div>
-
-      {#if auditLog.length === 0}
-        <p class="text-sm text-zinc-600">No audit events recorded yet.</p>
-      {:else}
-        <div class="overflow-hidden rounded-lg border border-white/8 bg-white/3">
-          {#each auditLog as entry (entry.id)}
-            <div class="border-b border-white/6 px-4 py-3 last:border-b-0">
-              <div class="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
-                <div class="min-w-0">
-                  <p class="text-sm font-medium text-zinc-200">{entry.summary}</p>
-                  <p class="mt-1 text-xs text-zinc-500">
-                    {entry.actorEmail ?? 'Unknown user'} · {entry.entityType}{entry.entityId
-                      ? ` #${entry.entityId}`
-                      : ''}
-                  </p>
-                </div>
-                <time class="shrink-0 text-xs text-zinc-500" datetime={String(entry.createdAt)}>
-                  {formatAuditDate(entry.createdAt)}
-                </time>
-              </div>
-              <p class="mt-2 font-mono text-xs break-words text-zinc-500">
-                {auditMetadataSummary(entry)}
-              </p>
-            </div>
-          {/each}
-        </div>
-      {/if}
-    </section>
-
-    <div class="border-t border-white/8"></div>
 
     <!-- Filters -->
     <section class="space-y-4">
