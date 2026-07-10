@@ -126,6 +126,8 @@
   let imapMailboxes = $state<ImapMailbox[]>([])
   let unreadCounts = $state<Record<string, number>>({})
   let expandedMailboxKeys = $state<string[]>([])
+  let mailboxExpansionInitialized = $state(false)
+  let mailboxExpandedForSlug = $state<string | null>(null)
 
   function splitMailboxPath(path: string, delimiter: string) {
     if (!path) return []
@@ -206,6 +208,21 @@
     }
 
     return Array.from(defaults)
+  }
+
+  function collectActiveMailboxAncestorKeys(
+    mailboxes: ImapMailbox[],
+    activeMailboxSlug: string | null
+  ) {
+    if (!activeMailboxSlug) return []
+
+    const activeMailbox = mailboxes.find(
+      (candidate) => pathToSlug(candidate.path) === activeMailboxSlug
+    )
+    if (!activeMailbox) return []
+
+    const segments = splitMailboxPath(activeMailbox.path, activeMailbox.delimiter)
+    return segments.map((_, index) => segments.slice(0, index + 1).join(activeMailbox.delimiter))
   }
 
   function flattenMailboxTree(nodes: MailboxTreeNode[], expandedKeys: Set<string>) {
@@ -337,10 +354,22 @@
 
   $effect(() => {
     const validKeys = new SvelteSet(mailboxTree.nodes.keys())
-    const merged = new SvelteSet(defaultExpandedMailboxKeys)
+    const validExpandedKeys = expandedMailboxKeys.filter((key) => validKeys.has(key))
 
-    for (const key of expandedMailboxKeys) {
-      if (validKeys.has(key)) merged.add(key)
+    if (!mailboxExpansionInitialized && validKeys.size > 0) {
+      expandedMailboxKeys = defaultExpandedMailboxKeys.filter((key) => validKeys.has(key))
+      mailboxExpansionInitialized = true
+      mailboxExpandedForSlug = mailbox
+      return
+    }
+
+    const merged = new SvelteSet(validExpandedKeys)
+
+    if (mailbox !== mailboxExpandedForSlug) {
+      for (const key of collectActiveMailboxAncestorKeys(imapMailboxes, mailbox)) {
+        if (validKeys.has(key)) merged.add(key)
+      }
+      mailboxExpandedForSlug = mailbox
     }
 
     const nextKeys = Array.from(merged)
