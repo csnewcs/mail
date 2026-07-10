@@ -1581,6 +1581,7 @@ export async function sendDemoMessage(payload: {
   subject: string
   html?: string
   inReplyTo?: string
+  fromName?: string | null
   attachments: Array<{ name: string; contentType: string; contentBase64: string; size: number }>
 }) {
   const receivedAt = new Date()
@@ -1594,7 +1595,7 @@ export async function sendDemoMessage(payload: {
     uid: nextMessageId + 1000,
     flags: '["\\\\Seen"]',
     subject: payload.subject,
-    from: demoConfig.smtp.from,
+    from: payload.fromName ? `${payload.fromName} <${demoConfig.smtp.from}>` : demoConfig.smtp.from,
     to: payload.to,
     cc: payload.cc ?? '',
     preview: textContent.slice(0, 240),

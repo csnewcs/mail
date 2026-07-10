@@ -32,6 +32,12 @@ export type SignatureProfile = {
   isDefault: boolean
 }
 
+export type ComposerSmtpServer = {
+  id: string
+  name: string
+  from: string
+}
+
 type ComposerState = {
   open: boolean
   minimized: boolean
@@ -49,6 +55,9 @@ type ComposerState = {
   signatureProfiles: SignatureProfile[]
   selectedSignatureId: number | null
   currentSignatureHtml: string
+  smtpServers: ComposerSmtpServer[]
+  selectedSmtpServerId: string
+  fromName: string
 }
 
 export const composer = $state<ComposerState>({
@@ -67,18 +76,26 @@ export const composer = $state<ComposerState>({
   lastSavedAt: 0,
   signatureProfiles: [],
   selectedSignatureId: null,
-  currentSignatureHtml: ''
+  currentSignatureHtml: '',
+  smtpServers: [],
+  selectedSmtpServerId: '',
+  fromName: ''
 })
 
-// Cached signatures — fetched once from the server, invalidated on settings save
-let cachedSignatures: SignatureProfile[] | null = null
-
-export function invalidateSignatureCache() {
-  cachedSignatures = null
+type ComposerSettings = {
+  signatures: SignatureProfile[]
+  smtpServers: ComposerSmtpServer[]
 }
 
-async function fetchSignatures(): Promise<SignatureProfile[]> {
-  if (cachedSignatures !== null) return cachedSignatures
+// Cached composer settings — fetched once from the server, invalidated on settings save
+let cachedSettings: ComposerSettings | null = null
+
+export function invalidateSignatureCache() {
+  cachedSettings = null
+}
+
+async function fetchComposerSettings(): Promise<ComposerSettings> {
+  if (cachedSettings !== null) return cachedSettings
   try {
     const res = await fetch('/api/settings')
     if (res.ok) {
@@ -87,19 +104,30 @@ async function fetchSignatures(): Promise<SignatureProfile[]> {
         ? (data.signatureProfiles as SignatureProfile[])
         : []
       const legacySignature = (data.signature as string) ?? ''
-      cachedSignatures =
+      const signatures =
         profiles.length > 0
           ? profiles
           : legacySignature
             ? [{ id: 0, name: 'Default', html: legacySignature, isDefault: true }]
             : []
+      const smtpServers = Array.isArray(data.smtpServers)
+        ? (data.smtpServers as Array<{ id?: unknown; name?: unknown; from?: unknown }>).flatMap(
+            (server) => {
+              const id = typeof server.id === 'string' ? server.id.trim() : ''
+              const name = typeof server.name === 'string' ? server.name.trim() : ''
+              const from = typeof server.from === 'string' ? server.from.trim() : ''
+              return id && from ? [{ id, name: name || id, from }] : []
+            }
+          )
+        : []
+      cachedSettings = { signatures, smtpServers }
     } else {
-      cachedSignatures = []
+      cachedSettings = { signatures: [], smtpServers: [] }
     }
   } catch {
-    cachedSignatures = []
+    cachedSettings = { signatures: [], smtpServers: [] }
   }
-  return cachedSignatures
+  return cachedSettings
 }
 
 function defaultSignature(profiles: SignatureProfile[]) {
@@ -162,7 +190,7 @@ ${body}`
 }
 
 export async function openCompose() {
-  const signatures = await fetchSignatures()
+  const { signatures, smtpServers } = await fetchComposerSettings()
   const signature = defaultSignature(signatures)
   composer.mode = 'compose'
   composer.to = ''
@@ -177,6 +205,9 @@ export async function openCompose() {
   composer.signatureProfiles = signatures
   composer.selectedSignatureId = signature?.id ?? null
   composer.currentSignatureHtml = signature?.html ?? ''
+  composer.smtpServers = smtpServers
+  composer.selectedSmtpServerId = smtpServers[0]?.id ?? ''
+  composer.fromName = ''
   composer.minimized = false
   composer.fullscreen = false
   composer.open = true
@@ -196,6 +227,7 @@ export function openReply(msg: ComposerMessage, draftHtml?: string) {
   composer.signatureProfiles = []
   composer.selectedSignatureId = null
   composer.currentSignatureHtml = ''
+  composer.fromName = ''
   composer.minimized = false
   composer.fullscreen = false
   composer.open = true
@@ -220,6 +252,7 @@ export function openReplyAll(msg: ComposerMessage, draftHtml?: string) {
   composer.signatureProfiles = []
   composer.selectedSignatureId = null
   composer.currentSignatureHtml = ''
+  composer.fromName = ''
   composer.minimized = false
   composer.fullscreen = false
   composer.open = true
@@ -239,6 +272,7 @@ export function openForward(msg: ComposerMessage) {
   composer.signatureProfiles = []
   composer.selectedSignatureId = null
   composer.currentSignatureHtml = ''
+  composer.fromName = ''
   composer.minimized = false
   composer.fullscreen = false
   composer.open = true
@@ -258,6 +292,7 @@ export function openDraft(draft: DraftRow) {
   composer.signatureProfiles = []
   composer.selectedSignatureId = null
   composer.currentSignatureHtml = ''
+  composer.fromName = ''
   composer.minimized = false
   composer.fullscreen = false
   composer.open = true

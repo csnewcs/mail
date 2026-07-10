@@ -39,7 +39,12 @@
     ChevronDown,
     Braces
   } from 'lucide-svelte'
-  import { composer, closeComposer, type SignatureProfile } from '$lib/composer.svelte'
+  import {
+    composer,
+    closeComposer,
+    type ComposerSmtpServer,
+    type SignatureProfile
+  } from '$lib/composer.svelte'
   import AddressInput from '$lib/components/AddressInput.svelte'
   import ErrorDialog from '$lib/components/ErrorDialog.svelte'
   import { errorMessageFromUnknown, readErrorMessage } from '$lib/http'
@@ -83,6 +88,7 @@
   let showAiMenu = $state(false)
   let markdownMode = $state(false)
   let markdownSource = $state('')
+  let loadingSmtpServers = $state(false)
 
   type MessageTemplate = {
     id: number
@@ -103,6 +109,8 @@
     html: string
     attachments: ComposerAttachment[]
     inReplyTo: string | null
+    smtpServerId?: string | null
+    fromName?: string | null
     sendAt?: string
   }
 
@@ -124,6 +132,11 @@
   )
   const canSend = $derived(
     !sending && !!composer.subject && recipientValidation.errors.length === 0
+  )
+  const selectedSmtpServer = $derived(
+    composer.smtpServers.find((server) => server.id === composer.selectedSmtpServerId) ??
+      composer.smtpServers[0] ??
+      null
   )
 
   // Create the editor once when the element is first available
@@ -167,6 +180,7 @@
       attachmentDragDepth = 0
       pendingSendWarnings = []
       void loadTemplates()
+      void loadSmtpServers()
       markdownMode = false
       markdownSource = ''
     }
@@ -380,6 +394,35 @@
     }
   }
 
+  async function loadSmtpServers() {
+    if (loadingSmtpServers || composer.smtpServers.length > 0) return
+    loadingSmtpServers = true
+    try {
+      const res = await fetch('/api/settings')
+      if (!res.ok) return
+      const data = (await res.json()) as {
+        smtpServers?: Array<{ id?: unknown; name?: unknown; from?: unknown }>
+      }
+      const servers: ComposerSmtpServer[] = Array.isArray(data.smtpServers)
+        ? data.smtpServers.flatMap((server) => {
+            const id = typeof server.id === 'string' ? server.id.trim() : ''
+            const name = typeof server.name === 'string' ? server.name.trim() : ''
+            const from = typeof server.from === 'string' ? server.from.trim() : ''
+            return id && from ? [{ id, name: name || id, from }] : []
+          })
+        : []
+      composer.smtpServers = servers
+      if (
+        !composer.selectedSmtpServerId ||
+        !servers.some((s) => s.id === composer.selectedSmtpServerId)
+      ) {
+        composer.selectedSmtpServerId = servers[0]?.id ?? ''
+      }
+    } finally {
+      loadingSmtpServers = false
+    }
+  }
+
   async function toggleTemplateMenu() {
     if (!showTemplateMenu) await loadTemplates()
     showTemplateMenu = !showTemplateMenu
@@ -531,6 +574,8 @@
       html: string
       attachments: ComposerAttachment[]
       inReplyTo: string | null
+      smtpServerId?: string | null
+      fromName?: string | null
       sendAt?: string
     } = {
       to: normalizeRecipientList(composer.to),
@@ -539,7 +584,9 @@
       subject: composer.subject,
       html,
       attachments: composer.attachments,
-      inReplyTo: composer.inReplyTo
+      inReplyTo: composer.inReplyTo,
+      smtpServerId: composer.selectedSmtpServerId || null,
+      fromName: composer.fromName.trim() || null
     }
     if (sendLaterAt) payload.sendAt = new Date(sendLaterAt).toISOString()
     sending = true
@@ -616,6 +663,8 @@
       composer.initialHtml = restored.html
       composer.attachments = restored.attachments
       composer.inReplyTo = restored.inReplyTo
+      composer.selectedSmtpServerId = restored.smtpServerId ?? ''
+      composer.fromName = restored.fromName ?? ''
       composer.draftId = null
       composer.lastSavedAt = 0
       composer.minimized = false
@@ -886,6 +935,33 @@
   {#if !composer.minimized}
     <!-- Fields -->
     <div class="max-h-48 shrink-0 overflow-y-auto border-b border-white/8">
+      <!-- From -->
+      <div class="flex flex-wrap items-center gap-2 border-b border-white/8 px-4 py-2">
+        <span class="w-10 shrink-0 text-sm text-zinc-500">From</span>
+        <input
+          type="text"
+          bind:value={composer.fromName}
+          placeholder="Display name"
+          aria-label="From display name"
+          class="min-w-0 flex-1 bg-transparent text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none"
+        />
+        {#if composer.smtpServers.length > 1}
+          <select
+            bind:value={composer.selectedSmtpServerId}
+            aria-label="SMTP server"
+            class="min-w-36 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-zinc-300 focus:border-blue-500 focus:outline-none"
+          >
+            {#each composer.smtpServers as server (server.id)}
+              <option value={server.id}>{server.name} · {server.from}</option>
+            {/each}
+          </select>
+        {:else if selectedSmtpServer}
+          <span class="truncate text-xs text-zinc-500">{selectedSmtpServer.from}</span>
+        {:else if loadingSmtpServers}
+          <span class="text-xs text-zinc-600">Loading sender...</span>
+        {/if}
+      </div>
+
       <!-- To -->
       <div class="flex flex-wrap items-start gap-2 border-b border-white/8 px-4 py-2">
         <AddressInput

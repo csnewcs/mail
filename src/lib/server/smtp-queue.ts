@@ -9,6 +9,8 @@ export type SmtpSendJobPayload = {
   subject: string
   html?: string | null
   inReplyTo?: string | null
+  smtpServerId?: string | null
+  fromName?: string | null
   attachments: ComposerAttachment[]
 }
 

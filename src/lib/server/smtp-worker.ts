@@ -1,6 +1,6 @@
 import { and, asc, count, eq, inArray, lte } from 'drizzle-orm'
 import nodemailer from 'nodemailer'
-import { getSmtpConfig } from './config'
+import { getSmtpConfig, getSmtpConfigs, type SmtpConfig } from './config'
 import { parseAddressFields, upsertContacts } from './contacts'
 import { db } from './db'
 import { smtpJob } from './db/schema'
@@ -50,8 +50,30 @@ function parsePayload(job: SmtpJobRow): SmtpSendJobPayload {
     subject: payload.subject,
     html: payload.html ?? null,
     inReplyTo: payload.inReplyTo ?? null,
+    smtpServerId: payload.smtpServerId ?? null,
+    fromName: payload.fromName ?? null,
     attachments: payload.attachments
   }
+}
+
+async function resolveSmtpConfig(serverId?: string | null): Promise<SmtpConfig> {
+  if (serverId) {
+    const configs = await getSmtpConfigs()
+    const config = configs.find((candidate) => candidate.id === serverId)
+    if (config) return config
+    throw new Error(`Missing SMTP config: ${serverId}`)
+  }
+
+  const config = await getSmtpConfig()
+  if ('missing' in config) {
+    throw new Error(`Missing SMTP config: ${config.missing.join(', ')}`)
+  }
+  return config
+}
+
+function extractAddress(value: string) {
+  const match = value.match(/<([^>]+)>/)
+  return match?.[1]?.trim() || value.trim()
 }
 
 async function markJobRunning(job: SmtpJobRow) {
@@ -108,12 +130,8 @@ async function failJob(job: SmtpJobRow, error: unknown) {
 }
 
 async function runJob(job: SmtpJobRow) {
-  const smtpConfig = await getSmtpConfig()
-  if ('missing' in smtpConfig) {
-    throw new Error(`Missing SMTP config: ${smtpConfig.missing.join(', ')}`)
-  }
-
   const payload = parsePayload(job)
+  const smtpConfig = await resolveSmtpConfig(payload.smtpServerId)
   const attachments = payload.attachments.map((attachment) => {
     const content = Buffer.from(attachment.contentBase64, 'base64')
     if (content.byteLength !== attachment.size) {
@@ -141,7 +159,9 @@ async function runJob(job: SmtpJobRow) {
   await withRetry(
     () =>
       transporter.sendMail({
-        from: smtpConfig.from,
+        from: payload.fromName
+          ? { name: payload.fromName, address: extractAddress(smtpConfig.from) }
+          : smtpConfig.from,
         to: payload.to,
         cc: payload.cc || undefined,
         bcc: payload.bcc || undefined,

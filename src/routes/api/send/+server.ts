@@ -18,6 +18,8 @@ export const POST: RequestHandler = async ({ request }) => {
     subject,
     html,
     inReplyTo,
+    smtpServerId,
+    fromName,
     sendAt,
     attachments: rawAttachments
   } = await request.json()
@@ -50,6 +52,7 @@ export const POST: RequestHandler = async ({ request }) => {
       subject,
       html,
       inReplyTo,
+      fromName: typeof fromName === 'string' ? fromName.trim() : null,
       attachments: parsedAttachments.attachments
     })
     return json({ success: true, demo: true })
@@ -72,6 +75,8 @@ export const POST: RequestHandler = async ({ request }) => {
       subject,
       html: html ?? null,
       inReplyTo: inReplyTo || null,
+      smtpServerId: typeof smtpServerId === 'string' ? smtpServerId.trim() || null : null,
+      fromName: typeof fromName === 'string' ? fromName.trim() || null : null,
       attachments: parsedAttachments.attachments
     },
     availableAt
