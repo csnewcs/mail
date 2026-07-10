@@ -798,12 +798,6 @@
   let scrollContainer = $state<HTMLDivElement | undefined>(undefined)
 
   function scrollEmail(amount: number) {
-    const iframe = scrollContainer?.querySelector('iframe') as HTMLIFrameElement | null
-    const idoc = iframe?.contentDocument?.documentElement
-    if (idoc && idoc.scrollHeight > idoc.clientHeight) {
-      iframe?.contentWindow?.scrollBy({ top: amount, behavior: 'smooth' })
-      return
-    }
     scrollContainer?.scrollBy({ top: amount, behavior: 'smooth' })
   }
 
@@ -872,7 +866,7 @@
   <title>{subjectLabel(message.subject)} · Inbox</title>
 </svelte:head>
 
-<div class="flex h-full flex-col">
+<div bind:this={scrollContainer} class="flex h-full flex-col overflow-y-auto">
   <div class={messageHeaderClass}>
     {#if !online}
       <div
@@ -1216,7 +1210,7 @@
     </div>
   </div>
 
-  <div bind:this={scrollContainer} class="flex min-h-0 flex-1 flex-col overflow-y-auto">
+  <div class="flex flex-col">
     {#if translationText || translatedHtmlSegments || translating}
       <section class={messageSectionClass}>
         <div class="flex items-center justify-between gap-3">
