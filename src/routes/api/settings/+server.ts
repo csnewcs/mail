@@ -2,6 +2,7 @@ import { json, error } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
 import { db } from '$lib/server/db'
 import { mailConfig, mailSignature } from '$lib/server/db/schema'
+import { eq } from 'drizzle-orm'
 import { getDisplayConfig, invalidateConfigCache } from '$lib/server/config'
 import { invalidateAuth } from '$lib/server/auth'
 import {
@@ -41,22 +42,42 @@ type SignatureProfileInput = {
   isDefault: boolean
 }
 
-function normalizeServerPayload(value: unknown, passwordMask = '••••••••') {
+function parseServerArray(value: unknown): Record<string, unknown>[] {
+  if (Array.isArray(value)) {
+    return value.filter(
+      (item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object'
+    )
+  }
+
+  return []
+}
+
+function normalizeServerPayload(
+  value: unknown,
+  previousServers: Record<string, unknown>[] = [],
+  passwordMask = '••••••••'
+) {
   if (!Array.isArray(value)) return null
-  return value.flatMap((item) => {
+  return value.flatMap((item, index) => {
     if (!item || typeof item !== 'object') return []
     const server = item as Record<string, unknown>
+    const id = typeof server.id === 'string' ? server.id.trim() : undefined
+    const previous =
+      (id ? previousServers.find((candidate) => candidate.id === id) : undefined) ??
+      previousServers[index]
     const password = typeof server.password === 'string' ? server.password.trim() : ''
+    const previousPassword = typeof previous?.password === 'string' ? previous.password : undefined
     return [
       {
-        id: typeof server.id === 'string' ? server.id.trim() : undefined,
+        id,
         name: typeof server.name === 'string' ? server.name.trim() : undefined,
         host: typeof server.host === 'string' ? server.host.trim() : '',
         port:
           typeof server.port === 'number' && server.port > 0 ? Math.trunc(server.port) : undefined,
         secure: typeof server.secure === 'boolean' ? server.secure : undefined,
         user: typeof server.user === 'string' ? server.user.trim() : '',
-        password: password && password !== passwordMask ? encryptSecret(password) : undefined,
+        password:
+          password && password !== passwordMask ? encryptSecret(password) : previousPassword,
         mailbox: typeof server.mailbox === 'string' ? server.mailbox.trim() : undefined,
         pollSeconds:
           typeof server.pollSeconds === 'number' && server.pollSeconds > 0
@@ -134,6 +155,7 @@ export const POST: RequestHandler = async (event) => {
   }
 
   let shouldPersistConfig = false
+  const [existingConfig] = await db.select().from(mailConfig).where(eq(mailConfig.id, 1)).limit(1)
 
   const values: typeof mailConfig.$inferInsert = {
     id: 1,
@@ -157,7 +179,10 @@ export const POST: RequestHandler = async (event) => {
       values.imapPollSeconds = imap.pollSeconds > 0 ? imap.pollSeconds : null
   }
 
-  const imapServers = normalizeServerPayload(body.imapServers)
+  const imapServers = normalizeServerPayload(
+    body.imapServers,
+    parseServerArray(existingConfig?.imapServers)
+  )
   if (imapServers) {
     shouldPersistConfig = true
     values.imapServers = imapServers
@@ -180,7 +205,10 @@ export const POST: RequestHandler = async (event) => {
     }
   }
 
-  const smtpServers = normalizeServerPayload(body.smtpServers)
+  const smtpServers = normalizeServerPayload(
+    body.smtpServers,
+    parseServerArray(existingConfig?.smtpServers)
+  )
   if (smtpServers) {
     shouldPersistConfig = true
     values.smtpServers = smtpServers

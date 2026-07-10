@@ -67,6 +67,8 @@
   ]
 
   type ConfigSection = {
+    id: string
+    name: string
     host: string
     port: number
     secure: boolean
@@ -84,7 +86,9 @@
         signature: string
         signatureProfiles: SignatureProfile[]
         imap: ConfigSection & { mailbox: string; pollSeconds: number }
+        imapServers: Array<ConfigSection & { mailbox: string; pollSeconds: number }>
         smtp: ConfigSection & { from: string }
+        smtpServers: Array<ConfigSection & { from: string }>
         oidc: {
           discoveryUrl: string
           clientId: string
@@ -134,6 +138,8 @@
 
   type ImapForm = Props['data']['config']['imap'] & { password: string }
   type SmtpForm = Props['data']['config']['smtp'] & { password: string; undoSendSeconds: number }
+  type ImapServerForm = Props['data']['config']['imapServers'][number] & { password: string }
+  type SmtpServerForm = Props['data']['config']['smtpServers'][number] & { password: string }
   type OidcForm = Props['data']['config']['oidc'] & { clientSecret: string }
   type SignatureProfile = {
     id?: number
@@ -144,7 +150,9 @@
 
   class SettingsFormState {
     imap = $state({} as ImapForm)
+    imapServers = $state<ImapServerForm[]>([])
     smtp = $state({} as SmtpForm)
+    smtpServers = $state<SmtpServerForm[]>([])
     oidc = $state({} as OidcForm)
     signature = $state('')
     signatureProfiles = $state<SignatureProfile[]>([])
@@ -169,6 +177,7 @@
       remoteContent: Props['data']['remoteContent']
     ) {
       this.imap = { ...config.imap, password: '' }
+      this.imapServers = config.imapServers.slice(1).map((server) => ({ ...server, password: '' }))
       const smtpConfig = config.smtp as Props['data']['config']['smtp'] & {
         undoSendSeconds?: number
       }
@@ -177,6 +186,7 @@
         password: '',
         undoSendSeconds: smtpConfig.undoSendSeconds ?? 0
       }
+      this.smtpServers = config.smtpServers.slice(1).map((server) => ({ ...server, password: '' }))
       this.oidc = { ...config.oidc, clientSecret: '' }
       this.signature = config.signature
       this.signatureProfiles =
@@ -216,7 +226,9 @@
       )
   )
   let imap = $derived(form.imap)
+  let imapServers = $derived(form.imapServers)
   let smtp = $derived(form.smtp)
+  let smtpServers = $derived(form.smtpServers)
   let oidc = $derived(form.oidc)
   let simplifiedView = $derived(form.simplifiedView)
   let threadModeOnPageLoad = $derived(form.threadModeOnPageLoad)
@@ -228,6 +240,12 @@
   let remoteContentAllowedSenders = $derived(form.remoteContentAllowedSenders)
   let signatureProfiles = $derived(form.signatureProfiles)
   let quietHours = $derived(form.quietHours)
+  let imapPrimaryUsesLegacyFields = $derived(
+    data.config.imapServers.length === 0 || data.config.imapServers[0]?.id === 'primary'
+  )
+  let smtpPrimaryUsesLegacyFields = $derived(
+    data.config.smtpServers.length === 0 || data.config.smtpServers[0]?.id === 'primary'
+  )
 
   function applyThemePreference(preference: ThemePreference) {
     const resolvedTheme =
@@ -396,6 +414,61 @@
     minAgeDays: 90
   })
   let newSenderRule = $state({ type: 'block' as 'block' | 'allow', sender: '' })
+
+  function createImapServer(index = imapServers.length): ImapServerForm {
+    const ordinal = index + 2
+    return {
+      id: `server-${ordinal}`,
+      name: `Server ${ordinal}`,
+      host: '',
+      port: 993,
+      secure: true,
+      user: '',
+      password: '',
+      mailbox: 'INBOX',
+      pollSeconds: 15,
+      source: 'db'
+    }
+  }
+
+  function createSmtpServer(index = smtpServers.length): SmtpServerForm {
+    const ordinal = index + 2
+    return {
+      id: `server-${ordinal}`,
+      name: `Server ${ordinal}`,
+      host: '',
+      port: 587,
+      secure: false,
+      user: '',
+      password: '',
+      from: '',
+      source: 'db'
+    }
+  }
+
+  function addImapServer() {
+    form.imapServers = [...form.imapServers, createImapServer()]
+  }
+
+  function removeImapServer(index: number) {
+    form.imapServers = form.imapServers.filter((_, currentIndex) => currentIndex !== index)
+  }
+
+  function addSmtpServer() {
+    form.smtpServers = [...form.smtpServers, createSmtpServer()]
+  }
+
+  function removeSmtpServer(index: number) {
+    form.smtpServers = form.smtpServers.filter((_, currentIndex) => currentIndex !== index)
+  }
+
+  function imapServerPayload() {
+    return imapPrimaryUsesLegacyFields ? imapServers : [imap, ...imapServers]
+  }
+
+  function smtpServerPayload() {
+    return smtpPrimaryUsesLegacyFields ? smtpServers : [smtp, ...smtpServers]
+  }
 
   async function loadTemplates() {
     try {
@@ -1201,7 +1274,9 @@
   function settingsSnapshot() {
     return JSON.stringify({
       imap,
+      imapServers,
       smtp,
+      smtpServers,
       oidc,
       signature: defaultSignatureHtml(),
       signatureProfiles,
@@ -1343,8 +1418,10 @@
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          imap,
-          smtp,
+          imap: imapPrimaryUsesLegacyFields ? imap : undefined,
+          imapServers: imapServerPayload(),
+          smtp: smtpPrimaryUsesLegacyFields ? smtp : undefined,
+          smtpServers: smtpServerPayload(),
           oidc,
           signature: defaultSignatureHtml(),
           signatureProfiles,
@@ -1375,7 +1452,9 @@
       if (options.clearSecrets) {
         // Clear passwords after manual save so they show as bullets again.
         imap.password = ''
+        for (const server of imapServers) server.password = ''
         smtp.password = ''
+        for (const server of smtpServers) server.password = ''
         oidc.clientSecret = ''
         lastSavedSettingsSnapshot = settingsSnapshot()
       }
@@ -1654,6 +1733,183 @@
           </span>
         {/if}
       </div>
+
+      <div class="space-y-3 rounded-xl border border-white/8 bg-white/3 p-4">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 class="text-sm font-medium text-zinc-200">Secondary IMAP servers</h3>
+            <p class="mt-1 text-xs text-zinc-500">
+              Additional inboxes sync alongside the primary server. Enter a password when adding or
+              changing a server.
+            </p>
+          </div>
+          <button
+            type="button"
+            onclick={addImapServer}
+            class="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-zinc-300 transition hover:bg-white/10"
+          >
+            <Plus size={14} /> Add IMAP
+          </button>
+        </div>
+
+        {#if imapServers.length === 0}
+          <div
+            class="rounded-lg border border-dashed border-white/10 bg-black/10 p-3 text-sm text-zinc-500"
+          >
+            No secondary IMAP servers configured.
+          </div>
+        {:else}
+          <div class="space-y-3">
+            {#each imapServers as server, index (`imap-${server.id}-${index}`)}
+              <div class="rounded-lg border border-white/8 bg-black/10 p-3">
+                <div class="mb-3 flex items-center justify-between gap-2">
+                  <div class="min-w-0">
+                    <p class="truncate text-sm font-medium text-zinc-200">
+                      {server.name || `Server ${index + 2}`}
+                    </p>
+                    {#if server.source === 'env'}
+                      <p class="text-xs text-zinc-500">Loaded from env until saved here.</p>
+                    {/if}
+                  </div>
+                  <button
+                    type="button"
+                    aria-label={`Remove ${server.name || 'IMAP server'}`}
+                    onclick={() => removeImapServer(index)}
+                    class="rounded-lg border border-white/10 bg-white/5 p-2 text-zinc-400 transition hover:bg-white/10 hover:text-rose-400"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+
+                <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <label
+                      class="mb-1 block text-xs text-zinc-400"
+                      for={`imap-server-name-${index}`}>Name</label
+                    >
+                    <input
+                      id={`imap-server-name-${index}`}
+                      type="text"
+                      bind:value={server.name}
+                      placeholder="Work"
+                      class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs text-zinc-400" for={`imap-server-id-${index}`}
+                      >ID</label
+                    >
+                    <input
+                      id={`imap-server-id-${index}`}
+                      type="text"
+                      bind:value={server.id}
+                      placeholder="work"
+                      class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      class="mb-1 block text-xs text-zinc-400"
+                      for={`imap-server-host-${index}`}>Host</label
+                    >
+                    <input
+                      id={`imap-server-host-${index}`}
+                      type="text"
+                      bind:value={server.host}
+                      placeholder="imap.example.com"
+                      class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      class="mb-1 block text-xs text-zinc-400"
+                      for={`imap-server-port-${index}`}>Port</label
+                    >
+                    <input
+                      id={`imap-server-port-${index}`}
+                      type="number"
+                      min="1"
+                      max="65535"
+                      bind:value={server.port}
+                      class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div class="sm:col-span-2">
+                    <label
+                      class="mb-1 block text-xs text-zinc-400"
+                      for={`imap-server-user-${index}`}>Username / Email</label
+                    >
+                    <input
+                      id={`imap-server-user-${index}`}
+                      type="text"
+                      autocomplete="username"
+                      bind:value={server.user}
+                      placeholder="you@example.com"
+                      class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div class="sm:col-span-2">
+                    <label
+                      class="mb-1 block text-xs text-zinc-400"
+                      for={`imap-server-password-${index}`}>Password</label
+                    >
+                    <input
+                      id={`imap-server-password-${index}`}
+                      type="password"
+                      autocomplete="current-password"
+                      bind:value={server.password}
+                      placeholder={data.config.imapServers[index + 1]?.password
+                        ? '(unchanged)'
+                        : 'Enter password'}
+                      class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      class="mb-1 block text-xs text-zinc-400"
+                      for={`imap-server-mailbox-${index}`}>Default mailbox</label
+                    >
+                    <input
+                      id={`imap-server-mailbox-${index}`}
+                      type="text"
+                      bind:value={server.mailbox}
+                      placeholder="INBOX"
+                      class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      class="mb-1 block text-xs text-zinc-400"
+                      for={`imap-server-poll-${index}`}>Poll interval</label
+                    >
+                    <input
+                      id={`imap-server-poll-${index}`}
+                      type="number"
+                      min="5"
+                      bind:value={server.pollSeconds}
+                      class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div class="sm:col-span-2">
+                    <label class="relative inline-flex cursor-pointer items-center gap-2">
+                      <input
+                        type="checkbox"
+                        bind:checked={server.secure}
+                        onchange={autosaveToggleChange}
+                        class="peer sr-only"
+                      />
+                      <div
+                        class="h-5 w-9 rounded-full bg-zinc-700 transition peer-checked:bg-blue-600 after:absolute after:top-0.5 after:left-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-4"
+                      ></div>
+                      <span class="text-sm text-zinc-300">TLS / SSL</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
     </section>
 
     <div class="border-t border-white/8"></div>
@@ -1780,6 +2036,170 @@
           <span class="text-sm text-emerald-400">
             {smtpTestResult}
           </span>
+        {/if}
+      </div>
+
+      <div class="space-y-3 rounded-xl border border-white/8 bg-white/3 p-4">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 class="text-sm font-medium text-zinc-200">Secondary SMTP servers</h3>
+            <p class="mt-1 text-xs text-zinc-500">
+              Store alternate outgoing servers. Current sends still use the first available SMTP
+              server.
+            </p>
+          </div>
+          <button
+            type="button"
+            onclick={addSmtpServer}
+            class="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-zinc-300 transition hover:bg-white/10"
+          >
+            <Plus size={14} /> Add SMTP
+          </button>
+        </div>
+
+        {#if smtpServers.length === 0}
+          <div
+            class="rounded-lg border border-dashed border-white/10 bg-black/10 p-3 text-sm text-zinc-500"
+          >
+            No secondary SMTP servers configured.
+          </div>
+        {:else}
+          <div class="space-y-3">
+            {#each smtpServers as server, index (`smtp-${server.id}-${index}`)}
+              <div class="rounded-lg border border-white/8 bg-black/10 p-3">
+                <div class="mb-3 flex items-center justify-between gap-2">
+                  <div class="min-w-0">
+                    <p class="truncate text-sm font-medium text-zinc-200">
+                      {server.name || `Server ${index + 2}`}
+                    </p>
+                    {#if server.source === 'env'}
+                      <p class="text-xs text-zinc-500">Loaded from env until saved here.</p>
+                    {/if}
+                  </div>
+                  <button
+                    type="button"
+                    aria-label={`Remove ${server.name || 'SMTP server'}`}
+                    onclick={() => removeSmtpServer(index)}
+                    class="rounded-lg border border-white/10 bg-white/5 p-2 text-zinc-400 transition hover:bg-white/10 hover:text-rose-400"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+
+                <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <label
+                      class="mb-1 block text-xs text-zinc-400"
+                      for={`smtp-server-name-${index}`}>Name</label
+                    >
+                    <input
+                      id={`smtp-server-name-${index}`}
+                      type="text"
+                      bind:value={server.name}
+                      placeholder="Work"
+                      class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs text-zinc-400" for={`smtp-server-id-${index}`}
+                      >ID</label
+                    >
+                    <input
+                      id={`smtp-server-id-${index}`}
+                      type="text"
+                      bind:value={server.id}
+                      placeholder="work"
+                      class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      class="mb-1 block text-xs text-zinc-400"
+                      for={`smtp-server-host-${index}`}>Host</label
+                    >
+                    <input
+                      id={`smtp-server-host-${index}`}
+                      type="text"
+                      bind:value={server.host}
+                      placeholder="smtp.example.com"
+                      class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      class="mb-1 block text-xs text-zinc-400"
+                      for={`smtp-server-port-${index}`}>Port</label
+                    >
+                    <input
+                      id={`smtp-server-port-${index}`}
+                      type="number"
+                      min="1"
+                      max="65535"
+                      bind:value={server.port}
+                      class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div class="sm:col-span-2">
+                    <label
+                      class="mb-1 block text-xs text-zinc-400"
+                      for={`smtp-server-user-${index}`}>Username / Email</label
+                    >
+                    <input
+                      id={`smtp-server-user-${index}`}
+                      type="text"
+                      autocomplete="username"
+                      bind:value={server.user}
+                      placeholder="you@example.com"
+                      class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div class="sm:col-span-2">
+                    <label
+                      class="mb-1 block text-xs text-zinc-400"
+                      for={`smtp-server-password-${index}`}>Password</label
+                    >
+                    <input
+                      id={`smtp-server-password-${index}`}
+                      type="password"
+                      autocomplete="current-password"
+                      bind:value={server.password}
+                      placeholder={data.config.smtpServers[index + 1]?.password
+                        ? '(unchanged)'
+                        : 'Enter password'}
+                      class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div class="sm:col-span-2">
+                    <label
+                      class="mb-1 block text-xs text-zinc-400"
+                      for={`smtp-server-from-${index}`}>From address</label
+                    >
+                    <input
+                      id={`smtp-server-from-${index}`}
+                      type="text"
+                      bind:value={server.from}
+                      placeholder="Defaults to username if empty"
+                      class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div class="sm:col-span-2">
+                    <label class="relative inline-flex cursor-pointer items-center gap-2">
+                      <input
+                        type="checkbox"
+                        bind:checked={server.secure}
+                        onchange={autosaveToggleChange}
+                        class="peer sr-only"
+                      />
+                      <div
+                        class="h-5 w-9 rounded-full bg-zinc-700 transition peer-checked:bg-blue-600 after:absolute after:top-0.5 after:left-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-4"
+                      ></div>
+                      <span class="text-sm text-zinc-300">TLS / SSL</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            {/each}
+          </div>
         {/if}
       </div>
     </section>
