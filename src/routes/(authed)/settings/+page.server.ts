@@ -4,6 +4,7 @@ import {
   getBlockRemoteContentEnabled,
   getCompactModeEnabled,
   getDensityPreference,
+  getMailboxPreferences,
   getRemoteContentAllowedSenders,
   getSimplifiedViewEnabled,
   getThemePreference,
@@ -11,11 +12,14 @@ import {
   getTranslationTargetLanguage
 } from '$lib/server/preferences'
 import { env } from '$env/dynamic/private'
+import { getImapMailboxes } from '$lib/server/mail'
 
 export const load: PageServerLoad = async ({ cookies }) => {
   const config = await getDisplayConfig()
+  const imapMailboxes = await getImapMailboxes()
   return {
     config,
+    imapMailboxes,
     origin: env.ORIGIN ?? '',
     simplifiedView: getSimplifiedViewEnabled(cookies),
     threadModeOnPageLoad: getThreadModeOnPageLoadEnabled(cookies),
@@ -26,6 +30,7 @@ export const load: PageServerLoad = async ({ cookies }) => {
     remoteContent: {
       blockRemoteContent: getBlockRemoteContentEnabled(cookies),
       allowedSenders: getRemoteContentAllowedSenders(cookies)
-    }
+    },
+    mailboxPreferences: getMailboxPreferences(cookies)
   }
 }

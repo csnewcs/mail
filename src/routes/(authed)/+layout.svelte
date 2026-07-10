@@ -316,7 +316,8 @@
     imapMailboxes.find((candidate) => pathToSlug(candidate.path) === mailbox)?.name ?? 'Mail'
   )
   const utilityNavActive = $derived(
-    ['/contacts', '/settings', '/queue-status', '/audit-log', '/manual'].includes(page.url.pathname)
+    page.url.pathname.startsWith('/settings') ||
+      ['/contacts', '/queue-status', '/audit-log', '/manual'].includes(page.url.pathname)
   )
 
   function toggleMailboxExpanded(key: string) {
@@ -1196,7 +1197,7 @@
                 Contacts
               </a>
               <a
-                href={resolve('/settings')}
+                href={resolve('/settings/imap')}
                 role="menuitem"
                 onclick={() => {
                   mobileNavOpen = false
@@ -1204,7 +1205,7 @@
                 }}
                 class={[
                   'flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm transition',
-                  page.url.pathname === '/settings'
+                  page.url.pathname.startsWith('/settings')
                     ? 'bg-white/8 font-medium text-white'
                     : 'text-zinc-400 hover:bg-white/6 hover:text-zinc-100'
                 ]}

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { goto, invalidateAll } from '$app/navigation'
   import { resolve } from '$app/paths'
+  import { page } from '$app/state'
   import ActionModal from '$lib/components/ActionModal.svelte'
   import ErrorDialog from '$lib/components/ErrorDialog.svelte'
   import { normalizeFilterConditions, type FilterCondition } from '$lib/filter-conditions'
@@ -65,6 +66,22 @@
     'Hungarian',
     'Malay'
   ]
+  const settingsSections = [
+    { id: 'imap', label: 'IMAP' },
+    { id: 'smtp', label: 'SMTP' },
+    { id: 'mailboxes', label: 'Mailboxes' },
+    { id: 'oidc', label: 'OIDC' },
+    { id: 'sessions', label: 'Sessions' },
+    { id: 'interface', label: 'Interface' },
+    { id: 'privacy', label: 'Privacy' },
+    { id: 'signatures', label: 'Signatures' },
+    { id: 'templates', label: 'Templates' },
+    { id: 'notifications', label: 'Notifications' },
+    { id: 'cleanup', label: 'Cleanup' },
+    { id: 'senders', label: 'Senders' },
+    { id: 'filters', label: 'Filters' },
+    { id: 'backup', label: 'Backup' }
+  ]
 
   type ConfigSection = {
     id: string
@@ -106,6 +123,7 @@
           timezone: string
         }
       }
+      imapMailboxes: ImapMailbox[]
       origin: string
       simplifiedView: boolean
       threadModeOnPageLoad: boolean
@@ -117,10 +135,13 @@
         blockRemoteContent: boolean
         allowedSenders: string[]
       }
+      mailboxPreferences: MailboxPreferences
     }
   }
 
   type ThemePreference = 'light' | 'dark' | 'system'
+  type ImapMailbox = { path: string; name: string; delimiter: string }
+  type MailboxPreferences = { order: string[]; hidden: string[] }
 
   type ImapForm = Props['data']['config']['imap'] & { password: string }
   type SmtpForm = Props['data']['config']['smtp'] & { password: string; undoSendSeconds: number }
@@ -150,6 +171,7 @@
     translationTargetLanguage = $state('Korean')
     blockRemoteContent = $state(true)
     remoteContentAllowedSenders = $state('')
+    mailboxPreferences = $state<MailboxPreferences>({ order: [], hidden: [] })
     quietHours = $state({ enabled: false, start: '22:00', end: '07:00', timezone: 'UTC' })
 
     constructor(
@@ -160,7 +182,8 @@
       themePreference: ThemePreference,
       density: DensityPreference,
       translationTargetLanguage: string,
-      remoteContent: Props['data']['remoteContent']
+      remoteContent: Props['data']['remoteContent'],
+      mailboxPreferences: MailboxPreferences
     ) {
       this.imap = { ...config.imap, password: '' }
       this.imapServers = config.imapServers.slice(1).map((server) => ({ ...server, password: '' }))
@@ -192,10 +215,22 @@
       this.translationTargetLanguage = translationTargetLanguage
       this.blockRemoteContent = remoteContent.blockRemoteContent
       this.remoteContentAllowedSenders = remoteContent.allowedSenders.join('\n')
+      this.mailboxPreferences = {
+        order: [...mailboxPreferences.order],
+        hidden: [...mailboxPreferences.hidden]
+      }
       this.quietHours = { ...config.quietHours }
     }
   }
   let { data }: Props = $props()
+  const selectedSettingsSection = $derived.by(() => {
+    const section = page.params.section ?? 'imap'
+    return settingsSections.some((item) => item.id === section) ? section : 'imap'
+  })
+
+  function settingsSectionClass(id: string) {
+    return selectedSettingsSection === id ? 'space-y-4' : 'hidden'
+  }
 
   // Editable form state
   let form = $derived.by(
@@ -208,7 +243,8 @@
         data.themePreference,
         data.density,
         data.translationTargetLanguage,
-        data.remoteContent
+        data.remoteContent,
+        data.mailboxPreferences
       )
   )
   let imap = $derived(form.imap)
@@ -224,6 +260,7 @@
   let translationTargetLanguage = $derived(form.translationTargetLanguage)
   let blockRemoteContent = $derived(form.blockRemoteContent)
   let remoteContentAllowedSenders = $derived(form.remoteContentAllowedSenders)
+  let mailboxPreferences = $derived(form.mailboxPreferences)
   let signatureProfiles = $derived(form.signatureProfiles)
   let quietHours = $derived(form.quietHours)
   let imapPrimaryUsesLegacyFields = $derived(
@@ -1257,8 +1294,70 @@
       translationTargetLanguage,
       blockRemoteContent,
       remoteContentAllowedSenders,
+      mailboxPreferences,
       quietHours
     })
+  }
+
+  const mailboxPreferenceRows = $derived.by(() => {
+    const byPath = new Map(data.imapMailboxes.map((mailbox) => [mailbox.path, mailbox]))
+    const orderedPaths = [
+      ...mailboxPreferences.order.filter((path) => byPath.has(path)),
+      ...data.imapMailboxes
+        .map((mailbox) => mailbox.path)
+        .filter((path) => !mailboxPreferences.order.includes(path))
+    ]
+    const seen: string[] = []
+
+    return orderedPaths.flatMap((path) => {
+      if (seen.includes(path)) return []
+      seen.push(path)
+      const mailbox = byPath.get(path)
+      return mailbox ? [mailbox] : []
+    })
+  })
+
+  function mailboxVisible(path: string) {
+    return !mailboxPreferences.hidden.includes(path)
+  }
+
+  function setMailboxPreferenceOrder(paths: string[]) {
+    form.mailboxPreferences = {
+      ...mailboxPreferences,
+      order: paths
+    }
+    scheduleAutosave(0)
+  }
+
+  function moveMailboxPreference(path: string, direction: -1 | 1) {
+    const paths = mailboxPreferenceRows.map((mailbox) => mailbox.path)
+    const index = paths.indexOf(path)
+    const nextIndex = index + direction
+    if (index < 0 || nextIndex < 0 || nextIndex >= paths.length) return
+
+    const next = [...paths]
+    const [item] = next.splice(index, 1)
+    next.splice(nextIndex, 0, item)
+    setMailboxPreferenceOrder(next)
+  }
+
+  function setMailboxVisible(path: string, visible: boolean) {
+    const hidden = visible
+      ? mailboxPreferences.hidden.filter((candidate) => candidate !== path)
+      : [...mailboxPreferences.hidden, path].filter(
+          (candidate, index, values) => values.indexOf(candidate) === index
+        )
+
+    form.mailboxPreferences = {
+      ...mailboxPreferences,
+      hidden
+    }
+    scheduleAutosave(0)
+  }
+
+  function resetMailboxPreferences() {
+    form.mailboxPreferences = { order: [], hidden: [] }
+    scheduleAutosave(0)
   }
 
   const filteredTranslationLanguages = $derived.by(() => {
@@ -1404,6 +1503,7 @@
             blockRemoteContent,
             allowedSenders: normalizeAllowedSenders(remoteContentAllowedSenders)
           },
+          mailboxPreferences,
           quietHours
         })
       })
@@ -1427,7 +1527,7 @@
         oidc.clientSecret = ''
         lastSavedSettingsSnapshot = settingsSnapshot()
       }
-      if (options.invalidate) await invalidateAll()
+      if (options.invalidate || selectedSettingsSection === 'mailboxes') await invalidateAll()
     } catch (err) {
       if (options.manual)
         errorDialogMessage = errorMessageFromUnknown(err, 'Failed to save settings.')
@@ -1543,7 +1643,7 @@
 </script>
 
 <div class="h-full min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6 lg:p-10">
-  <div class="mx-auto max-w-3xl space-y-10">
+  <div class="mx-auto max-w-3xl space-y-10 [&>div.border-t]:hidden">
     <div>
       <h1 class="text-xl font-semibold text-white">Settings</h1>
       <p class="mt-1 text-sm text-zinc-400">
@@ -1558,8 +1658,29 @@
       </p>
     </div>
 
+    <nav
+      aria-label="Settings sections"
+      class="rounded-2xl border border-white/8 bg-white/[0.03] p-2"
+    >
+      <div class="grid grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-4">
+        {#each settingsSections as section (section.id)}
+          <a
+            href={resolve(`/settings/${section.id}`)}
+            class={[
+              'rounded-xl px-3 py-2 text-sm transition',
+              selectedSettingsSection === section.id
+                ? 'bg-blue-600 font-medium text-white'
+                : 'text-zinc-400 hover:bg-white/6 hover:text-zinc-100'
+            ]}
+          >
+            {section.label}
+          </a>
+        {/each}
+      </div>
+    </nav>
+
     <!-- IMAP -->
-    <section class="space-y-4">
+    <section class={settingsSectionClass('imap')}>
       <div class="flex flex-wrap items-center justify-between gap-2">
         <h2 class="text-sm font-semibold tracking-widest text-zinc-500 uppercase">
           IMAP — Incoming Mail
@@ -1856,7 +1977,7 @@
     <div class="border-t border-white/8"></div>
 
     <!-- SMTP -->
-    <section class="space-y-4">
+    <section class={settingsSectionClass('smtp')}>
       <div class="flex flex-wrap items-center justify-between gap-2">
         <h2 class="text-sm font-semibold tracking-widest text-zinc-500 uppercase">
           SMTP — Outgoing Mail
@@ -2147,8 +2268,81 @@
 
     <div class="border-t border-white/8"></div>
 
+    <!-- Mailboxes -->
+    <section class={settingsSectionClass('mailboxes')}>
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 class="text-sm font-semibold tracking-widest text-zinc-500 uppercase">Mailboxes</h2>
+          <p class="mt-1 text-sm text-zinc-500">
+            Choose which folders appear in the sidebar and adjust their order.
+          </p>
+        </div>
+        <button
+          type="button"
+          onclick={resetMailboxPreferences}
+          class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-zinc-300 transition hover:bg-white/10"
+        >
+          Reset order
+        </button>
+      </div>
+
+      {#if mailboxPreferenceRows.length === 0}
+        <div
+          class="rounded-lg border border-dashed border-white/10 bg-white/3 p-4 text-sm text-zinc-500"
+        >
+          Mailboxes will appear here after the first sync.
+        </div>
+      {:else}
+        <div class="overflow-hidden rounded-xl border border-white/8 bg-white/3">
+          {#each mailboxPreferenceRows as mailbox, index (mailbox.path)}
+            <div
+              class="flex flex-col gap-3 border-b border-white/6 p-4 last:border-b-0 sm:flex-row sm:items-center"
+            >
+              <label class="flex min-w-0 flex-1 items-start gap-3">
+                <input
+                  type="checkbox"
+                  checked={mailboxVisible(mailbox.path)}
+                  onchange={(event) => setMailboxVisible(mailbox.path, event.currentTarget.checked)}
+                  class="mt-1 h-4 w-4 rounded border-white/20 bg-white/5 text-blue-600 focus:ring-blue-500"
+                />
+                <span class="min-w-0">
+                  <span class="block truncate text-sm font-medium text-zinc-200">
+                    {mailbox.name || mailbox.path}
+                  </span>
+                  <span class="mt-0.5 block truncate font-mono text-xs text-zinc-600">
+                    {mailbox.path}
+                  </span>
+                </span>
+              </label>
+
+              <div class="flex shrink-0 gap-2 self-end sm:self-auto">
+                <button
+                  type="button"
+                  disabled={index === 0}
+                  onclick={() => moveMailboxPreference(mailbox.path, -1)}
+                  class="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-zinc-300 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Up
+                </button>
+                <button
+                  type="button"
+                  disabled={index === mailboxPreferenceRows.length - 1}
+                  onclick={() => moveMailboxPreference(mailbox.path, 1)}
+                  class="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-zinc-300 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Down
+                </button>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </section>
+
+    <div class="border-t border-white/8"></div>
+
     <!-- OIDC -->
-    <section class="space-y-4">
+    <section class={settingsSectionClass('oidc')}>
       <div class="flex flex-wrap items-center justify-between gap-2">
         <h2 class="text-sm font-semibold tracking-widest text-zinc-500 uppercase">
           OIDC — Authentication
@@ -2209,7 +2403,7 @@
     <div class="border-t border-white/8"></div>
 
     <!-- Security -->
-    <section class="space-y-4">
+    <section class={settingsSectionClass('sessions')}>
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 class="text-sm font-semibold tracking-widest text-zinc-500 uppercase">Security</h2>
@@ -2297,7 +2491,7 @@
     <div class="border-t border-white/8"></div>
 
     <!-- Interface -->
-    <section class="space-y-4">
+    <section class={settingsSectionClass('interface')}>
       <h2 class="text-sm font-semibold tracking-widest text-zinc-500 uppercase">Interface</h2>
       <div class="rounded-lg border border-white/8 bg-white/3 p-4">
         <label class="block" for="theme-preference">
@@ -2488,8 +2682,9 @@
     <div class="border-t border-white/8"></div>
 
     <!-- Security -->
-    <section class="space-y-4">
-      <h2 class="text-sm font-semibold tracking-widest text-zinc-500 uppercase">Security</h2>
+    <!-- Privacy -->
+    <section class={settingsSectionClass('privacy')}>
+      <h2 class="text-sm font-semibold tracking-widest text-zinc-500 uppercase">Privacy</h2>
       <div class="rounded-lg border border-white/8 bg-white/3 p-4">
         <label class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
@@ -2532,7 +2727,7 @@
     <div class="border-t border-white/8"></div>
 
     <!-- Signature -->
-    <section class="space-y-4">
+    <section class={settingsSectionClass('signatures')}>
       <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 class="text-sm font-semibold tracking-widest text-zinc-500 uppercase">Signatures</h2>
@@ -2613,7 +2808,7 @@
     <div class="border-t border-white/8"></div>
 
     <!-- Message templates -->
-    <section class="space-y-4">
+    <section class={settingsSectionClass('templates')}>
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 class="text-sm font-semibold tracking-widest text-zinc-500 uppercase">
@@ -2793,7 +2988,7 @@
     <div class="border-t border-white/8"></div>
 
     <!-- Notifications -->
-    <section class="space-y-4">
+    <section class={settingsSectionClass('notifications')}>
       <h2 class="text-sm font-semibold tracking-widest text-zinc-500 uppercase">
         Push Notifications
       </h2>
@@ -2963,7 +3158,7 @@
     <div class="border-t border-white/8"></div>
 
     <!-- Cleanup Rules -->
-    <section class="space-y-4">
+    <section class={settingsSectionClass('cleanup')}>
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 class="text-sm font-semibold tracking-widest text-zinc-500 uppercase">
@@ -3110,7 +3305,7 @@
     <div class="border-t border-white/8"></div>
 
     <!-- Sender Rules -->
-    <section class="space-y-4">
+    <section class={settingsSectionClass('senders')}>
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 class="text-sm font-semibold tracking-widest text-zinc-500 uppercase">
@@ -3207,7 +3402,7 @@
     </section>
 
     <!-- Filters -->
-    <section class="space-y-4">
+    <section class={settingsSectionClass('filters')}>
       <div class="flex flex-wrap items-center justify-between gap-2">
         <h2 class="text-sm font-semibold tracking-widest text-zinc-500 uppercase">Filters</h2>
         <div class="flex flex-wrap gap-2">
@@ -3548,7 +3743,7 @@
     <div class="border-t border-white/8"></div>
 
     <!-- Settings Backup -->
-    <section class="space-y-4">
+    <section class={settingsSectionClass('backup')}>
       <div>
         <h2 class="text-sm font-semibold tracking-widest text-zinc-500 uppercase">
           Settings Backup

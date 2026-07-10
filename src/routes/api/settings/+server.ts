@@ -10,6 +10,7 @@ import {
   getBlockRemoteContentEnabled,
   getRemoteContentAllowedSenders,
   getDensityPreference,
+  getMailboxPreferences,
   getSimplifiedViewEnabled,
   getThemePreference,
   getThreadModeOnPageLoadEnabled,
@@ -18,6 +19,7 @@ import {
   setBlockRemoteContentEnabled,
   setCompactModeEnabled,
   setDensityPreference,
+  setMailboxPreferences,
   setRemoteContentAllowedSenders,
   setSimplifiedViewEnabled,
   setThemePreference,
@@ -28,6 +30,7 @@ import { logServerError } from '$lib/server/perf'
 import { isDemoModeEnabled, saveDemoSettings } from '$lib/server/demo'
 import { encryptSecret } from '$lib/server/secrets'
 import { writeAuditLog } from '$lib/server/audit-log'
+import { getImapMailboxes } from '$lib/server/mail'
 import {
   DEFAULT_QUIET_HOURS,
   normalizeQuietHoursTime,
@@ -102,7 +105,8 @@ export const GET: RequestHandler = async ({ cookies }) => {
     remoteContent: {
       blockRemoteContent: getBlockRemoteContentEnabled(cookies),
       allowedSenders: getRemoteContentAllowedSenders(cookies)
-    }
+    },
+    mailboxPreferences: getMailboxPreferences(cookies)
   })
 }
 
@@ -149,6 +153,15 @@ export const POST: RequestHandler = async (event) => {
           remoteContent.allowedSenders.filter((value): value is string => typeof value === 'string')
         )
       }
+    }
+
+    if (body.mailboxPreferences && typeof body.mailboxPreferences === 'object') {
+      const mailboxes = await getImapMailboxes()
+      setMailboxPreferences(
+        cookies,
+        body.mailboxPreferences,
+        mailboxes.map((mailbox) => mailbox.path)
+      )
     }
 
     return json({ success: true })
@@ -343,6 +356,15 @@ export const POST: RequestHandler = async (event) => {
       }
     }
 
+    if (body.mailboxPreferences && typeof body.mailboxPreferences === 'object') {
+      const mailboxes = await getImapMailboxes()
+      setMailboxPreferences(
+        cookies,
+        body.mailboxPreferences,
+        mailboxes.map((mailbox) => mailbox.path)
+      )
+    }
+
     if (shouldPersistConfig) {
       invalidateConfigCache()
       invalidateAuth()
@@ -353,7 +375,10 @@ export const POST: RequestHandler = async (event) => {
       typeof body.simplifiedView === 'boolean' ? 'simplifiedView' : null,
       typeof body.threadModeOnPageLoad === 'boolean' ? 'threadModeOnPageLoad' : null,
       typeof body.compactMode === 'boolean' ? 'compactMode' : null,
-      typeof body.translationTargetLanguage === 'string' ? 'translationTargetLanguage' : null
+      typeof body.translationTargetLanguage === 'string' ? 'translationTargetLanguage' : null,
+      body.mailboxPreferences && typeof body.mailboxPreferences === 'object'
+        ? 'mailboxPreferences'
+        : null
     ].filter(Boolean)
 
     if (changedSettings.length > 0 || preferenceChanges.length > 0) {

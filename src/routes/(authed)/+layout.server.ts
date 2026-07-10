@@ -3,14 +3,21 @@ import { db } from '$lib/server/db'
 import { mailMessage, mailMessageMailbox, savedSearch } from '$lib/server/db/schema'
 import { getImapMailboxes } from '$lib/server/mail'
 import { isAlwaysReadMailbox } from '$lib/mailbox'
-import { getSimplifiedViewEnabled, getTranslationTargetLanguage } from '$lib/server/preferences'
+import {
+  applyMailboxPreferences,
+  getMailboxPreferences,
+  getSimplifiedViewEnabled,
+  getTranslationTargetLanguage
+} from '$lib/server/preferences'
 import { asc, eq, notLike, sql } from 'drizzle-orm'
 import { getDemoUnreadCounts, isDemoModeEnabled } from '$lib/server/demo'
 
 export const load: LayoutServerLoad = async ({ locals, cookies }) => {
+  const mailboxPreferences = getMailboxPreferences(cookies)
   if (isDemoModeEnabled()) {
+    const imapMailboxes = await getImapMailboxes()
     return {
-      imapMailboxes: await getImapMailboxes(),
+      imapMailboxes: applyMailboxPreferences(imapMailboxes, mailboxPreferences),
       unreadCounts: getDemoUnreadCounts(),
       user: locals.user ?? null,
       simplifiedView: getSimplifiedViewEnabled(cookies),
@@ -34,7 +41,7 @@ export const load: LayoutServerLoad = async ({ locals, cookies }) => {
   ])
 
   return {
-    imapMailboxes,
+    imapMailboxes: applyMailboxPreferences(imapMailboxes, mailboxPreferences),
     unreadCounts: Object.fromEntries(
       unreadRows
         .filter((row) => !isAlwaysReadMailbox(row.mailbox))

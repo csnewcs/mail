@@ -9,13 +9,40 @@ const TRANSLATION_TARGET_LANGUAGE_COOKIE = 'mail_translation_target_language'
 const BLOCK_REMOTE_CONTENT_COOKIE = 'mail_block_remote_content'
 const REMOTE_CONTENT_ALLOWED_SENDERS_COOKIE = 'mail_remote_content_allowed_senders'
 const THEME_PREFERENCE_COOKIE = 'mail_theme_preference'
+const MAILBOX_PREFERENCES_COOKIE = 'mail_mailbox_preferences'
 const ONE_YEAR_SECONDS = 60 * 60 * 24 * 365
 const DEFAULT_TRANSLATION_TARGET_LANGUAGE = 'Korean'
 const MAX_ALLOWED_SENDERS_COOKIE_LENGTH = 3500
+const MAX_MAILBOX_PREFERENCES_COOKIE_LENGTH = 6000
 export const DENSITY_VALUES = ['comfortable', 'compact', 'condensed'] as const
 export type DensityPreference = (typeof DENSITY_VALUES)[number]
 
 export type ThemePreference = 'light' | 'dark' | 'system'
+export type MailboxPreferences = {
+  order: string[]
+  hidden: string[]
+}
+
+function normalizeMailboxPathList(value: unknown) {
+  if (!Array.isArray(value)) return []
+  return Array.from(
+    new Set(
+      value
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter(Boolean)
+    )
+  )
+}
+
+export function normalizeMailboxPreferences(value: unknown): MailboxPreferences {
+  if (!value || typeof value !== 'object') return { order: [], hidden: [] }
+  const record = value as Record<string, unknown>
+  return {
+    order: normalizeMailboxPathList(record.order),
+    hidden: normalizeMailboxPathList(record.hidden)
+  }
+}
 
 function normalizeThemePreference(value: string | null | undefined): ThemePreference {
   return value === 'light' || value === 'dark' || value === 'system' ? value : 'system'
@@ -147,4 +174,48 @@ export function setThemePreference(cookies: Pick<Cookies, 'set'>, value: string)
     sameSite: 'lax',
     maxAge: ONE_YEAR_SECONDS
   })
+}
+
+export function getMailboxPreferences(cookies: Pick<Cookies, 'get'>): MailboxPreferences {
+  try {
+    return normalizeMailboxPreferences(JSON.parse(cookies.get(MAILBOX_PREFERENCES_COOKIE) ?? '{}'))
+  } catch {
+    return { order: [], hidden: [] }
+  }
+}
+
+export function setMailboxPreferences(
+  cookies: Pick<Cookies, 'set'>,
+  value: unknown,
+  validPaths: string[] = []
+) {
+  const validPathSet = new Set(validPaths)
+  const preferences = normalizeMailboxPreferences(value)
+  const normalized = {
+    order: preferences.order.filter((path) => validPathSet.size === 0 || validPathSet.has(path)),
+    hidden: preferences.hidden.filter((path) => validPathSet.size === 0 || validPathSet.has(path))
+  }
+  const serialized = JSON.stringify(normalized).slice(0, MAX_MAILBOX_PREFERENCES_COOKIE_LENGTH)
+  cookies.set(MAILBOX_PREFERENCES_COOKIE, serialized, {
+    path: '/',
+    sameSite: 'lax',
+    maxAge: ONE_YEAR_SECONDS
+  })
+}
+
+export function applyMailboxPreferences<T extends { path: string }>(
+  mailboxes: T[],
+  preferences: MailboxPreferences
+) {
+  const hidden = new Set(preferences.hidden)
+  const order = new Map(preferences.order.map((path, index) => [path, index]))
+
+  return mailboxes
+    .filter((mailbox) => !hidden.has(mailbox.path))
+    .sort((left, right) => {
+      const leftOrder = order.get(left.path) ?? Number.MAX_SAFE_INTEGER
+      const rightOrder = order.get(right.path) ?? Number.MAX_SAFE_INTEGER
+      if (leftOrder !== rightOrder) return leftOrder - rightOrder
+      return 0
+    })
 }
