@@ -796,9 +796,16 @@
   let previewIndex = $state<number | null>(null)
 
   let scrollContainer = $state<HTMLDivElement | undefined>(undefined)
+  let messageContentScrolled = $state(false)
+  let messageToolbarHovered = $state(false)
+  const messageToolbarExpanded = $derived(!messageContentScrolled || messageToolbarHovered)
 
   function scrollEmail(amount: number) {
     scrollContainer?.scrollBy({ top: amount, behavior: 'smooth' })
+  }
+
+  function handleMessageScroll(event: Event) {
+    messageContentScrolled = (event.currentTarget as HTMLDivElement).scrollTop > 48
   }
 
   const previewableAttachments = $derived(attachments.filter((a) => isPreviewable(a.contentType)))
@@ -866,9 +873,37 @@
   <title>{subjectLabel(message.subject)} · Inbox</title>
 </svelte:head>
 
-<div bind:this={scrollContainer} class="flex h-full flex-col overflow-y-auto">
-  <div class={messageHeaderClass}>
-    {#if !online}
+<div
+  bind:this={scrollContainer}
+  class="flex h-full flex-col overflow-y-auto"
+  onscroll={handleMessageScroll}
+>
+  <div
+    class={[messageHeaderClass, 'sticky top-0 z-30 bg-[#101116]/95 backdrop-blur-xl'].join(' ')}
+    role="presentation"
+    onmouseenter={() => (messageToolbarHovered = true)}
+    onmouseleave={() => (messageToolbarHovered = false)}
+  >
+    <div
+      class={[
+        'min-w-0 items-center justify-between gap-3',
+        messageToolbarExpanded ? 'hidden' : 'flex'
+      ].join(' ')}
+    >
+      <div class="flex min-w-0 items-center gap-3">
+        <div
+          class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/8 text-xs font-semibold text-zinc-200"
+        >
+          {senderInitials(message.from)}
+        </div>
+        <div class="min-w-0">
+          <p class="truncate text-sm font-semibold text-white">{subjectLabel(message.subject)}</p>
+          <p class="truncate text-xs text-zinc-500">{senderName(message.from)}</p>
+        </div>
+      </div>
+      <p class="hidden shrink-0 text-xs text-zinc-600 sm:block">Hover for actions</p>
+    </div>
+    {#if !online && messageToolbarExpanded}
       <div
         class="mb-3 inline-flex items-center gap-2 rounded-full border border-amber-400/15 bg-amber-400/8 px-3 py-1.5 text-xs text-amber-200"
       >
@@ -876,7 +911,12 @@
         <span>Offline</span>
       </div>
     {/if}
-    <div class="flex flex-wrap items-center justify-between gap-3">
+    <div
+      class={[
+        'flex-wrap items-center justify-between gap-3',
+        messageToolbarExpanded ? 'flex' : 'hidden'
+      ].join(' ')}
+    >
       <div class="flex flex-wrap items-center gap-1">
         <button
           type="button"
