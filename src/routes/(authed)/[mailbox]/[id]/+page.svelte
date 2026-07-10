@@ -59,6 +59,7 @@
     preview: string | null
     htmlContent: string | null
     textContent: string | null
+    tracingCodeCount: number
     inReplyTo: string | null
     references: string | null
     flags: string[]
@@ -1249,6 +1250,21 @@
         {:else if translationText || translatedHtmlSegments}
           <p class="mt-3 text-sm text-zinc-500">Translated content is shown in the email body.</p>
         {/if}
+      </section>
+    {/if}
+
+    {#if message.tracingCodeCount > 0}
+      <section class="border-b border-rose-500/20 bg-rose-500/10 p-4 sm:p-5">
+        <div class="flex items-start gap-3">
+          <ShieldAlert size={18} class="mt-0.5 shrink-0 text-rose-200" />
+          <div>
+            <p class="text-sm font-semibold text-rose-100">Tracing code detected</p>
+            <p class="mt-1 text-sm text-rose-100/70">
+              {message.tracingCodeCount} tracing code{message.tracingCodeCount === 1 ? '' : 's'} found
+              in this email's HTML content.
+            </p>
+          </div>
+        </div>
       </section>
     {/if}
 

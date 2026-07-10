@@ -11,6 +11,7 @@ import {
   getDensityPreference,
   getRemoteContentAllowedSenders
 } from '$lib/server/preferences'
+import { countHtmlTracingCodes } from '$lib/tracing-detector'
 
 function markReadAfterLoad(message: NonNullable<Awaited<ReturnType<typeof getStoredMessageById>>>) {
   void markMessageAsRead(message).catch((error) => {
@@ -37,6 +38,7 @@ function serializeMessage(
     preview: message.preview,
     textContent: message.textContent,
     htmlContent: message.htmlContent,
+    tracingCodeCount: countHtmlTracingCodes(message.htmlContent),
     inReplyTo: message.inReplyTo,
     references: message.references,
     flags: seen && !flags.includes('\\Seen') ? [...flags, '\\Seen'] : flags,
