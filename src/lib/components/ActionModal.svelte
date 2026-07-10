@@ -33,10 +33,12 @@
 </script>
 
 <div class="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
-  <div class="w-full max-w-md rounded-2xl border border-white/10 bg-zinc-950 p-5 shadow-2xl shadow-black/40">
+  <div
+    class="w-full max-w-md rounded-2xl border border-white/10 bg-zinc-950 p-5 shadow-2xl shadow-black/40"
+  >
     <h2 class="text-base font-semibold text-zinc-100">{title}</h2>
     {#if message}
-      <p class="mt-2 whitespace-pre-line text-sm leading-6 text-zinc-400">{message}</p>
+      <p class="mt-2 text-sm leading-6 whitespace-pre-line text-zinc-400">{message}</p>
     {/if}
     {#if inputLabel}
       <label class="mt-4 block text-sm text-zinc-300">
@@ -44,7 +46,7 @@
         <input
           bind:value
           type={inputType}
-          class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-blue-500"
+          class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-100 transition outline-none placeholder:text-zinc-600 focus:border-blue-500"
           onkeydown={(event) => {
             if (event.key === 'Enter') onconfirm(value)
             if (event.key === 'Escape') oncancel()

@@ -1516,9 +1516,7 @@
 
   <!-- Discard dialog -->
   {#if showDiscardDialog}
-    <div
-      class="app-popover absolute inset-0 z-10 flex flex-col items-center justify-center gap-4"
-    >
+    <div class="app-popover absolute inset-0 z-10 flex flex-col items-center justify-center gap-4">
       <p class="text-sm text-zinc-300">Save this draft?</p>
       <div class="flex flex-wrap justify-center gap-3">
         <button

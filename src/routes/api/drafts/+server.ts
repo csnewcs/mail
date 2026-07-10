@@ -67,7 +67,9 @@ export const POST: RequestHandler = async ({ request }) => {
   }
 
   if (isDemoModeEnabled()) {
-    return json(saveDemoDraft(body as Record<string, unknown>, JSON.stringify(parsedAttachments.attachments)))
+    return json(
+      saveDemoDraft(body as Record<string, unknown>, JSON.stringify(parsedAttachments.attachments))
+    )
   }
 
   const id = typeof body.id === 'number' ? body.id : null

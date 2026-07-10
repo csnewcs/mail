@@ -878,27 +878,70 @@
       if (event.target === event.currentTarget) closeCsvPreview()
     }}
   >
-    <div class="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border border-white/10 bg-zinc-950 shadow-2xl shadow-black/50" role="dialog" aria-modal="true" aria-label="Preview CSV import">
+    <div
+      class="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border border-white/10 bg-zinc-950 shadow-2xl shadow-black/50"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Preview CSV import"
+    >
       <div class="flex items-start justify-between gap-4 border-b border-white/8 p-4">
         <div>
           <h2 class="text-sm font-semibold text-zinc-200">Preview CSV import</h2>
-          <p class="mt-1 text-xs text-zinc-500">{csvFileName || 'Selected CSV'} &middot; {csvPreview.validCount} valid, {csvPreview.duplicateCount} duplicate, {csvPreview.invalidCount} invalid</p>
+          <p class="mt-1 text-xs text-zinc-500">
+            {csvFileName || 'Selected CSV'} &middot; {csvPreview.validCount} valid, {csvPreview.duplicateCount}
+            duplicate, {csvPreview.invalidCount} invalid
+          </p>
         </div>
-        <button type="button" aria-label="Close" onclick={closeCsvPreview} class="rounded-lg p-1.5 text-zinc-500 transition hover:bg-white/6 hover:text-zinc-200"><X size={14} /></button>
+        <button
+          type="button"
+          aria-label="Close"
+          onclick={closeCsvPreview}
+          class="rounded-lg p-1.5 text-zinc-500 transition hover:bg-white/6 hover:text-zinc-200"
+          ><X size={14} /></button
+        >
       </div>
       <div class="min-h-0 flex-1 overflow-y-auto">
         <table class="w-full text-left text-sm">
-          <thead class="sticky top-0 bg-zinc-950 text-xs text-zinc-500"><tr class="border-b border-white/8"><th class="px-4 py-2 font-medium">Row</th><th class="px-4 py-2 font-medium">Name</th><th class="px-4 py-2 font-medium">Email</th><th class="px-4 py-2 font-medium">Status</th></tr></thead>
+          <thead class="sticky top-0 bg-zinc-950 text-xs text-zinc-500"
+            ><tr class="border-b border-white/8"
+              ><th class="px-4 py-2 font-medium">Row</th><th class="px-4 py-2 font-medium">Name</th
+              ><th class="px-4 py-2 font-medium">Email</th><th class="px-4 py-2 font-medium"
+                >Status</th
+              ></tr
+            ></thead
+          >
           <tbody class="divide-y divide-white/6">
-            {#each csvPreview.rows.slice(0, 100) as row}
-              <tr><td class="px-4 py-2 text-xs text-zinc-500">{row.row}</td><td class="px-4 py-2 text-zinc-300">{row.name || 'N/A'}</td><td class="px-4 py-2 text-zinc-300">{row.email || 'N/A'}</td><td class="px-4 py-2 text-xs">{#if row.status === 'valid'}<span class="text-emerald-300">Valid</span>{:else if row.status === 'duplicate'}<span class="text-amber-300">Duplicate</span>{:else}<span class="text-rose-300">{row.error}</span>{/if}</td></tr>
+            {#each csvPreview.rows.slice(0, 100) as row (row.row)}
+              <tr
+                ><td class="px-4 py-2 text-xs text-zinc-500">{row.row}</td><td
+                  class="px-4 py-2 text-zinc-300">{row.name || 'N/A'}</td
+                ><td class="px-4 py-2 text-zinc-300">{row.email || 'N/A'}</td><td
+                  class="px-4 py-2 text-xs"
+                  >{#if row.status === 'valid'}<span class="text-emerald-300">Valid</span
+                    >{:else if row.status === 'duplicate'}<span class="text-amber-300"
+                      >Duplicate</span
+                    >{:else}<span class="text-rose-300">{row.error}</span>{/if}</td
+                ></tr
+              >
             {/each}
           </tbody>
         </table>
       </div>
       <div class="flex justify-end gap-2 border-t border-white/8 p-4">
-        <button type="button" onclick={closeCsvPreview} class="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-300 transition hover:bg-white/8">Cancel</button>
-        <button type="button" onclick={() => void importCsv()} disabled={importingCsv || csvPreview.validCount === 0} class="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50">{#if importingCsv}<Loader2 size={15} class="animate-spin" />Importing{:else}Import {csvPreview.validCount} contacts{/if}</button>
+        <button
+          type="button"
+          onclick={closeCsvPreview}
+          class="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-300 transition hover:bg-white/8"
+          >Cancel</button
+        >
+        <button
+          type="button"
+          onclick={() => void importCsv()}
+          disabled={importingCsv || csvPreview.validCount === 0}
+          class="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+          >{#if importingCsv}<Loader2 size={15} class="animate-spin" />Importing{:else}Import {csvPreview.validCount}
+            contacts{/if}</button
+        >
       </div>
     </div>
   </div>

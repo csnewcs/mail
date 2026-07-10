@@ -36,7 +36,7 @@ import {
   syncRuntime
 } from './db/schema'
 import { enqueueMarkRead, enqueueMarkUnread, enqueueMoveMessage } from './imap-queue'
-import { getImapConfig, getImapConfigs, getSmtpConfig, type ImapConfig } from './config'
+import { getImapConfig, getImapConfigs, type ImapConfig } from './config'
 import { logServerError, perfError, perfLog, perfMs, perfNow } from './perf'
 import { withRetry } from './retry'
 import { parseAddressFields, upsertContacts } from './contacts'

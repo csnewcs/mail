@@ -23,6 +23,13 @@ import {
 } from '$lib/server/settings-backup'
 import { isDemoModeEnabled, listDemoFilters } from '$lib/server/demo'
 
+function exportMailServer(server: Record<string, unknown>) {
+  const exported = { ...server }
+  delete exported.password
+  delete exported.source
+  return exported
+}
+
 export const GET: RequestHandler = async ({ cookies }) => {
   const config = await getDisplayConfig()
   const imapServers = 'imapServers' in config ? config.imapServers : [config.imap]
@@ -47,7 +54,7 @@ export const GET: RequestHandler = async ({ cookies }) => {
         mailbox: config.imap.mailbox,
         pollSeconds: config.imap.pollSeconds
       },
-      imapServers: imapServers.map(({ password: _password, source: _source, ...server }) => server),
+      imapServers: imapServers.map(exportMailServer),
       smtp: {
         host: config.smtp.host,
         port: config.smtp.port,
@@ -55,7 +62,7 @@ export const GET: RequestHandler = async ({ cookies }) => {
         user: config.smtp.user,
         from: config.smtp.from
       },
-      smtpServers: smtpServers.map(({ password: _password, source: _source, ...server }) => server),
+      smtpServers: smtpServers.map(exportMailServer),
       oidc: {
         discoveryUrl: config.oidc.discoveryUrl,
         clientId: config.oidc.clientId

@@ -1313,7 +1313,6 @@
                         <p class="mt-1 break-words text-red-300">{sync.errorMessage}</p>
                       </div>
                     {/if}
-
                   </div>
                 </div>
               </div>

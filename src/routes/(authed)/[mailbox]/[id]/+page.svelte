@@ -42,7 +42,7 @@
     prepareRemoteContent
   } from '$lib/remote-content'
   import { scoreAttachmentSafety, type AttachmentSafetyScore } from '$lib/mail-attachments'
-  import { readOfflineMessage, saveOfflineMessage } from '$lib/offline-cache'
+  import { saveOfflineMessage } from '$lib/offline-cache'
 
   type DensityPreference = 'comfortable' | 'compact' | 'condensed'
 
@@ -149,7 +149,6 @@
   let translationRequestId = 0
   let messageFrame = $state<HTMLIFrameElement | undefined>(undefined)
   let online = $state(true)
-  let cachedMessageSavedAt = $state<number | null>(null)
 
   const offlineUserKey = $derived(data.user?.email ?? null)
 
@@ -738,12 +737,6 @@
     })
   }
 
-  async function refreshCachedMessageStatus() {
-    if (!offlineUserKey) return
-    const cached = await readOfflineMessage(offlineUserKey, data.message.id)
-    cachedMessageSavedAt = cached?.savedAt ?? null
-  }
-
   function formatBytes(bytes: number): string {
     if (bytes < 1024) return `${bytes} B`
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -843,11 +836,10 @@
 
   onMount(() => {
     online = navigator.onLine
-    void cacheOpenedMessage().then(refreshCachedMessageStatus)
+    void cacheOpenedMessage()
 
     const updateOnline = () => {
       online = navigator.onLine
-      void refreshCachedMessageStatus()
     }
     window.addEventListener('online', updateOnline)
     window.addEventListener('offline', updateOnline)

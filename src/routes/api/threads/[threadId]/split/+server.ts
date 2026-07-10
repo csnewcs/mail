@@ -17,7 +17,11 @@ export const POST: RequestHandler = async ({ params, request }) => {
   }
 
   const mailboxPath = await resolveMailboxPath(mailbox)
-  const result = await splitThreadFromMessage(decodeThreadId(params.threadId), mailboxPath, messageId)
+  const result = await splitThreadFromMessage(
+    decodeThreadId(params.threadId),
+    mailboxPath,
+    messageId
+  )
 
   if (!result) {
     error(422, 'Thread cannot be split at the selected message')
