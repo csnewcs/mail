@@ -1,6 +1,6 @@
 import { and, asc, count, eq, lte } from 'drizzle-orm'
 import { ImapFlow } from 'imapflow'
-import { getImapConfig, type ImapConfig } from './config'
+import { getImapConfig, getImapConfigs, type ImapConfig } from './config'
 import { db } from './db'
 import { imapJob } from './db/schema'
 import { logServerError } from './perf'
@@ -13,6 +13,8 @@ const PERMANENT_JOB_ERROR_RE =
 
 type MailConfig = Pick<ImapConfig, 'host' | 'port' | 'secure' | 'user' | 'password'>
 type ImapJobRow = typeof imapJob.$inferSelect
+
+type ResolvedImapJob = { config: MailConfig; mailbox: string; targetMailbox: string | null }
 
 let drainInFlight = false
 
@@ -60,6 +62,30 @@ function toConfig(config: ImapConfig): MailConfig {
     user: config.user,
     password: config.password
   }
+}
+
+async function resolveJobTarget(job: ImapJobRow): Promise<ResolvedImapJob> {
+  const configs = await getImapConfigs()
+  if (configs.length === 0) {
+    const config = await getImapConfig()
+    if ('missing' in config) throw new Error(`Missing IMAP config: ${config.missing.join(', ')}`)
+    configs.push(config)
+  }
+
+  for (const config of configs) {
+    const prefix = `${config.name}/`
+    if (config.id !== 'primary' && job.mailbox.startsWith(prefix)) {
+      return {
+        config: toConfig(config),
+        mailbox: job.mailbox.slice(prefix.length),
+        targetMailbox: job.targetMailbox?.startsWith(prefix)
+          ? job.targetMailbox.slice(prefix.length)
+          : job.targetMailbox
+      }
+    }
+  }
+
+  return { config: toConfig(configs[0]), mailbox: job.mailbox, targetMailbox: job.targetMailbox }
 }
 
 async function markJobRunning(job: ImapJobRow) {
@@ -113,11 +139,11 @@ async function failJob(job: ImapJobRow, error: unknown) {
     .where(eq(imapJob.id, job.id))
 }
 
-async function runMarkRead(config: MailConfig, job: ImapJobRow) {
+async function runMarkRead(config: MailConfig, job: ImapJobRow, mailbox = job.mailbox) {
   let client: ImapFlow | null = null
   try {
-    client = await connectImap(config, `mark-read ${job.mailbox}`)
-    const lock = await client.getMailboxLock(job.mailbox)
+    client = await connectImap(config, `mark-read ${mailbox}`)
+    const lock = await client.getMailboxLock(mailbox)
     try {
       await client.messageFlagsAdd(String(job.uid), ['\\Seen'], { uid: true })
     } finally {
@@ -134,11 +160,11 @@ async function runMarkRead(config: MailConfig, job: ImapJobRow) {
   }
 }
 
-async function runMarkUnread(config: MailConfig, job: ImapJobRow) {
+async function runMarkUnread(config: MailConfig, job: ImapJobRow, mailbox = job.mailbox) {
   let client: ImapFlow | null = null
   try {
-    client = await connectImap(config, `mark-unread ${job.mailbox}`)
-    const lock = await client.getMailboxLock(job.mailbox)
+    client = await connectImap(config, `mark-unread ${mailbox}`)
+    const lock = await client.getMailboxLock(mailbox)
     try {
       await client.messageFlagsRemove(String(job.uid), ['\\Seen'], { uid: true })
     } finally {
@@ -155,17 +181,22 @@ async function runMarkUnread(config: MailConfig, job: ImapJobRow) {
   }
 }
 
-async function runMove(config: MailConfig, job: ImapJobRow) {
-  if (!job.targetMailbox) {
+async function runMove(
+  config: MailConfig,
+  job: ImapJobRow,
+  mailbox = job.mailbox,
+  targetMailbox = job.targetMailbox
+) {
+  if (!targetMailbox) {
     throw new Error('Missing target mailbox for move job')
   }
 
   let client: ImapFlow | null = null
   try {
-    client = await connectImap(config, `move ${job.mailbox} to ${job.targetMailbox}`)
-    const lock = await client.getMailboxLock(job.mailbox)
+    client = await connectImap(config, `move ${mailbox} to ${targetMailbox}`)
+    const lock = await client.getMailboxLock(mailbox)
     try {
-      await client.messageMove(String(job.uid), job.targetMailbox, { uid: true })
+      await client.messageMove(String(job.uid), targetMailbox, { uid: true })
     } finally {
       lock.release()
     }
@@ -180,17 +211,22 @@ async function runMove(config: MailConfig, job: ImapJobRow) {
   }
 }
 
-async function runAddFlag(config: MailConfig, job: ImapJobRow) {
-  if (!job.targetMailbox) {
+async function runAddFlag(
+  config: MailConfig,
+  job: ImapJobRow,
+  mailbox = job.mailbox,
+  targetMailbox = job.targetMailbox
+) {
+  if (!targetMailbox) {
     throw new Error('Missing flag for add-flag job')
   }
 
   let client: ImapFlow | null = null
   try {
-    client = await connectImap(config, `add-flag ${job.mailbox}`)
-    const lock = await client.getMailboxLock(job.mailbox)
+    client = await connectImap(config, `add-flag ${mailbox}`)
+    const lock = await client.getMailboxLock(mailbox)
     try {
-      await client.messageFlagsAdd(String(job.uid), [job.targetMailbox], { uid: true })
+      await client.messageFlagsAdd(String(job.uid), [targetMailbox], { uid: true })
     } finally {
       lock.release()
     }
@@ -206,28 +242,25 @@ async function runAddFlag(config: MailConfig, job: ImapJobRow) {
 }
 
 async function runJob(job: ImapJobRow) {
-  const config = await getImapConfig()
-  if ('missing' in config) {
-    throw new Error(`Missing IMAP config: ${config.missing.join(', ')}`)
-  }
+  const target = await resolveJobTarget(job)
 
   if (job.type === 'mark_read') {
-    await runMarkRead(toConfig(config), job)
+    await runMarkRead(target.config, job, target.mailbox)
     return
   }
 
   if (job.type === 'mark_unread') {
-    await runMarkUnread(toConfig(config), job)
+    await runMarkUnread(target.config, job, target.mailbox)
     return
   }
 
   if (job.type === 'move') {
-    await runMove(toConfig(config), job)
+    await runMove(target.config, job, target.mailbox, target.targetMailbox)
     return
   }
 
   if (job.type === 'add_flag') {
-    await runAddFlag(toConfig(config), job)
+    await runAddFlag(target.config, job, target.mailbox, target.targetMailbox)
     return
   }
 

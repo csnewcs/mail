@@ -25,6 +25,8 @@ import { isDemoModeEnabled, listDemoFilters } from '$lib/server/demo'
 
 export const GET: RequestHandler = async ({ cookies }) => {
   const config = await getDisplayConfig()
+  const imapServers = 'imapServers' in config ? config.imapServers : [config.imap]
+  const smtpServers = 'smtpServers' in config ? config.smtpServers : [config.smtp]
   const filters = isDemoModeEnabled()
     ? listDemoFilters()
     : await db.select().from(mailFilter).orderBy(asc(mailFilter.sortOrder))
@@ -45,6 +47,7 @@ export const GET: RequestHandler = async ({ cookies }) => {
         mailbox: config.imap.mailbox,
         pollSeconds: config.imap.pollSeconds
       },
+      imapServers: imapServers.map(({ password: _password, source: _source, ...server }) => server),
       smtp: {
         host: config.smtp.host,
         port: config.smtp.port,
@@ -52,6 +55,7 @@ export const GET: RequestHandler = async ({ cookies }) => {
         user: config.smtp.user,
         from: config.smtp.from
       },
+      smtpServers: smtpServers.map(({ password: _password, source: _source, ...server }) => server),
       oidc: {
         discoveryUrl: config.oidc.discoveryUrl,
         clientId: config.oidc.clientId
@@ -127,12 +131,20 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
       values.imapPollSeconds = backup.settings.imap.pollSeconds ?? null
     }
 
+    if (backup.settings.imapServers) {
+      values.imapServers = backup.settings.imapServers
+    }
+
     if (backup.settings.smtp) {
       values.smtpHost = backup.settings.smtp.host?.trim() || null
       values.smtpPort = backup.settings.smtp.port ?? null
       values.smtpSecure = backup.settings.smtp.secure ?? null
       values.smtpUser = backup.settings.smtp.user?.trim() || null
       values.smtpFrom = backup.settings.smtp.from?.trim() || null
+    }
+
+    if (backup.settings.smtpServers) {
+      values.smtpServers = backup.settings.smtpServers
     }
 
     if (backup.settings.oidc) {

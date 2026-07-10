@@ -15,6 +15,16 @@ export type SettingsBackup = {
       mailbox?: string
       pollSeconds?: number
     }
+    imapServers?: Array<{
+      id?: string
+      name?: string
+      host?: string
+      port?: number
+      secure?: boolean
+      user?: string
+      mailbox?: string
+      pollSeconds?: number
+    }>
     smtp?: {
       host?: string
       port?: number
@@ -22,6 +32,15 @@ export type SettingsBackup = {
       user?: string
       from?: string
     }
+    smtpServers?: Array<{
+      id?: string
+      name?: string
+      host?: string
+      port?: number
+      secure?: boolean
+      user?: string
+      from?: string
+    }>
     oidc?: {
       discoveryUrl?: string
       clientId?: string
@@ -67,6 +86,25 @@ const ALLOWED_FILTER_FIELDS = new Set(['from', 'to', 'subject', 'cc'])
 const ALLOWED_FILTER_OPERATORS = new Set(['contains', 'equals', 'starts_with', 'ends_with'])
 const ALLOWED_FILTER_ACTIONS = new Set(['mark_read', 'trash', 'move'])
 const MAX_BACKUP_STRING_LENGTH = 10_000
+
+function optionalObjectArray(
+  value: unknown,
+  field: string,
+  errors: string[]
+): BackupObject[] | undefined {
+  if (value == null) return undefined
+  if (!Array.isArray(value)) {
+    errors.push(`${field} must be an array`)
+    return undefined
+  }
+  return value.flatMap((item, index) => {
+    if (!isObject(item)) {
+      errors.push(`${field}[${index}] must be an object`)
+      return []
+    }
+    return [item]
+  })
+}
 
 function isObject(value: unknown): value is BackupObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -163,7 +201,17 @@ export function validateSettingsBackup(value: unknown): {
   if (settingsObject) {
     const settings: NonNullable<SettingsBackup['settings']> = {}
     const imapObject = optionalObject(settingsObject.imap, 'settings.imap', errors)
+    const imapServers = optionalObjectArray(
+      settingsObject.imapServers,
+      'settings.imapServers',
+      errors
+    )
     const smtpObject = optionalObject(settingsObject.smtp, 'settings.smtp', errors)
+    const smtpServers = optionalObjectArray(
+      settingsObject.smtpServers,
+      'settings.smtpServers',
+      errors
+    )
     const oidcObject = optionalObject(settingsObject.oidc, 'settings.oidc', errors)
 
     if (imapObject) {
@@ -177,6 +225,23 @@ export function validateSettingsBackup(value: unknown): {
       }
     }
 
+    if (imapServers) {
+      settings.imapServers = imapServers.map((server, index) => ({
+        id: optionalString(server.id, `settings.imapServers[${index}].id`, errors),
+        name: optionalString(server.name, `settings.imapServers[${index}].name`, errors),
+        host: optionalString(server.host, `settings.imapServers[${index}].host`, errors),
+        port: optionalNumber(server.port, `settings.imapServers[${index}].port`, errors),
+        secure: optionalBoolean(server.secure, `settings.imapServers[${index}].secure`, errors),
+        user: optionalString(server.user, `settings.imapServers[${index}].user`, errors),
+        mailbox: optionalString(server.mailbox, `settings.imapServers[${index}].mailbox`, errors),
+        pollSeconds: optionalNumber(
+          server.pollSeconds,
+          `settings.imapServers[${index}].pollSeconds`,
+          errors
+        )
+      }))
+    }
+
     if (smtpObject) {
       settings.smtp = {
         host: optionalString(smtpObject.host, 'settings.smtp.host', errors),
@@ -185,6 +250,18 @@ export function validateSettingsBackup(value: unknown): {
         user: optionalString(smtpObject.user, 'settings.smtp.user', errors),
         from: optionalString(smtpObject.from, 'settings.smtp.from', errors)
       }
+    }
+
+    if (smtpServers) {
+      settings.smtpServers = smtpServers.map((server, index) => ({
+        id: optionalString(server.id, `settings.smtpServers[${index}].id`, errors),
+        name: optionalString(server.name, `settings.smtpServers[${index}].name`, errors),
+        host: optionalString(server.host, `settings.smtpServers[${index}].host`, errors),
+        port: optionalNumber(server.port, `settings.smtpServers[${index}].port`, errors),
+        secure: optionalBoolean(server.secure, `settings.smtpServers[${index}].secure`, errors),
+        user: optionalString(server.user, `settings.smtpServers[${index}].user`, errors),
+        from: optionalString(server.from, `settings.smtpServers[${index}].from`, errors)
+      }))
     }
 
     if (oidcObject) {

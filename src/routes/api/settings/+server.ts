@@ -41,6 +41,33 @@ type SignatureProfileInput = {
   isDefault: boolean
 }
 
+function normalizeServerPayload(value: unknown, passwordMask = '••••••••') {
+  if (!Array.isArray(value)) return null
+  return value.flatMap((item) => {
+    if (!item || typeof item !== 'object') return []
+    const server = item as Record<string, unknown>
+    const password = typeof server.password === 'string' ? server.password.trim() : ''
+    return [
+      {
+        id: typeof server.id === 'string' ? server.id.trim() : undefined,
+        name: typeof server.name === 'string' ? server.name.trim() : undefined,
+        host: typeof server.host === 'string' ? server.host.trim() : '',
+        port:
+          typeof server.port === 'number' && server.port > 0 ? Math.trunc(server.port) : undefined,
+        secure: typeof server.secure === 'boolean' ? server.secure : undefined,
+        user: typeof server.user === 'string' ? server.user.trim() : '',
+        password: password && password !== passwordMask ? encryptSecret(password) : undefined,
+        mailbox: typeof server.mailbox === 'string' ? server.mailbox.trim() : undefined,
+        pollSeconds:
+          typeof server.pollSeconds === 'number' && server.pollSeconds > 0
+            ? Math.trunc(server.pollSeconds)
+            : undefined,
+        from: typeof server.from === 'string' ? server.from.trim() : undefined
+      }
+    ]
+  })
+}
+
 export const GET: RequestHandler = async ({ cookies }) => {
   const config = await getDisplayConfig()
   return json({
@@ -130,6 +157,12 @@ export const POST: RequestHandler = async (event) => {
       values.imapPollSeconds = imap.pollSeconds > 0 ? imap.pollSeconds : null
   }
 
+  const imapServers = normalizeServerPayload(body.imapServers)
+  if (imapServers) {
+    shouldPersistConfig = true
+    values.imapServers = imapServers
+  }
+
   // SMTP fields
   if (body.smtp) {
     shouldPersistConfig = true
@@ -145,6 +178,12 @@ export const POST: RequestHandler = async (event) => {
     if (typeof smtp.undoSendSeconds === 'number') {
       values.smtpUndoSendSeconds = Math.min(30, Math.max(0, Math.floor(smtp.undoSendSeconds)))
     }
+  }
+
+  const smtpServers = normalizeServerPayload(body.smtpServers)
+  if (smtpServers) {
+    shouldPersistConfig = true
+    values.smtpServers = smtpServers
   }
 
   // Signature

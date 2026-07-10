@@ -29,6 +29,8 @@ export function isDemoModeEnabled() {
 }
 
 export type DemoConfigSection = {
+  id: string
+  name: string
   host: string
   port: number
   secure: boolean
@@ -41,7 +43,9 @@ type DemoDisplayConfig = {
   signature: string
   signatureProfiles: DemoSignature[]
   imap: DemoConfigSection & { mailbox: string; pollSeconds: number }
+  imapServers: Array<DemoConfigSection & { mailbox: string; pollSeconds: number }>
   smtp: DemoConfigSection & { from: string; undoSendSeconds: number }
+  smtpServers: Array<DemoConfigSection & { from: string }>
   oidc: {
     discoveryUrl: string
     clientId: string
@@ -191,6 +195,8 @@ const demoConfig: DemoDisplayConfig = {
     }
   ],
   imap: {
+    id: 'primary',
+    name: 'Primary',
     host: 'demo-imap.local',
     port: 993,
     secure: true,
@@ -201,6 +207,8 @@ const demoConfig: DemoDisplayConfig = {
     source: 'demo'
   },
   smtp: {
+    id: 'primary',
+    name: 'Primary',
     host: 'demo-smtp.local',
     port: 587,
     secure: false,
@@ -209,6 +217,12 @@ const demoConfig: DemoDisplayConfig = {
     from: 'Demo User <demo@example.com>',
     undoSendSeconds: 0,
     source: 'demo'
+  },
+  get imapServers() {
+    return [this.imap]
+  },
+  get smtpServers() {
+    return [this.smtp]
   },
   oidc: {
     discoveryUrl: 'https://demo-identity.local/.well-known/openid-configuration',
@@ -1312,9 +1326,7 @@ export function saveDemoContactGroup(input: {
   description?: string
   contactIds: number[]
 }) {
-  const contactIds = [
-    ...new Set(input.contactIds.filter((id) => Number.isFinite(id) && id > 0))
-  ]
+  const contactIds = [...new Set(input.contactIds.filter((id) => Number.isFinite(id) && id > 0))]
   const existing = input.id ? demoContactGroups.find((group) => group.id === input.id) : null
   if (existing) {
     existing.name = input.name.trim()
@@ -1646,8 +1658,8 @@ export function generateDemoAiCompose(input: {
       : input.rewriteMode === 'formal'
         ? 'Here is a more formal version:'
         : input.rewriteMode === 'friendly'
-        ? 'Here is a friendlier version:'
-        : ''
+          ? 'Here is a friendlier version:'
+          : ''
   const opener = /reply/i.test(input.mode)
     ? 'Thanks for the note.'
     : input.to

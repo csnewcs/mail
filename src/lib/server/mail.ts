@@ -36,7 +36,7 @@ import {
   syncRuntime
 } from './db/schema'
 import { enqueueMarkRead, enqueueMarkUnread, enqueueMoveMessage } from './imap-queue'
-import { getImapConfig, getSmtpConfig, type ImapConfig } from './config'
+import { getImapConfig, getImapConfigs, getSmtpConfig, type ImapConfig } from './config'
 import { logServerError, perfError, perfLog, perfMs, perfNow } from './perf'
 import { withRetry } from './retry'
 import { parseAddressFields, upsertContacts } from './contacts'
@@ -394,6 +394,10 @@ function sortImapMailboxes<T extends { path: string; name: string }>(mailboxes: 
   })
 }
 
+function localMailboxPath(config: ImapConfig, remotePath: string) {
+  return config.id === 'primary' ? remotePath : `${config.name}/${remotePath}`
+}
+
 async function readMailboxCatalogRows(): Promise<ImapMailbox[]> {
   const rows = await db
     .select({
@@ -446,16 +450,25 @@ async function replaceMailboxCatalog(mailboxes: ImapMailbox[]) {
   }
 
   const now = new Date()
-  await db.delete(mailboxCatalog)
   if (mailboxes.length > 0) {
-    await db.insert(mailboxCatalog).values(
-      mailboxes.map((mailbox) => ({
-        path: mailbox.path,
-        name: mailbox.name,
-        delimiter: mailbox.delimiter,
-        updatedAt: now
-      }))
-    )
+    for (const mailbox of mailboxes) {
+      await db
+        .insert(mailboxCatalog)
+        .values({
+          path: mailbox.path,
+          name: mailbox.name,
+          delimiter: mailbox.delimiter,
+          updatedAt: now
+        })
+        .onConflictDoUpdate({
+          target: mailboxCatalog.path,
+          set: {
+            name: mailbox.name,
+            delimiter: mailbox.delimiter,
+            updatedAt: now
+          }
+        })
+    }
   }
 }
 
@@ -624,7 +637,8 @@ async function storeMailboxEntry(
 async function syncOneMailbox(
   config: ImapConfig,
   mailboxPath: string,
-  pollMs: number
+  pollMs: number,
+  remoteMailboxPath = mailboxPath
 ): Promise<void> {
   const state = await readSyncState(mailboxPath)
   const historyComplete = state?.historyComplete ?? false
@@ -652,7 +666,7 @@ async function syncOneMailbox(
   try {
     client = await connectImap(config, `${mailboxPath} sync`)
     console.log(`[sync] ${mailboxPath}: connected (${elapsed()})`)
-    const lock = await client.getMailboxLock(mailboxPath)
+    const lock = await client.getMailboxLock(remoteMailboxPath)
     try {
       const needsInitialBackfill = !historyComplete && nextLastUid === 0
       const range = needsInitialBackfill ? '1:*' : `${nextLastUid + 1}:*`
@@ -979,7 +993,7 @@ async function runSyncAll(config: ImapConfig, options: SyncOptions = {}): Promis
       listClient = await connectImap(config, 'list mailboxes')
       listed = await listClient.list()
       cachedMailboxes = listed.map((mb) => ({
-        path: mb.path,
+        path: localMailboxPath(config, mb.path),
         name: mb.name,
         delimiter: mb.delimiter ?? '/'
       }))
@@ -1001,7 +1015,7 @@ async function runSyncAll(config: ImapConfig, options: SyncOptions = {}): Promis
     for (const mb of sortImapMailboxes(listed)) {
       if (mb.flags?.has('\\Noselect')) continue
       await options.beforeMailbox?.()
-      await syncOneMailbox(config, mb.path, pollMs)
+      await syncOneMailbox(config, localMailboxPath(config, mb.path), pollMs, mb.path)
     }
 
     console.log(`[sync] all mailboxes done`)
@@ -1030,17 +1044,21 @@ async function runSyncAll(config: ImapConfig, options: SyncOptions = {}): Promis
 
 export async function getMailboxSyncPollMs() {
   if (isDemoModeEnabled()) return null
-  const config = await getImapConfig()
-  if ('missing' in config) return null
-  return config.pollSeconds * 1000
+  const configs = await getImapConfigs()
+  if (configs.length === 0) return null
+  return Math.min(...configs.map((config) => config.pollSeconds)) * 1000
 }
 
 export async function runMailboxSyncOnce(options: SyncOptions = {}) {
   if (isDemoModeEnabled()) return false
-  const config = await getImapConfig()
-  if ('missing' in config) return false
+  const configs = await getImapConfigs()
+  if (configs.length === 0) return false
   if (!activeSync) {
-    activeSync = runSyncAll(config, options).finally(() => {
+    activeSync = (async () => {
+      for (const config of configs) {
+        await runSyncAll(config, options)
+      }
+    })().finally(() => {
       activeSync = null
     })
   }
