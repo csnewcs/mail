@@ -8,7 +8,7 @@
   import { invalidateSignatureCache } from '$lib/composer.svelte'
   import { errorMessageFromUnknown, readErrorMessage } from '$lib/http'
   import { normalizeAllowedSenders } from '$lib/remote-content'
-  import { onMount } from 'svelte'
+  import { onMount, untrack } from 'svelte'
   import { Trash2, Plus, GripVertical, Download, Upload } from 'lucide-svelte'
 
   type DensityPreference = 'comfortable' | 'compact' | 'condensed'
@@ -232,8 +232,9 @@
     return selectedSettingsSection === id ? 'space-y-4' : 'hidden'
   }
 
-  // Editable form state
-  let form = $derived.by(
+  // Editable form state must not be derived from `data`: autosave can invalidate route data,
+  // and rebuilding this object while typing remounts inputs and drops focus.
+  let form = untrack(
     () =>
       new SettingsFormState(
         data.config,
