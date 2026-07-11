@@ -63,4 +63,6 @@
 
 <div aria-hidden="true" class={['route-loading-bar', isLoading && 'active']}></div>
 
-{@render children()}
+<div class="route-transition-shell">
+  {@render children()}
+</div>

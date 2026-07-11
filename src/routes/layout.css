@@ -456,17 +456,30 @@ a {
   animation: route-loading-bar 900ms ease-in-out infinite;
 }
 
-::view-transition-old(root),
-::view-transition-new(root) {
-  animation-duration: 220ms;
-  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+.route-transition-shell {
+  min-height: 100vh;
+  background: var(--app-bg);
+  view-transition-name: app-page;
 }
 
-::view-transition-old(root) {
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+}
+
+::view-transition-old(app-page),
+::view-transition-new(app-page) {
+  background: var(--app-bg);
+  animation-duration: 180ms;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  mix-blend-mode: normal;
+}
+
+::view-transition-old(app-page) {
   animation-name: app-page-exit;
 }
 
-::view-transition-new(root) {
+::view-transition-new(app-page) {
   animation-name: app-page-enter;
 }
 
@@ -695,29 +708,25 @@ a {
 
 @keyframes app-page-enter {
   from {
-    opacity: 0;
-    transform: translateY(8px) scale(0.995);
-    filter: blur(2px);
+    opacity: 0.96;
+    transform: translateY(6px);
   }
 
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
-    filter: blur(0);
+    transform: translateY(0);
   }
 }
 
 @keyframes app-page-exit {
   from {
     opacity: 1;
-    transform: translateY(0) scale(1);
-    filter: blur(0);
+    transform: translateY(0);
   }
 
   to {
-    opacity: 0;
-    transform: translateY(-4px) scale(0.998);
-    filter: blur(1px);
+    opacity: 0.96;
+    transform: translateY(-3px);
   }
 }
 
@@ -760,7 +769,9 @@ a {
   }
 
   ::view-transition-old(root),
-  ::view-transition-new(root) {
+  ::view-transition-new(root),
+  ::view-transition-old(app-page),
+  ::view-transition-new(app-page) {
     animation: none;
   }
 }
