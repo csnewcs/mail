@@ -46,6 +46,7 @@
     type SignatureProfile
   } from '$lib/composer.svelte'
   import AddressInput from '$lib/components/AddressInput.svelte'
+  import CustomSelect, { type SelectValue } from '$lib/components/CustomSelect.svelte'
   import ErrorDialog from '$lib/components/ErrorDialog.svelte'
   import { errorMessageFromUnknown, readErrorMessage } from '$lib/http'
   import { markdownToHtml } from '$lib/markdown'
@@ -366,8 +367,8 @@
     await saveDraft()
   }
 
-  function handleSignatureChange(event: Event) {
-    const id = Number((event.currentTarget as HTMLSelectElement).value)
+  function handleSignatureChange(value: SelectValue) {
+    const id = Number(value)
     const profile = composer.signatureProfiles.find((signature) => signature.id === id) ?? null
     void selectSignature(profile)
   }
@@ -946,15 +947,16 @@
           class="min-w-0 flex-1 bg-transparent text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none"
         />
         {#if composer.smtpServers.length > 0}
-          <select
+          <CustomSelect
             bind:value={composer.selectedSmtpServerId}
-            aria-label="SMTP server"
-            class="min-w-36 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-zinc-300 focus:border-blue-500 focus:outline-none"
-          >
-            {#each composer.smtpServers as server (server.id)}
-              <option value={server.id}>{server.name} · {server.from}</option>
-            {/each}
-          </select>
+            ariaLabel="SMTP server"
+            options={composer.smtpServers.map((server) => ({
+              value: server.id,
+              label: `${server.name} · ${server.from}`
+            }))}
+            class="min-w-36"
+            buttonClass="px-2 py-1 text-xs text-zinc-300"
+          />
         {:else if selectedSmtpServer}
           <span class="truncate text-xs text-zinc-500">{selectedSmtpServer.from}</span>
         {:else if loadingSmtpServers}
@@ -1497,18 +1499,22 @@
         </div>
         {#if composer.mode === 'compose' && composer.draftId === null && composer.signatureProfiles.length > 0}
           <label class="sr-only" for="composer-signature">Signature</label>
-          <select
+          <CustomSelect
             id="composer-signature"
             value={composer.selectedSignatureId ?? ''}
             onchange={handleSignatureChange}
             disabled={sending}
-            class="max-w-40 rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-sm text-zinc-300 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <option value="">No signature</option>
-            {#each composer.signatureProfiles as signature (signature.id)}
-              <option value={signature.id}>{signature.name}</option>
-            {/each}
-          </select>
+            ariaLabel="Signature"
+            options={[
+              { value: '', label: 'No signature' },
+              ...composer.signatureProfiles.map((signature) => ({
+                value: signature.id ?? '',
+                label: signature.name
+              }))
+            ]}
+            class="max-w-40"
+            buttonClass="px-2 py-1.5 text-sm text-zinc-300"
+          />
         {/if}
         <div class="relative">
           <button

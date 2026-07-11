@@ -3,6 +3,7 @@
   import { resolve } from '$app/paths'
   import { page } from '$app/state'
   import ActionModal from '$lib/components/ActionModal.svelte'
+  import CustomSelect, { type SelectOption } from '$lib/components/CustomSelect.svelte'
   import ErrorDialog from '$lib/components/ErrorDialog.svelte'
   import { normalizeFilterConditions, type FilterCondition } from '$lib/filter-conditions'
   import { invalidateSignatureCache } from '$lib/composer.svelte'
@@ -81,6 +82,52 @@
     { id: 'senders', label: 'Senders' },
     { id: 'filters', label: 'Filters' },
     { id: 'backup', label: 'Backup' }
+  ]
+  const undoSendOptions: SelectOption[] = [
+    { value: 0, label: 'Off' },
+    { value: 5, label: '5 seconds' },
+    { value: 10, label: '10 seconds' },
+    { value: 20, label: '20 seconds' },
+    { value: 30, label: '30 seconds' }
+  ]
+  const themeOptions: SelectOption[] = [
+    { value: 'system', label: 'System' },
+    { value: 'light', label: 'Light' },
+    { value: 'dark', label: 'Dark' }
+  ]
+  const senderRuleTypeOptions: SelectOption[] = [
+    { value: 'block', label: 'Block' },
+    { value: 'allow', label: 'Allow' }
+  ]
+  const importConflictOptions: SelectOption[] = [
+    { value: 'skip', label: 'Skip' },
+    { value: 'duplicate', label: 'Import anyway' }
+  ]
+  const filterMatchOptions: SelectOption[] = [
+    { value: 'all', label: 'All conditions' },
+    { value: 'any', label: 'Any condition' }
+  ]
+  const filterFieldOptions: SelectOption[] = [
+    { value: 'from', label: 'From' },
+    { value: 'to', label: 'To' },
+    { value: 'subject', label: 'Subject' },
+    { value: 'cc', label: 'CC' }
+  ]
+  const filterOperatorOptions: SelectOption[] = [
+    { value: 'contains', label: 'contains' },
+    { value: 'equals', label: 'equals' },
+    { value: 'starts_with', label: 'starts with' },
+    { value: 'ends_with', label: 'ends with' }
+  ]
+  const filterActionOptions: SelectOption[] = [
+    { value: 'mark_read', label: 'Mark as read' },
+    { value: 'trash', label: 'Move to trash' },
+    { value: 'delete', label: 'Delete' },
+    { value: 'star', label: 'Star' },
+    { value: 'label', label: 'Apply label' },
+    { value: 'forward', label: 'Forward (not active yet)' },
+    { value: 'auto_reply', label: 'Auto-reply (not active yet)' },
+    { value: 'move', label: 'Move to folder…' }
   ]
 
   type ConfigSection = {
@@ -2090,17 +2137,15 @@
               <label class="mb-1 block text-xs text-zinc-400" for="smtp-undo-send"
                 >Undo send delay</label
               >
-              <select
+              <CustomSelect
                 id="smtp-undo-send"
-                bind:value={smtp.undoSendSeconds}
-                class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
-              >
-                <option value={0}>Off</option>
-                <option value={5}>5 seconds</option>
-                <option value={10}>10 seconds</option>
-                <option value={20}>20 seconds</option>
-                <option value={30}>30 seconds</option>
-              </select>
+                value={smtp.undoSendSeconds}
+                options={undoSendOptions}
+                onchange={(value) => (smtp.undoSendSeconds = Number(value))}
+                ariaLabel="Undo send delay"
+                class="w-full"
+                buttonClass="px-3 py-2 text-sm"
+              />
               <p class="mt-1 text-xs text-zinc-500">
                 Immediate sends wait this long before the SMTP worker can deliver them. Send later
                 is unchanged.
@@ -2552,19 +2597,19 @@
               <p class="mt-1 text-sm text-zinc-500">
                 Choose a light or dark interface, or follow your system setting.
               </p>
-              <select
+              <CustomSelect
                 id="theme-preference"
-                bind:value={themePreference}
-                onchange={() => {
-                  applyThemePreference(themePreference)
+                value={themePreference}
+                options={themeOptions}
+                onchange={(value) => {
+                  form.themePreference = value as ThemePreference
+                  applyThemePreference(form.themePreference)
                   autosaveToggleChange()
                 }}
-                class="mt-3 w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none sm:max-w-xs"
-              >
-                <option value="system">System</option>
-                <option value="light">Light</option>
-                <option value="dark">Dark</option>
-              </select>
+                ariaLabel="Theme"
+                class="mt-3 w-full sm:max-w-xs"
+                buttonClass="px-3 py-2 text-sm"
+              />
             </label>
           </div>
           <div class="rounded-lg border border-white/8 bg-white/3 p-4">
@@ -3432,14 +3477,15 @@
                   <label class="mb-1 block text-xs text-zinc-500" for="new-sender-rule-type"
                     >Type</label
                   >
-                  <select
+                  <CustomSelect
                     id="new-sender-rule-type"
-                    bind:value={newSenderRule.type}
-                    class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
-                  >
-                    <option value="block">Block</option>
-                    <option value="allow">Allow</option>
-                  </select>
+                    value={newSenderRule.type}
+                    options={senderRuleTypeOptions}
+                    onchange={(value) => (newSenderRule.type = value as 'block' | 'allow')}
+                    ariaLabel="Sender rule type"
+                    class="w-full"
+                    buttonClass="px-3 py-2 text-sm"
+                  />
                 </div>
                 <div>
                   <label class="mb-1 block text-xs text-zinc-500" for="new-sender-rule-sender"
@@ -3536,14 +3582,17 @@
                 </div>
                 <label class="flex items-center gap-2 text-xs text-zinc-400">
                   Duplicates
-                  <select
-                    bind:value={importConflictStrategy}
-                    onchange={() => void previewFilterImport()}
-                    class="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-white focus:border-blue-500 focus:outline-none"
-                  >
-                    <option value="skip">Skip</option>
-                    <option value="duplicate">Import anyway</option>
-                  </select>
+                  <CustomSelect
+                    value={importConflictStrategy}
+                    options={importConflictOptions}
+                    onchange={(value) => {
+                      importConflictStrategy = value as 'skip' | 'duplicate'
+                      void previewFilterImport()
+                    }}
+                    ariaLabel="Duplicate filter import strategy"
+                    class="w-36"
+                    buttonClass="px-2 py-1 text-xs"
+                  />
                 </label>
               </div>
               {#if filterImportPreview.issues.length > 0}
@@ -3642,14 +3691,15 @@
               <h3 class="text-xs font-medium text-zinc-400">New rule</h3>
               <div>
                 <label class="mb-1 block text-xs text-zinc-500" for="new-filter-match">Match</label>
-                <select
+                <CustomSelect
                   id="new-filter-match"
-                  bind:value={newFilter.match}
-                  class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none sm:w-auto"
-                >
-                  <option value="all">All conditions</option>
-                  <option value="any">Any condition</option>
-                </select>
+                  value={newFilter.match}
+                  options={filterMatchOptions}
+                  onchange={(value) => (newFilter.match = value as 'all' | 'any')}
+                  ariaLabel="Filter match mode"
+                  class="w-full sm:w-48"
+                  buttonClass="px-3 py-2 text-sm"
+                />
               </div>
               <div class="space-y-3">
                 {#each newFilter.conditions as condition, index (`condition-${index}`)}
@@ -3661,32 +3711,30 @@
                         class="mb-1 block text-xs text-zinc-500"
                         for={`new-filter-field-${index}`}>Field</label
                       >
-                      <select
+                      <CustomSelect
                         id={`new-filter-field-${index}`}
-                        bind:value={condition.field}
-                        class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
-                      >
-                        <option value="from">From</option>
-                        <option value="to">To</option>
-                        <option value="subject">Subject</option>
-                        <option value="cc">CC</option>
-                      </select>
+                        value={condition.field}
+                        options={filterFieldOptions}
+                        onchange={(value) => (condition.field = String(value))}
+                        ariaLabel={`Filter field ${index + 1}`}
+                        class="w-full"
+                        buttonClass="px-3 py-2 text-sm"
+                      />
                     </div>
                     <div>
                       <label
                         class="mb-1 block text-xs text-zinc-500"
                         for={`new-filter-condition-${index}`}>Condition</label
                       >
-                      <select
+                      <CustomSelect
                         id={`new-filter-condition-${index}`}
-                        bind:value={condition.operator}
-                        class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
-                      >
-                        <option value="contains">contains</option>
-                        <option value="equals">equals</option>
-                        <option value="starts_with">starts with</option>
-                        <option value="ends_with">ends with</option>
-                      </select>
+                        value={condition.operator}
+                        options={filterOperatorOptions}
+                        onchange={(value) => (condition.operator = String(value))}
+                        ariaLabel={`Filter condition ${index + 1}`}
+                        class="w-full"
+                        buttonClass="px-3 py-2 text-sm"
+                      />
                     </div>
                     <div class="sm:col-span-2">
                       <label
@@ -3726,20 +3774,15 @@
                   <label class="mb-1 block text-xs text-zinc-500" for="new-filter-action"
                     >Action</label
                   >
-                  <select
+                  <CustomSelect
                     id="new-filter-action"
-                    bind:value={newFilter.action}
-                    class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
-                  >
-                    <option value="mark_read">Mark as read</option>
-                    <option value="trash">Move to trash</option>
-                    <option value="delete">Delete</option>
-                    <option value="star">Star</option>
-                    <option value="label">Apply label</option>
-                    <option value="forward">Forward (not active yet)</option>
-                    <option value="auto_reply">Auto-reply (not active yet)</option>
-                    <option value="move">Move to folder…</option>
-                  </select>
+                    value={newFilter.action}
+                    options={filterActionOptions}
+                    onchange={(value) => (newFilter.action = String(value))}
+                    ariaLabel="Filter action"
+                    class="w-full"
+                    buttonClass="px-3 py-2 text-sm"
+                  />
                 </div>
                 {#if filterTargetRequired}
                   <div>
