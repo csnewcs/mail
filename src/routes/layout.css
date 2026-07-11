@@ -84,6 +84,79 @@ a {
   cursor: pointer;
 }
 
+:where(
+  a,
+  button,
+  input,
+  select,
+  textarea,
+  summary,
+  [role='button'],
+  [role='menuitem'],
+  [tabindex]:not([tabindex='-1'])
+) {
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    color 180ms ease,
+    opacity 180ms ease,
+    transform 180ms ease;
+}
+
+:where(button, a, summary, [role='button'], [role='menuitem']):where(:hover, :focus-visible) {
+  transform: translateY(-1px);
+}
+
+:where(button, a, summary, [role='button'], [role='menuitem']):active {
+  transform: translateY(0) scale(0.98);
+}
+
+:where(input, select, textarea):focus-visible {
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+  transform: translateY(-1px);
+}
+
+:where(
+  .app-shell,
+  .app-sidebar,
+  .app-mobile-header,
+  .app-popover,
+  .app-surface,
+  main,
+  section,
+  article,
+  aside,
+  nav,
+  header,
+  footer,
+  form,
+  dialog,
+  [role='dialog'],
+  [role='menu'],
+  [role='listbox']
+) {
+  animation: app-element-enter 260ms ease both;
+}
+
+:where(li, tr, [role='listitem'], [role='option']) {
+  animation: app-item-enter 220ms ease both;
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    opacity 180ms ease,
+    transform 180ms ease;
+}
+
+:where(li, tr, [role='listitem'], [role='option']):where(:hover, :focus-within) {
+  transform: translateX(2px);
+}
+
+:where(svg, path, option, .ProseMirror, .ProseMirror *) {
+  animation: none;
+}
+
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--app-scrollbar-thumb) transparent;
@@ -321,7 +394,55 @@ a {
   }
 }
 
+@keyframes app-element-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.995);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes app-item-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0ms !important;
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+  }
+
+  :where(
+    button,
+    a,
+    summary,
+    [role='button'],
+    [role='menuitem'],
+    li,
+    tr,
+    [role='listitem'],
+    [role='option']
+  ):where(:hover, :focus-visible, :focus-within, :active),
+  :where(input, select, textarea):focus-visible {
+    transform: none;
+  }
+
   .route-loading-bar {
     transition-duration: 0ms;
   }
