@@ -96,8 +96,8 @@
   const translationTargetLanguage = $derived(data.translationTargetLanguage || 'Korean')
   const messageHeaderClass = $derived(
     density === 'condensed'
-      ? 'p-3 sm:p-4 md:border-b md:border-white/8'
-      : 'p-4 sm:p-5 md:border-b md:border-white/8'
+      ? 'mail-content-header p-3 sm:p-4 md:border-b md:border-white/8'
+      : 'mail-content-header p-4 sm:p-5 md:border-b md:border-white/8'
   )
   const messageMetaClass = $derived(
     density === 'condensed'
@@ -886,8 +886,8 @@
   >
     <div
       class={[
-        'min-w-0 items-center justify-between gap-3',
-        messageToolbarExpanded ? 'hidden' : 'flex'
+        'mail-actions-summary flex min-w-0 items-center justify-between gap-3',
+        messageToolbarExpanded && 'is-hidden'
       ].join(' ')}
     >
       <div class="flex min-w-0 items-center gap-3">
@@ -913,8 +913,8 @@
     {/if}
     <div
       class={[
-        'flex-wrap items-center justify-between gap-3',
-        messageToolbarExpanded ? 'flex' : 'hidden'
+        'mail-actions-toolbar flex flex-wrap items-center justify-between gap-3',
+        messageToolbarExpanded && 'is-visible'
       ].join(' ')}
     >
       <div class="flex flex-wrap items-center gap-1">

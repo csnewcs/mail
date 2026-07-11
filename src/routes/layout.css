@@ -112,6 +112,14 @@ a {
   transform: translateY(0) scale(0.98);
 }
 
+:where(button.absolute.inset-0, button.fixed.inset-0):where(:hover, :focus-visible, :active) {
+  transform: none;
+}
+
+:where(:disabled, [aria-disabled='true']) {
+  transform: none !important;
+}
+
 :where(input, select, textarea):focus-visible {
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
   transform: translateY(-1px);
@@ -137,6 +145,87 @@ a {
   [role='listbox']
 ) {
   animation: app-element-enter 260ms ease both;
+}
+
+:where(
+  div[class*='rounded'][class*='border'],
+  div[class*='rounded'][class*='bg-'],
+  div[class*='shadow'],
+  div[class*='backdrop-blur'],
+  div[class*='fixed'][class*='inset-0'],
+  div[class*='absolute'][class*='z-'],
+  label[class*='rounded'],
+  img[class*='rounded'],
+  video[class*='rounded'],
+  iframe[class*='rounded'],
+  kbd,
+  span[class*='rounded'],
+  [class*='tooltip']
+) {
+  animation: app-element-enter 220ms ease both;
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    color 180ms ease,
+    opacity 180ms ease,
+    transform 180ms ease;
+}
+
+:where(div[class*='rounded'][class*='border'], div[class*='rounded'][class*='bg-']):where(
+  :hover,
+  :focus-within
+) {
+  transform: translateY(-1px);
+}
+
+:where(.mail-content-header, .mail-content-header > div):where(:hover, :focus-within) {
+  transform: none;
+}
+
+.mail-actions-summary,
+.mail-actions-toolbar {
+  overflow: hidden;
+  transition:
+    max-height 180ms ease,
+    opacity 180ms ease,
+    transform 180ms ease,
+    visibility 180ms ease;
+}
+
+.mail-actions-summary {
+  max-height: 48px;
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
+}
+
+.mail-actions-summary.is-hidden {
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(-4px);
+  visibility: hidden;
+}
+
+.mail-actions-toolbar {
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(-4px);
+  visibility: hidden;
+}
+
+.mail-actions-toolbar.is-visible {
+  max-height: 160px;
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
+}
+
+:where(div[class*='fixed'][class*='inset-0'], div[class*='absolute'][class*='inset-0']):where(
+  :hover,
+  :focus-within
+) {
+  transform: none;
 }
 
 :where(li, tr, [role='listitem'], [role='option']) {
