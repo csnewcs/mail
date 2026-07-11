@@ -945,7 +945,7 @@
           aria-label="From display name"
           class="min-w-0 flex-1 bg-transparent text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none"
         />
-        {#if composer.smtpServers.length > 1}
+        {#if composer.smtpServers.length > 0}
           <select
             bind:value={composer.selectedSmtpServerId}
             aria-label="SMTP server"
