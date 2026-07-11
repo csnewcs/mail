@@ -10,6 +10,9 @@
   --app-field-bg: rgb(24 24 27);
   --app-field-text: rgb(228 228 231);
   --app-field-placeholder: rgb(113 113 122);
+  --app-focus-ring: rgba(59, 130, 246, 0.28);
+  --app-selection-bg: rgba(59, 130, 246, 0.35);
+  --app-selection-text: #ffffff;
   --app-scrollbar-thumb: rgba(255, 255, 255, 0.12);
   --app-scrollbar-thumb-hover: rgba(255, 255, 255, 0.22);
 }
@@ -24,12 +27,24 @@
   --app-field-bg: #ffffff;
   --app-field-text: rgb(24 24 27);
   --app-field-placeholder: rgb(113 113 122);
+  --app-focus-ring: rgba(37, 99, 235, 0.22);
+  --app-selection-bg: rgba(37, 99, 235, 0.18);
+  --app-selection-text: #0f172a;
   --app-scrollbar-thumb: rgba(15, 23, 42, 0.18);
   --app-scrollbar-thumb-hover: rgba(15, 23, 42, 0.28);
 }
 
+html {
+  scroll-behavior: smooth;
+  text-size-adjust: 100%;
+}
+
 body {
   background: var(--app-bg);
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 html,
@@ -39,6 +54,17 @@ body {
 
 html[data-theme='light'] body {
   color: #0f172a;
+}
+
+::selection {
+  background: var(--app-selection-bg);
+  color: var(--app-selection-text);
+}
+
+@supports (-webkit-touch-callout: none) {
+  body {
+    -webkit-tap-highlight-color: transparent;
+  }
 }
 
 .app-shell {
@@ -55,6 +81,9 @@ html[data-theme='light'] body {
 
 .app-popover {
   background: var(--app-popover-bg);
+  box-shadow:
+    0 18px 60px rgba(0, 0, 0, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .app-surface {
@@ -66,6 +95,20 @@ select,
 textarea {
   background-color: var(--app-field-bg);
   color: var(--app-field-text);
+  caret-color: #60a5fa;
+}
+
+input,
+textarea {
+  accent-color: #2563eb;
+}
+
+input[type='number'] {
+  font-variant-numeric: tabular-nums;
+}
+
+textarea {
+  resize: vertical;
 }
 
 select option,
@@ -77,11 +120,34 @@ select optgroup {
 input::placeholder,
 textarea::placeholder {
   color: var(--app-field-placeholder);
+  transition: color 160ms ease;
+}
+
+input:focus::placeholder,
+textarea:focus::placeholder {
+  color: color-mix(in srgb, var(--app-field-placeholder), transparent 35%);
 }
 
 button,
 a {
   cursor: pointer;
+  touch-action: manipulation;
+}
+
+:where(button, input, select, textarea, [role='button'], [role='combobox']) {
+  min-height: 2rem;
+}
+
+:where(:disabled, [aria-disabled='true']) {
+  cursor: not-allowed;
+}
+
+:where([aria-busy='true'], .cursor-wait) {
+  cursor: wait;
+}
+
+:where([hidden]) {
+  display: none !important;
 }
 
 :where(
@@ -121,8 +187,28 @@ a {
 }
 
 :where(input, select, textarea):focus-visible {
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+  box-shadow: 0 0 0 3px var(--app-focus-ring);
   transform: translateY(-1px);
+}
+
+:where(
+  button,
+  a,
+  [role='button'],
+  [role='combobox'],
+  [tabindex]:not([tabindex='-1'])
+):focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: 2px;
+}
+
+:where(input, textarea):user-invalid {
+  border-color: rgba(244, 63, 94, 0.72);
+  box-shadow: 0 0 0 3px rgba(244, 63, 94, 0.16);
+}
+
+:where(input, textarea):read-only:not(:disabled) {
+  opacity: 0.88;
 }
 
 :where(
@@ -177,6 +263,11 @@ a {
   :focus-within
 ) {
   transform: translateY(-1px);
+}
+
+:where(div[class*='rounded'][class*='border'], div[class*='rounded'][class*='bg-']):focus-within {
+  border-color: color-mix(in srgb, #60a5fa, transparent 62%);
+  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.14);
 }
 
 :where(.mail-content-header, .mail-content-header > div):where(:hover, :focus-within) {
@@ -240,6 +331,66 @@ a {
 
 :where(li, tr, [role='listitem'], [role='option']):where(:hover, :focus-within) {
   transform: translateX(2px);
+}
+
+:where([role='option'][aria-selected='true']) {
+  scroll-margin-block: 0.75rem;
+}
+
+:where(kbd) {
+  box-shadow:
+    inset 0 -1px 0 rgba(0, 0, 0, 0.35),
+    0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+:where(hr) {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+:where(table) {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+:where(th) {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+:where(img, video, canvas, svg) {
+  max-width: 100%;
+}
+
+:where(img, video) {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+:where([role='dialog'], .app-popover) {
+  isolation: isolate;
+}
+
+:where([role='alert']) {
+  animation: app-alert-enter 220ms ease both;
+}
+
+:where(.truncate) {
+  min-width: 0;
+}
+
+:where(.empty-state, [data-empty-state]) {
+  border: 1px dashed rgba(255, 255, 255, 0.1);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.015));
+}
+
+@media (hover: none) {
+  :where(button, a, summary, [role='button'], [role='menuitem']):where(:hover, :focus-visible),
+  :where(li, tr, [role='listitem'], [role='option']):where(:hover, :focus-within),
+  :where(div[class*='rounded'][class*='border'], div[class*='rounded'][class*='bg-']):where(
+    :hover,
+    :focus-within
+  ) {
+    transform: none;
+  }
 }
 
 :where(svg, path, option, .ProseMirror, .ProseMirror *) {
@@ -504,6 +655,23 @@ a {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes app-alert-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.99);
+  }
+
+  70% {
+    opacity: 1;
+    transform: translateY(1px) scale(1);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
   }
 }
 

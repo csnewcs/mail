@@ -35,11 +35,14 @@
 
   let open = $state(false)
   let activeIndex = $state(0)
+  let typeahead = ''
+  let typeaheadTimer: ReturnType<typeof setTimeout> | null = null
   let buttonEl = $state<HTMLButtonElement | undefined>(undefined)
   const fallbackId = $derived(
     `custom-select-${(ariaLabel ?? 'select').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
   )
   const listboxId = $derived(`${id ?? fallbackId}-listbox`)
+  const activeOptionId = $derived(`${listboxId}-option-${activeIndex}`)
 
   const selectedOption = $derived(options.find((option) => option.value === value) ?? options[0])
   const enabledOptions = $derived(options.filter((option) => !option.disabled))
@@ -50,7 +53,7 @@
   }
 
   function openMenu() {
-    if (disabled) return
+    if (disabled || enabledOptions.length === 0) return
     activeIndex = selectedIndex()
     open = true
   }
@@ -60,7 +63,7 @@
   }
 
   function selectOption(option: SelectOption) {
-    if (option.disabled) return
+    if (!option || option.disabled) return
     value = option.value
     onchange?.(option.value)
     closeMenu()
@@ -80,6 +83,25 @@
     activeIndex = options.findIndex((option) => option.value === next.value)
   }
 
+  function setActiveToBoundary(position: 'first' | 'last') {
+    if (enabledOptions.length === 0) return
+    const option =
+      position === 'first' ? enabledOptions[0] : enabledOptions[enabledOptions.length - 1]
+    activeIndex = options.findIndex((candidate) => candidate.value === option.value)
+  }
+
+  function handleTypeahead(key: string) {
+    if (!open) openMenu()
+    typeahead += key.toLowerCase()
+    if (typeaheadTimer) clearTimeout(typeaheadTimer)
+    typeaheadTimer = setTimeout(() => (typeahead = ''), 700)
+
+    const match = options.find(
+      (option) => !option.disabled && option.label.toLowerCase().startsWith(typeahead)
+    )
+    if (match) activeIndex = options.findIndex((option) => option.value === match.value)
+  }
+
   function handleButtonClick(event: MouseEvent) {
     event.stopPropagation()
     if (open) {
@@ -97,6 +119,13 @@
       return
     }
 
+    if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault()
+      if (!open) openMenu()
+      setActiveToBoundary(event.key === 'Home' ? 'first' : 'last')
+      return
+    }
+
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault()
       if (!open) openMenu()
@@ -104,8 +133,18 @@
       return
     }
 
+    if (event.key === 'Tab') {
+      closeMenu()
+      return
+    }
+
     if (event.key === 'Escape') {
       closeMenu()
+      return
+    }
+
+    if (event.key.length === 1 && !event.altKey && !event.ctrlKey && !event.metaKey) {
+      handleTypeahead(event.key)
     }
   }
 </script>
@@ -120,6 +159,7 @@
     role="combobox"
     aria-label={ariaLabel}
     aria-controls={listboxId}
+    aria-activedescendant={open ? activeOptionId : undefined}
     aria-expanded={open}
     aria-haspopup="listbox"
     {disabled}
@@ -130,7 +170,9 @@
       buttonClass
     ]}
   >
-    <span class="min-w-0 truncate">{selectedOption?.label ?? ''}</span>
+    <span class="min-w-0 truncate" title={selectedOption?.label ?? ''}
+      >{selectedOption?.label ?? ''}</span
+    >
     <ChevronDown
       size={14}
       class={open
@@ -149,8 +191,12 @@
         menuClass
       ]}
     >
+      {#if options.length === 0}
+        <p class="px-2.5 py-2 text-sm text-zinc-500">No options available</p>
+      {/if}
       {#each options as option, index (`${option.value}-${index}`)}
         <button
+          id={`${listboxId}-option-${index}`}
           type="button"
           role="option"
           aria-selected={option.value === value}
@@ -166,7 +212,7 @@
                 : 'text-zinc-300 hover:bg-white/8 hover:text-zinc-100'
           ]}
         >
-          <span class="min-w-0 flex-1 truncate">{option.label}</span>
+          <span class="min-w-0 flex-1 truncate" title={option.label}>{option.label}</span>
           {#if option.value === value}
             <Check size={13} class="shrink-0" />
           {/if}
