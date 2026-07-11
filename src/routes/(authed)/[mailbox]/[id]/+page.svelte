@@ -201,11 +201,19 @@
     return segments
   }
 
-  function syncMessageFrameHeight() {
-    const doc = messageFrame?.contentDocument
-    if (!doc || !messageFrame) return
-    const height = doc.documentElement.scrollHeight
-    if (height > 50) messageFrame.style.height = `${height}px`
+  function syncMessageFrameHeight(frame = messageFrame) {
+    const doc = frame?.contentDocument
+    if (!doc || !frame) return
+    frame.style.height = '400px'
+    const height = Math.max(400, doc.documentElement.scrollHeight)
+    frame.style.height = `${height}px`
+  }
+
+  function resetMessageViewport() {
+    messageContentScrolled = false
+    messageToolbarHovered = false
+    scrollContainer?.scrollTo({ top: 0 })
+    if (messageFrame) messageFrame.style.height = '400px'
   }
 
   function applyTranslationsToMessageFrame(translations: string[] | null) {
@@ -250,6 +258,7 @@
     if (data.message.id === activeMessageId) return
 
     activeMessageId = data.message.id
+    resetMessageViewport()
     cancelTranslation()
   })
 
@@ -1346,11 +1355,7 @@
         class="block min-h-[400px] w-full bg-white"
         onload={(e) => {
           const iframe = e.currentTarget as HTMLIFrameElement
-          const doc = iframe.contentDocument
-          if (doc) {
-            const h = doc.documentElement.scrollHeight
-            if (h > 50) iframe.style.height = `${h}px`
-          }
+          syncMessageFrameHeight(iframe)
 
           applyTranslationsToMessageFrame(translatedHtmlSegments)
         }}
