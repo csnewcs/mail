@@ -397,6 +397,10 @@ a {
   animation: none;
 }
 
+.simplified-mail-card {
+  animation: none;
+}
+
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--app-scrollbar-thumb) transparent;

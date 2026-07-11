@@ -2505,7 +2505,7 @@
             {#each simplifiedCards.slice(simplifiedCardIndex, simplifiedCardIndex + 3) as message, offset (message.id)}
               <article
                 class={[
-                  'absolute inset-0 overflow-hidden rounded-3xl border border-white/10 bg-[#131319] p-6 text-left shadow-2xl shadow-black/30 lg:p-7',
+                  'simplified-mail-card absolute inset-0 overflow-hidden rounded-3xl border border-white/10 bg-[#131319] p-6 text-left shadow-2xl shadow-black/30 lg:p-7',
                   offset === 0 && simplifiedMarkReadProgress > 0 ? 'border-sky-400/20' : '',
                   offset === 0 && simplifiedMarkReadReady ? 'ring-1 ring-sky-300/25' : '',
                   offset === 0
