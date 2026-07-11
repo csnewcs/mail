@@ -145,14 +145,27 @@
 
   type ImapForm = Props['data']['config']['imap'] & { password: string }
   type SmtpForm = Props['data']['config']['smtp'] & { password: string; undoSendSeconds: number }
-  type ImapServerForm = Props['data']['config']['imapServers'][number] & { password: string }
-  type SmtpServerForm = Props['data']['config']['smtpServers'][number] & { password: string }
+  type ImapServerForm = Props['data']['config']['imapServers'][number] & {
+    password: string
+    formKey: string
+  }
+  type SmtpServerForm = Props['data']['config']['smtpServers'][number] & {
+    password: string
+    formKey: string
+  }
   type OidcForm = Props['data']['config']['oidc'] & { clientSecret: string }
   type SignatureProfile = {
     id?: number
     name: string
     html: string
     isDefault: boolean
+  }
+
+  let serverFormKeyCounter = 0
+
+  function createServerFormKey(prefix: string) {
+    serverFormKeyCounter += 1
+    return `${prefix}-${serverFormKeyCounter}`
   }
 
   class SettingsFormState {
@@ -186,7 +199,11 @@
       mailboxPreferences: MailboxPreferences
     ) {
       this.imap = { ...config.imap, password: '' }
-      this.imapServers = config.imapServers.slice(1).map((server) => ({ ...server, password: '' }))
+      this.imapServers = config.imapServers.slice(1).map((server) => ({
+        ...server,
+        password: '',
+        formKey: createServerFormKey('imap')
+      }))
       const smtpConfig = config.smtp as Props['data']['config']['smtp'] & {
         undoSendSeconds?: number
       }
@@ -195,7 +212,11 @@
         password: '',
         undoSendSeconds: smtpConfig.undoSendSeconds ?? 0
       }
-      this.smtpServers = config.smtpServers.slice(1).map((server) => ({ ...server, password: '' }))
+      this.smtpServers = config.smtpServers.slice(1).map((server) => ({
+        ...server,
+        password: '',
+        formKey: createServerFormKey('smtp')
+      }))
       this.oidc = { ...config.oidc, clientSecret: '' }
       this.signature = config.signature
       this.signatureProfiles =
@@ -450,6 +471,7 @@
       password: '',
       mailbox: 'INBOX',
       pollSeconds: 15,
+      formKey: createServerFormKey('imap'),
       source: 'db'
     }
   }
@@ -465,6 +487,7 @@
       user: '',
       password: '',
       from: '',
+      formKey: createServerFormKey('smtp'),
       source: 'db'
     }
   }
@@ -1831,7 +1854,7 @@
               </div>
             {:else}
               <div class="space-y-3">
-                {#each imapServers as server, index (`imap-${server.id}-${index}`)}
+                {#each imapServers as server, index (server.formKey)}
                   <div class="rounded-lg border border-white/8 bg-black/10 p-3">
                     <div class="mb-3 flex items-center justify-between gap-2">
                       <div class="min-w-0">
@@ -2141,7 +2164,7 @@
               </div>
             {:else}
               <div class="space-y-3">
-                {#each smtpServers as server, index (`smtp-${server.id}-${index}`)}
+                {#each smtpServers as server, index (server.formKey)}
                   <div class="rounded-lg border border-white/8 bg-black/10 p-3">
                     <div class="mb-3 flex items-center justify-between gap-2">
                       <div class="min-w-0">
