@@ -284,6 +284,7 @@
   let sidebarWidth = $state(readStorage('mail:sidebarWidth', 260))
   let resizing = $state(false)
   let sync = $state<SyncStatus | null>(null)
+  let syncStatusHovered = $state(false)
   let refreshing = $state(false)
   let drafts = $state<DraftListRow[]>([])
   let draftsError = $state<string | null>(null)
@@ -907,7 +908,7 @@
             'absolute inset-y-0 left-0 z-40 w-[85vw] max-w-xs transition-transform duration-200 ease-out',
             mobileNavOpen ? 'translate-x-0' : '-translate-x-full'
           ]
-        : 'relative'
+        : 'relative z-30'
     ]}
   >
     <div class="flex min-h-0 flex-1 flex-col overflow-visible p-3 sm:p-4">
@@ -1272,7 +1273,13 @@
         <div class="border-t border-white/6 pt-3">
           <!-- Sync status -->
           {#if sync}
-            <div class="group relative mb-2.5 px-3">
+            <div
+              class="relative mb-2.5 px-3"
+              role="group"
+              aria-label="Sync status"
+              onmouseenter={() => (syncStatusHovered = true)}
+              onmouseleave={() => (syncStatusHovered = false)}
+            >
               <div class="flex items-center gap-2">
                 {#if !sync.configured}
                   <span class="h-1.5 w-1.5 rounded-full bg-zinc-600"></span>
@@ -1314,7 +1321,12 @@
               </div>
 
               <div
-                class="pointer-events-none absolute bottom-full left-3 z-50 mb-2 hidden w-64 rounded-xl border border-white/8 bg-[#131319] p-3 opacity-0 shadow-2xl shadow-black/30 transition duration-150 group-focus-within:opacity-100 group-hover:opacity-100 md:block"
+                class={[
+                  'pointer-events-none absolute bottom-full left-3 z-[80] mb-2 hidden w-64 rounded-xl border border-white/8 bg-[#131319] p-3 shadow-2xl shadow-black/30 transition duration-150 md:block',
+                  syncStatusHovered
+                    ? 'visible translate-y-0 opacity-100'
+                    : 'invisible translate-y-1 opacity-0'
+                ]}
               >
                 <div class="space-y-2">
                   <p
