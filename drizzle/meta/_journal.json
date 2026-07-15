@@ -141,6 +141,13 @@
       "when": 1783728000000,
       "tag": "0006_multiple_mail_servers",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1784073600000,
+      "tag": "0007_oidc_subject",
+      "breakpoints": true
     }
   ]
 }

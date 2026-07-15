@@ -2,11 +2,13 @@ import { betterAuth } from 'better-auth/minimal'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { sveltekitCookies } from 'better-auth/svelte-kit'
 import { genericOAuth } from 'better-auth/plugins'
+import { APIError } from 'better-auth/api'
 import { env } from '$env/dynamic/private'
 import { getRequestEvent } from '$app/server'
 import { db } from '$lib/server/db'
 import { getOidcConfig } from '$lib/server/config'
 import { isDemoModeEnabled } from '$lib/server/demo'
+import { claimOidcSubject } from '$lib/server/oidc-access'
 
 type AuthInstance = ReturnType<typeof betterAuth>
 
@@ -21,6 +23,7 @@ async function createAuth(): Promise<AuthInstance> {
     baseURL: env.ORIGIN,
     secret: env.BETTER_AUTH_SECRET,
     database: drizzleAdapter(db, { provider: 'pg' }),
+    account: { accountLinking: { trustedProviders: ['oidc'] } },
     plugins: [
       genericOAuth({
         config: [
@@ -29,7 +32,35 @@ async function createAuth(): Promise<AuthInstance> {
             discoveryUrl: oidc.discoveryUrl,
             clientId: oidc.clientId,
             clientSecret: oidc.clientSecret,
-            scopes: ['openid', 'profile', 'email']
+            scopes: ['openid', 'profile', 'email'],
+            mapProfileToUser: async (profile) => {
+              const subject = typeof profile.sub === 'string' ? profile.sub : ''
+              if (!subject) {
+                throw new APIError('BAD_REQUEST', {
+                  message: 'The OIDC provider did not return a subject identifier.'
+                })
+              }
+              if (
+                typeof profile.email !== 'string' ||
+                !profile.email.trim() ||
+                typeof profile.name !== 'string' ||
+                !profile.name.trim()
+              ) {
+                throw new APIError('BAD_REQUEST', {
+                  message: 'The OIDC provider did not return the required profile claims.'
+                })
+              }
+              const currentOidc = await getOidcConfig()
+              if (currentOidc.discoveryUrl !== oidc.discoveryUrl) {
+                throw new APIError('FORBIDDEN', { message: 'The OIDC provider has changed.' })
+              }
+              if (!(await claimOidcSubject(oidc.discoveryUrl, subject))) {
+                throw new APIError('FORBIDDEN', {
+                  message: 'This OIDC account is not authorized.'
+                })
+              }
+              return { id: subject }
+            }
           }
         ]
       }),

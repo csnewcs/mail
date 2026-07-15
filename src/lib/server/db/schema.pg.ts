@@ -38,6 +38,8 @@ export const mailConfig = pgTable('mail_config', {
   oidcDiscoveryUrl: text('oidc_discovery_url'),
   oidcClientId: text('oidc_client_id'),
   oidcClientSecret: text('oidc_client_secret'),
+  oidcSubject: text('oidc_subject'),
+  oidcSubjectDiscoveryUrl: text('oidc_subject_discovery_url'),
   signature: text('signature'),
   vapidPublicKey: text('vapid_public_key'),
   vapidPrivateKey: text('vapid_private_key'),

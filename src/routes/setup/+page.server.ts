@@ -2,7 +2,7 @@ import type { Actions, PageServerLoad } from './$types'
 import { redirect, fail } from '@sveltejs/kit'
 import { db } from '$lib/server/db'
 import { mailConfig } from '$lib/server/db/schema'
-import { invalidateConfigCache, isOidcConfigured } from '$lib/server/config'
+import { getOidcConfig, invalidateConfigCache, isOidcConfigured } from '$lib/server/config'
 import { invalidateAuth } from '$lib/server/auth'
 import { env } from '$env/dynamic/private'
 import { isDemoModeEnabled } from '$lib/server/demo'
@@ -35,6 +35,8 @@ export const actions: Actions = {
       return fail(400, { error: 'Discovery URL, Client ID and Client Secret are required.' })
     }
 
+    const currentOidc = await getOidcConfig()
+
     const values: typeof mailConfig.$inferInsert = {
       id: 1,
       oidcDiscoveryUrl: discoveryUrl,
@@ -42,6 +44,7 @@ export const actions: Actions = {
       oidcClientSecret: clientSecret,
       updatedAt: new Date()
     }
+    if (currentOidc.discoveryUrl !== discoveryUrl) values.oidcSubject = null
 
     // IMAP — optional at setup time
     const imapHost = (form.get('imapHost') as string)?.trim()

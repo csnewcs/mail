@@ -1,9 +1,10 @@
 import { json, error } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
+import { env } from '$env/dynamic/private'
 import { db } from '$lib/server/db'
 import { mailConfig, mailSignature } from '$lib/server/db/schema'
 import { eq } from 'drizzle-orm'
-import { getDisplayConfig, invalidateConfigCache } from '$lib/server/config'
+import { getDisplayConfig, getOidcConfig, invalidateConfigCache } from '$lib/server/config'
 import { invalidateAuth } from '$lib/server/auth'
 import {
   getCompactModeEnabled,
@@ -169,6 +170,7 @@ export const POST: RequestHandler = async (event) => {
 
   let shouldPersistConfig = false
   const [existingConfig] = await db.select().from(mailConfig).where(eq(mailConfig.id, 1)).limit(1)
+  const currentOidc = await getOidcConfig()
 
   const values: typeof mailConfig.$inferInsert = {
     id: 1,
@@ -266,8 +268,12 @@ export const POST: RequestHandler = async (event) => {
   if (body.oidc) {
     shouldPersistConfig = true
     const oidc = body.oidc as Record<string, unknown>
-    if (typeof oidc.discoveryUrl === 'string')
-      values.oidcDiscoveryUrl = oidc.discoveryUrl.trim() || null
+    if (typeof oidc.discoveryUrl === 'string') {
+      const discoveryUrl = oidc.discoveryUrl.trim()
+      values.oidcDiscoveryUrl = discoveryUrl || null
+      const nextDiscoveryUrl = discoveryUrl || env.OIDC_DISCOVERY_URL || ''
+      if (nextDiscoveryUrl !== currentOidc.discoveryUrl) values.oidcSubject = null
+    }
     if (typeof oidc.clientId === 'string') values.oidcClientId = oidc.clientId.trim() || null
     if (
       typeof oidc.clientSecret === 'string' &&

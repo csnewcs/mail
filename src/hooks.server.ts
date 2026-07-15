@@ -3,12 +3,13 @@ import { redirect } from '@sveltejs/kit'
 import { sequence } from '@sveltejs/kit/hooks'
 import { building } from '$app/environment'
 import { getAuth } from '$lib/server/auth'
-import { isOidcConfigured } from '$lib/server/config'
+import { getOidcConfig, isOidcConfigured } from '$lib/server/config'
 import { repairThreadKeys } from '$lib/server/mail'
 import { logServerError } from '$lib/server/perf'
 import { runMigrations } from '$lib/server/db'
 import { svelteKitHandler } from 'better-auth/svelte-kit'
 import { getDemoAuthSession, isDemoModeEnabled } from '$lib/server/demo'
+import { isOidcUserAuthorized } from '$lib/server/oidc-access'
 
 // Warm up eagerly so the first request doesn't pay initialization costs
 if (!building) {
@@ -57,7 +58,12 @@ const handleBetterAuth: Handle = async ({ event, resolve }) => {
   }
 
   const auth = await getAuth()
-  const session = await auth.api.getSession({ headers: event.request.headers })
+  const authSession = await auth.api.getSession({ headers: event.request.headers })
+  const oidc = authSession ? await getOidcConfig() : null
+  const session =
+    authSession && oidc && (await isOidcUserAuthorized(oidc.discoveryUrl, authSession.user.id))
+      ? authSession
+      : null
 
   if (session) {
     event.locals.session = session.session

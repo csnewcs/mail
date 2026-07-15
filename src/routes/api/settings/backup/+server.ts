@@ -1,10 +1,11 @@
 import { error, json } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
+import { env } from '$env/dynamic/private'
 import { asc } from 'drizzle-orm'
 import { db } from '$lib/server/db'
 import { mailConfig, mailFilter, savedSearch } from '$lib/server/db/schema'
 import { invalidateAuth } from '$lib/server/auth'
-import { getDisplayConfig, invalidateConfigCache } from '$lib/server/config'
+import { getDisplayConfig, getOidcConfig, invalidateConfigCache } from '$lib/server/config'
 import {
   getCompactModeEnabled,
   getSimplifiedViewEnabled,
@@ -124,6 +125,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
   let restoredSettings = false
 
   if (selection.settings && backup.settings) {
+    const currentOidc = await getOidcConfig()
     const values: typeof mailConfig.$inferInsert = {
       id: 1,
       updatedAt: new Date()
@@ -155,8 +157,11 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
     }
 
     if (backup.settings.oidc) {
-      values.oidcDiscoveryUrl = backup.settings.oidc.discoveryUrl?.trim() || null
+      const discoveryUrl = backup.settings.oidc.discoveryUrl?.trim() || ''
+      values.oidcDiscoveryUrl = discoveryUrl || null
       values.oidcClientId = backup.settings.oidc.clientId?.trim() || null
+      const nextDiscoveryUrl = discoveryUrl || env.OIDC_DISCOVERY_URL || ''
+      if (nextDiscoveryUrl !== currentOidc.discoveryUrl) values.oidcSubject = null
     }
 
     if (backup.settings.signature != null) values.signature = backup.settings.signature
