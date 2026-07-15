@@ -10,6 +10,7 @@
   import { invalidateSignatureCache } from '$lib/composer.svelte'
   import { errorMessageFromUnknown, readErrorMessage } from '$lib/http'
   import { normalizeAllowedSenders } from '$lib/remote-content'
+  import { pushNotifications } from '$lib/push-notifications.svelte'
   import {
     applyThemeStyle,
     DEFAULT_THEME_STYLE,
@@ -1502,10 +1503,6 @@
 
   let notifStatus = $state<'idle' | 'generating' | 'done' | 'error'>('idle')
   let notifPublicKey = $state('')
-  let pushStatus = $state<'unknown' | 'unsupported' | 'denied' | 'subscribed' | 'unsubscribed'>(
-    'unknown'
-  )
-  let subscribing = $state(false)
   let testingPush = $state(false)
 
   onMount(async () => {
@@ -1522,74 +1519,16 @@
     void loadSenderRules()
     void loadMailboxNotificationRules()
 
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-      pushStatus = 'unsupported'
-      return
-    }
-    if (Notification.permission === 'denied') {
-      pushStatus = 'denied'
-      return
-    }
-    try {
-      const reg = await navigator.serviceWorker.getRegistration('/')
-      if (!reg) {
-        pushStatus = 'unsubscribed'
-        return
-      }
-      const sub = await reg.pushManager.getSubscription()
-      pushStatus = sub ? 'subscribed' : 'unsubscribed'
-    } catch {
-      pushStatus = 'unsubscribed'
-    }
+    if (data.demoMode) pushNotifications.disable()
+    else void pushNotifications.refresh()
   })
 
   async function enablePushNotifications() {
-    subscribing = true
     try {
-      const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' })
-      await navigator.serviceWorker.ready
-
-      const res = await fetch('/api/push/vapid-public-key')
-      const { publicKey } = await res.json()
-      if (!publicKey) {
-        errorDialogMessage = 'VAPID keys not configured. Generate them below first.'
-        return
-      }
-
-      const existing = await reg.pushManager.getSubscription()
-      if (existing) {
-        pushStatus = 'subscribed'
-        toast('Push notifications already enabled')
-        return
-      }
-
-      const permission = await Notification.requestPermission()
-      if (permission !== 'granted') {
-        pushStatus = permission === 'denied' ? 'denied' : 'unsubscribed'
-        return
-      }
-
-      const sub = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: publicKey
-      })
-
-      const subRes = await fetch('/api/push/subscribe', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(sub.toJSON())
-      })
-
-      if (!subRes.ok) {
-        throw new Error(await readErrorMessage(subRes, 'Failed to subscribe.'))
-      }
-
-      pushStatus = 'subscribed'
-      toast('Push notifications enabled')
+      const enabled = await pushNotifications.enable()
+      if (enabled) toast('Push notifications enabled')
     } catch (error) {
       errorDialogMessage = errorMessageFromUnknown(error, 'Failed to enable notifications.')
-    } finally {
-      subscribing = false
     }
   }
 
@@ -1618,6 +1557,7 @@
         notifPublicKey = data.publicKey
         notifStatus = 'done'
         toast('VAPID keys generated')
+        if (!data.demoMode) void pushNotifications.refresh(true)
       } else {
         notifStatus = 'idle'
         errorDialogMessage = await readErrorMessage(res, 'Failed to generate VAPID keys.')
@@ -3966,15 +3906,15 @@
 
           <!-- Subscription status -->
           <div class="rounded-lg border border-white/8 bg-white/3 p-4">
-            {#if pushStatus === 'unsupported'}
+            {#if pushNotifications.status === 'unsupported'}
               <p class="text-sm text-zinc-500">
                 Push notifications are not supported in this browser.
               </p>
-            {:else if pushStatus === 'denied'}
+            {:else if pushNotifications.status === 'blocked'}
               <p class="text-sm text-amber-400">
                 Notifications are blocked. Enable them in your browser or OS settings, then reload.
               </p>
-            {:else if pushStatus === 'subscribed'}
+            {:else if pushNotifications.status === 'configured'}
               <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <p class="text-sm text-emerald-400">Notifications are enabled on this device.</p>
                 <button
@@ -3986,6 +3926,25 @@
                   {testingPush ? 'Sending…' : 'Send test'}
                 </button>
               </div>
+            {:else if pushNotifications.status === 'checking'}
+              <p class="text-sm text-zinc-500">Checking this browser…</p>
+            {:else if pushNotifications.status === 'server-unconfigured'}
+              <p class="text-sm text-amber-400">
+                Generate VAPID keys below before enabling notifications on this browser.
+              </p>
+            {:else if pushNotifications.status === 'disabled'}
+              <p class="text-sm text-zinc-500">Push notifications are disabled in demo mode.</p>
+            {:else if pushNotifications.status === 'error'}
+              <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <p class="text-sm text-amber-400">Notification setup could not be checked.</p>
+                <button
+                  type="button"
+                  onclick={() => void pushNotifications.refresh()}
+                  class="shrink-0 rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm text-zinc-300 transition hover:bg-white/10"
+                >
+                  Retry
+                </button>
+              </div>
             {:else}
               <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
@@ -3995,10 +3954,10 @@
                 <button
                   type="button"
                   onclick={() => void enablePushNotifications()}
-                  disabled={subscribing}
+                  disabled={pushNotifications.configuring}
                   class="shrink-0 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-50"
                 >
-                  {subscribing ? 'Enabling…' : 'Enable notifications'}
+                  {pushNotifications.configuring ? 'Enabling…' : 'Enable notifications'}
                 </button>
               </div>
             {/if}

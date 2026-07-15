@@ -26,6 +26,7 @@
     ShieldCheck,
     ChevronRight,
     ChevronDown,
+    BellRing,
     X
   } from 'lucide-svelte'
   import { resolve } from '$app/paths'
@@ -41,6 +42,7 @@
   import { clearOfflineCache } from '$lib/offline-cache'
   import { SvelteMap, SvelteSet } from 'svelte/reactivity'
   import { toast } from 'svelte-sonner'
+  import { pushNotifications } from '$lib/push-notifications.svelte'
 
   type ImapMailbox = { path: string; name: string; delimiter: string }
   type SavedSearch = { id: number; name: string; query: string }
@@ -59,6 +61,7 @@
       savedSearches: SavedSearch[]
       user: { name: string; email: string } | null
       simplifiedView: boolean
+      demoMode: boolean
     }
     children: import('svelte').Snippet
   }
@@ -289,6 +292,7 @@
   let refreshing = $state(false)
   let drafts = $state<DraftListRow[]>([])
   let draftsError = $state<string | null>(null)
+  let pushNoticeError = $state<string | null>(null)
   let savedSearches = $state<SavedSearch[]>([])
   let smartFolderError = $state<string | null>(null)
   type ModalState = {
@@ -721,47 +725,13 @@
     items[idx]?.scrollIntoView({ block: 'nearest' })
   })
 
-  async function registerPush() {
-    const startedAt = now()
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return
+  async function enablePushFromNotice() {
+    pushNoticeError = null
     try {
-      // Register SW first so it's ready before we ask for permission
-      const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' })
-      await navigator.serviceWorker.ready
-
-      const res = await fetch('/api/push/vapid-public-key')
-      const { publicKey } = await res.json()
-      if (!publicKey) return
-
-      // Permission must be requested from a user gesture on iOS 16.4+.
-      // If already granted we can subscribe silently.
-      if (Notification.permission === 'default') {
-        const permission = await Notification.requestPermission()
-        if (permission !== 'granted') return
-      } else if (Notification.permission !== 'granted') {
-        return
-      }
-
-      let sub = await reg.pushManager.getSubscription()
-      if (!sub) {
-        sub = await reg.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: publicKey
-        })
-      }
-
-      // Always re-post to the server — the server upserts so this is idempotent.
-      // This ensures the subscription is registered even after a DB reset or
-      // VAPID key regeneration that left the browser with a stale record.
-      await fetch('/api/push/subscribe', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(sub.toJSON())
-      })
-    } catch {
-      // push is optional
-    } finally {
-      logPerf('registerPush', { ms: Math.round(now() - startedAt) })
+      const enabled = await pushNotifications.enable()
+      if (enabled) toast('Push notifications enabled')
+    } catch (error) {
+      pushNoticeError = errorMessageFromUnknown(error, 'Failed to enable notifications.')
     }
   }
 
@@ -773,7 +743,8 @@
       scheduleNextSyncPoll()
     })
     void fetchDrafts('mount')
-    void registerPush()
+    if (data.demoMode) pushNotifications.disable()
+    else void pushNotifications.refresh()
 
     const onSavedSearchesChanged = () => {
       void fetchSavedSearches()
@@ -1464,6 +1435,72 @@
           </button>
         </div>
       </div>
+
+      {#if pushNotifications.status === 'unconfigured' || pushNotifications.status === 'blocked' || pushNotifications.status === 'server-unconfigured' || pushNotifications.status === 'error'}
+        <div
+          role="status"
+          aria-live="polite"
+          class="border-y border-amber-400/20 bg-amber-500/10 px-4 py-2.5 sm:px-6"
+        >
+          <div
+            class="mx-auto flex max-w-6xl flex-col items-stretch gap-3 sm:flex-row sm:items-center"
+          >
+            <div class="flex min-w-0 flex-1 items-start gap-3">
+              <BellRing size={17} class="mt-0.5 shrink-0 text-amber-300" />
+              <div class="min-w-0 flex-1">
+                <p class="text-sm font-medium text-amber-100">
+                  {pushNotifications.status === 'blocked'
+                    ? 'Browser notifications are blocked.'
+                    : pushNotifications.status === 'server-unconfigured'
+                      ? 'Push notifications need server setup.'
+                      : pushNotifications.status === 'error'
+                        ? 'Notification setup could not be checked.'
+                        : 'Get notified when new mail arrives.'}
+                </p>
+                <p class="mt-0.5 text-xs text-amber-100/70">
+                  {pushNoticeError ??
+                    (pushNotifications.status === 'blocked'
+                      ? 'Allow notifications in this browser’s site settings, then reload.'
+                      : pushNotifications.status === 'server-unconfigured'
+                        ? 'Generate VAPID keys before setting up this browser.'
+                        : pushNotifications.status === 'error'
+                          ? 'Check the connection and try again.'
+                          : 'Set up this browser to receive push notifications.')}
+                </p>
+              </div>
+            </div>
+
+            {#if pushNotifications.status === 'unconfigured'}
+              <button
+                type="button"
+                onclick={() => void enablePushFromNotice()}
+                disabled={pushNotifications.configuring}
+                class="self-start rounded-lg bg-amber-300 px-3 py-1.5 text-sm font-semibold text-amber-950 transition hover:bg-amber-200 disabled:opacity-50 sm:self-auto"
+              >
+                {pushNotifications.configuring ? 'Setting up…' : 'Set up'}
+              </button>
+            {:else if pushNotifications.status === 'error'}
+              <button
+                type="button"
+                onclick={() => {
+                  pushNoticeError = null
+                  void pushNotifications.refresh()
+                }}
+                class="self-start rounded-lg border border-amber-300/30 px-3 py-1.5 text-sm font-medium text-amber-100 hover:bg-amber-300/10 sm:self-auto"
+              >
+                Retry
+              </button>
+            {:else}
+              <a
+                href={resolve('/settings/notifications')}
+                class="self-start rounded-lg border border-amber-300/30 px-3 py-1.5 text-sm font-medium text-amber-100 hover:bg-amber-300/10 sm:self-auto"
+              >
+                Review setup
+              </a>
+            {/if}
+          </div>
+        </div>
+      {/if}
 
       <div class="min-h-0 flex-1 overflow-hidden">
         {@render children()}
