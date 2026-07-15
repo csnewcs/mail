@@ -51,10 +51,23 @@ export type SmtpConfig = {
   from: string
 }
 
-export type OidcConfig = {
-  discoveryUrl: string
+export type OAuthClientConfig = {
   clientId: string
   clientSecret: string
+}
+
+export type OidcConfig = OAuthClientConfig & {
+  issuer: string
+  authorizationUrl: string
+  tokenUrl: string
+  userInfoUrl: string
+  legacyDiscoveryUrl: string
+}
+
+export type AuthenticationConfig = {
+  github: OAuthClientConfig
+  discord: OAuthClientConfig
+  oidc: OidcConfig
 }
 
 export type MailConfigRow = typeof mailConfig.$inferSelect
@@ -215,6 +228,8 @@ function parseUndoSendSeconds(value: unknown): number {
 }
 
 let cachedRow: MailConfigRow | null | undefined = undefined // undefined = not loaded yet
+let cachedRowLoadedAt = 0
+const CONFIG_CACHE_TTL_MS = 5_000
 
 async function loadConfigRow(): Promise<MailConfigRow | null> {
   const [row] = await db.select().from(mailConfig).where(eq(mailConfig.id, 1)).limit(1)
@@ -226,26 +241,40 @@ async function loadConfigRow(): Promise<MailConfigRow | null> {
     if (row.smtpPassword && !isEncryptedSecret(row.smtpPassword)) {
       updates.smtpPassword = encryptSecret(row.smtpPassword)
     }
+    if (row.githubClientSecret && !isEncryptedSecret(row.githubClientSecret)) {
+      updates.githubClientSecret = encryptSecret(row.githubClientSecret)
+    }
+    if (row.discordClientSecret && !isEncryptedSecret(row.discordClientSecret)) {
+      updates.discordClientSecret = encryptSecret(row.discordClientSecret)
+    }
+    if (row.oidcClientSecret && !isEncryptedSecret(row.oidcClientSecret)) {
+      updates.oidcClientSecret = encryptSecret(row.oidcClientSecret)
+    }
 
     if (Object.keys(updates).length > 0) {
       await db.update(mailConfig).set(updates).where(eq(mailConfig.id, 1))
       cachedRow = { ...row, ...updates }
+      cachedRowLoadedAt = Date.now()
       return cachedRow
     }
   }
 
   cachedRow = row ?? null
+  cachedRowLoadedAt = Date.now()
   return cachedRow ?? null
 }
 
 /** Call after saving settings to bust the cache. */
 export function invalidateConfigCache() {
   cachedRow = undefined
+  cachedRowLoadedAt = 0
 }
 
 async function getRow(): Promise<MailConfigRow | null> {
   if (isDemoModeEnabled()) return null
-  if (cachedRow !== undefined) return cachedRow
+  if (cachedRow !== undefined && Date.now() - cachedRowLoadedAt < CONFIG_CACHE_TTL_MS) {
+    return cachedRow
+  }
   return loadConfigRow()
 }
 
@@ -334,16 +363,71 @@ export async function getOidcConfig(): Promise<OidcConfig> {
   if (isDemoModeEnabled()) return getDemoOidcConfig()
   const row = await getRow()
   return {
-    discoveryUrl: row?.oidcDiscoveryUrl || env.OIDC_DISCOVERY_URL || '',
+    issuer: row?.oidcIssuer || env.OIDC_ISSUER || '',
+    authorizationUrl: row?.oidcAuthorizationUrl || env.OIDC_AUTHORIZATION_URL || '',
+    tokenUrl: row?.oidcTokenUrl || env.OIDC_TOKEN_URL || '',
+    userInfoUrl: row?.oidcUserInfoUrl || env.OIDC_USER_INFO_URL || '',
+    legacyDiscoveryUrl: row?.oidcDiscoveryUrl || env.OIDC_DISCOVERY_URL || '',
     clientId: row?.oidcClientId || env.OIDC_CLIENT_ID || '',
-    clientSecret: row?.oidcClientSecret || env.OIDC_CLIENT_SECRET || ''
+    clientSecret: row?.oidcClientSecret
+      ? decryptSecret(row.oidcClientSecret)
+      : env.OIDC_CLIENT_SECRET || ''
   }
+}
+
+export async function getAuthenticationConfig(): Promise<AuthenticationConfig> {
+  if (isDemoModeEnabled()) {
+    return {
+      github: { clientId: '', clientSecret: '' },
+      discord: { clientId: '', clientSecret: '' },
+      oidc: getDemoOidcConfig()
+    }
+  }
+
+  const row = await getRow()
+  return {
+    github: {
+      clientId: row?.githubClientId || env.GITHUB_CLIENT_ID || '',
+      clientSecret: row?.githubClientSecret
+        ? decryptSecret(row.githubClientSecret)
+        : env.GITHUB_CLIENT_SECRET || ''
+    },
+    discord: {
+      clientId: row?.discordClientId || env.DISCORD_CLIENT_ID || '',
+      clientSecret: row?.discordClientSecret
+        ? decryptSecret(row.discordClientSecret)
+        : env.DISCORD_CLIENT_SECRET || ''
+    },
+    oidc: await getOidcConfig()
+  }
+}
+
+export function isOAuthClientConfigured(config: OAuthClientConfig): boolean {
+  return Boolean(config.clientId && config.clientSecret)
+}
+
+export function isOidcConfigComplete(oidc: OidcConfig): boolean {
+  if (!oidc.clientId || !oidc.clientSecret) return false
+  const manualValues = [oidc.issuer, oidc.authorizationUrl, oidc.tokenUrl, oidc.userInfoUrl]
+  return manualValues.some(Boolean) ? manualValues.every(Boolean) : Boolean(oidc.legacyDiscoveryUrl)
 }
 
 export async function isOidcConfigured(): Promise<boolean> {
   if (isDemoModeEnabled()) return true
-  const oidc = await getOidcConfig()
-  return !!(oidc.discoveryUrl && oidc.clientId && oidc.clientSecret)
+  return isOidcConfigComplete(await getOidcConfig())
+}
+
+export async function isAuthenticationConfigured(): Promise<boolean> {
+  if (isDemoModeEnabled()) return true
+  const row = await getRow()
+  if (row?.authSetupComplete || row?.authUserId) return true
+
+  const auth = await getAuthenticationConfig()
+  return (
+    isOAuthClientConfigured(auth.github) ||
+    isOAuthClientConfigured(auth.discord) ||
+    isOidcConfigComplete(auth.oidc)
+  )
 }
 
 export async function getSignature(): Promise<string> {
@@ -429,10 +513,34 @@ export async function getDisplayConfig() {
       maskSmtp(config, index === 0 && row?.smtpHost ? 'db' : row?.smtpServers ? 'db' : 'env')
     ),
     oidc: {
-      discoveryUrl: row?.oidcDiscoveryUrl ?? env.OIDC_DISCOVERY_URL ?? '',
+      issuer: row?.oidcIssuer ?? env.OIDC_ISSUER ?? '',
+      authorizationUrl: row?.oidcAuthorizationUrl ?? env.OIDC_AUTHORIZATION_URL ?? '',
+      tokenUrl: row?.oidcTokenUrl ?? env.OIDC_TOKEN_URL ?? '',
+      userInfoUrl: row?.oidcUserInfoUrl ?? env.OIDC_USER_INFO_URL ?? '',
       clientId: row?.oidcClientId ?? env.OIDC_CLIENT_ID ?? '',
       clientSecret: row?.oidcClientSecret ? '••••••••' : env.OIDC_CLIENT_SECRET ? '••••••••' : '',
-      source: row?.oidcDiscoveryUrl || row?.oidcClientId ? 'db' : 'env'
+      source:
+        row?.oidcIssuer || row?.oidcAuthorizationUrl || row?.oidcClientId
+          ? ('db' as const)
+          : ('env' as const)
+    },
+    github: {
+      clientId: row?.githubClientId ?? env.GITHUB_CLIENT_ID ?? '',
+      clientSecret: row?.githubClientSecret
+        ? '••••••••'
+        : env.GITHUB_CLIENT_SECRET
+          ? '••••••••'
+          : '',
+      source: row?.githubClientId ? ('db' as const) : ('env' as const)
+    },
+    discord: {
+      clientId: row?.discordClientId ?? env.DISCORD_CLIENT_ID ?? '',
+      clientSecret: row?.discordClientSecret
+        ? '••••••••'
+        : env.DISCORD_CLIENT_SECRET
+          ? '••••••••'
+          : '',
+      source: row?.discordClientId ? ('db' as const) : ('env' as const)
     },
     secretStorage: getSecretStorageStatus(),
     quietHours

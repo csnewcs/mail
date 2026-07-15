@@ -1,7 +1,9 @@
 # ✉️ mail
 
 <!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
+
 [![All Contributors](https://img.shields.io/badge/all_contributors-2-orange.svg?style=flat-square)](#contributors-)
+
 <!-- ALL-CONTRIBUTORS-BADGE:END -->
 
 The next webmail client
@@ -10,7 +12,7 @@ The next webmail client
 
 Try it now: https://maildemo.pmh.codes/
 
-The demo runs with preloaded data and resets automatically, so you can explore the full UI without configuring PostgreSQL, IMAP, SMTP, or OIDC.
+The demo runs with preloaded data and resets automatically, so you can explore the full UI without configuring PostgreSQL, mail servers, or authentication.
 
 ## Screenshots
 
@@ -24,7 +26,7 @@ The demo runs with preloaded data and resets automatically, so you can explore t
 ## Focused on
 
 - Single user only
-- Primary OIDC support
+- Password, passkey, GitHub, Discord, and OpenID Connect authentication
 - Simple and Modern design
 - Fast, SSR-first
 
@@ -67,12 +69,33 @@ For local container deployment, `docker compose up --build` starts both `web` an
 
 `.env` template is [here](./.env.example)
 
+## Authentication
+
+The app remains single-user. During first-time setup, configure a password, GitHub,
+Discord, manual OpenID Connect, or any combination of them. The first successful
+external-provider login claims the installation when no password owner was created.
+After ownership is established, additional providers must be explicitly linked from Settings.
+
+Register these callback URLs when enabling providers:
+
+- GitHub: `<ORIGIN>/api/auth/callback/github`
+- Discord: `<ORIGIN>/api/auth/callback/discord`
+- OpenID Connect: `<ORIGIN>/api/auth/oauth2/callback/oidc`
+
+OpenID Connect uses explicit issuer, authorization, token, and user-info URLs. A
+discovery URL is not needed. Existing `OIDC_DISCOVERY_URL` deployments remain supported
+as a migration fallback, but new installations should use the manual endpoint variables
+shown in `.env.example` or the setup UI. Passkeys can be enrolled under Settings after
+the first sign-in. Authenticated users can also explicitly link a configured external
+provider from Settings, including providers that use a different account email.
+Authentication credentials and provider endpoints are intentionally excluded from settings backups.
+
 ## Secret storage
 
-Set `MAIL_SECRET_KEY` in both the web and worker environments to encrypt IMAP and
-SMTP passwords saved from the settings UI. Existing plaintext database passwords
-remain readable without the key, and migrate to `enc:v1` encrypted values after
-the key is configured and settings are loaded.
+Set `MAIL_SECRET_KEY` in both the web and worker environments to encrypt mail passwords
+and authentication provider client secrets saved from the settings UI. Existing plaintext
+database secrets remain readable without the key, and migrate to `enc:v1` encrypted values
+after the key is configured and settings are loaded.
 
 ## Contributors
 

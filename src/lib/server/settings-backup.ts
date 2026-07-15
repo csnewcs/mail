@@ -42,9 +42,16 @@ export type SettingsBackup = {
       from?: string
     }>
     oidc?: {
+      /** @deprecated Legacy discovery-based backups remain importable. */
       discoveryUrl?: string
+      issuer?: string
+      authorizationUrl?: string
+      tokenUrl?: string
+      userInfoUrl?: string
       clientId?: string
     }
+    github?: { clientId?: string }
+    discord?: { clientId?: string }
     signature?: string
   }
   preferences?: {
@@ -213,6 +220,8 @@ export function validateSettingsBackup(value: unknown): {
       errors
     )
     const oidcObject = optionalObject(settingsObject.oidc, 'settings.oidc', errors)
+    const githubObject = optionalObject(settingsObject.github, 'settings.github', errors)
+    const discordObject = optionalObject(settingsObject.discord, 'settings.discord', errors)
 
     if (imapObject) {
       settings.imap = {
@@ -267,7 +276,27 @@ export function validateSettingsBackup(value: unknown): {
     if (oidcObject) {
       settings.oidc = {
         discoveryUrl: optionalString(oidcObject.discoveryUrl, 'settings.oidc.discoveryUrl', errors),
+        issuer: optionalString(oidcObject.issuer, 'settings.oidc.issuer', errors),
+        authorizationUrl: optionalString(
+          oidcObject.authorizationUrl,
+          'settings.oidc.authorizationUrl',
+          errors
+        ),
+        tokenUrl: optionalString(oidcObject.tokenUrl, 'settings.oidc.tokenUrl', errors),
+        userInfoUrl: optionalString(oidcObject.userInfoUrl, 'settings.oidc.userInfoUrl', errors),
         clientId: optionalString(oidcObject.clientId, 'settings.oidc.clientId', errors)
+      }
+    }
+
+    if (githubObject) {
+      settings.github = {
+        clientId: optionalString(githubObject.clientId, 'settings.github.clientId', errors)
+      }
+    }
+
+    if (discordObject) {
+      settings.discord = {
+        clientId: optionalString(discordObject.clientId, 'settings.discord.clientId', errors)
       }
     }
 

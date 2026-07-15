@@ -2,14 +2,14 @@ import type { Handle, HandleServerError } from '@sveltejs/kit'
 import { redirect } from '@sveltejs/kit'
 import { sequence } from '@sveltejs/kit/hooks'
 import { building } from '$app/environment'
-import { getAuth } from '$lib/server/auth'
-import { getOidcConfig, isOidcConfigured } from '$lib/server/config'
+import { getAuth, invalidateAuth } from '$lib/server/auth'
+import { isAuthenticationConfigured } from '$lib/server/config'
 import { repairThreadKeys } from '$lib/server/mail'
 import { logServerError } from '$lib/server/perf'
 import { runMigrations } from '$lib/server/db'
 import { svelteKitHandler } from 'better-auth/svelte-kit'
 import { getDemoAuthSession, isDemoModeEnabled } from '$lib/server/demo'
-import { isOidcUserAuthorized } from '$lib/server/oidc-access'
+import { claimAuthUser, getAuthUserId } from '$lib/server/auth-owner'
 
 // Warm up eagerly so the first request doesn't pay initialization costs
 if (!building) {
@@ -47,9 +47,9 @@ const handleBetterAuth: Handle = async ({ event, resolve }) => {
     return resolve(event)
   }
 
-  // Before anything else: if OIDC isn't configured, funnel to setup
+  // Before anything else: if no owner or external provider exists, funnel to setup.
   if (!building) {
-    const configured = await isOidcConfigured()
+    const configured = await isAuthenticationConfigured()
     if (!configured) {
       const isSetup = SETUP_PATHS.some((p) => path.startsWith(p))
       if (!isSetup) redirect(302, '/setup')
@@ -59,11 +59,14 @@ const handleBetterAuth: Handle = async ({ event, resolve }) => {
 
   const auth = await getAuth()
   const authSession = await auth.api.getSession({ headers: event.request.headers })
-  const oidc = authSession ? await getOidcConfig() : null
-  const session =
-    authSession && oidc && (await isOidcUserAuthorized(oidc.discoveryUrl, authSession.user.id))
-      ? authSession
-      : null
+  const ownerId = authSession ? await getAuthUserId() : null
+  const authorized = authSession
+    ? ownerId
+      ? ownerId === authSession.user.id
+      : await claimAuthUser(authSession.user.id)
+    : false
+  if (authSession && !ownerId && authorized) invalidateAuth()
+  const session = authSession && authorized ? authSession : null
 
   if (session) {
     event.locals.session = session.session
@@ -74,6 +77,14 @@ const handleBetterAuth: Handle = async ({ event, resolve }) => {
 
   if (!session && !isPublic) {
     redirect(302, '/login')
+  }
+
+  if (path === '/api/auth/sign-up/email') {
+    return new Response('Public sign-up is disabled.', { status: 403 })
+  }
+
+  if (path === '/api/auth/passkey/delete-passkey') {
+    return new Response('Use the protected passkey settings endpoint.', { status: 403 })
   }
 
   return svelteKitHandler({ event, resolve, auth, building })

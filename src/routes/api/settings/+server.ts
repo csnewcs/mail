@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types'
 import { env } from '$env/dynamic/private'
 import { db } from '$lib/server/db'
 import {
+  account,
   mailConfig,
   mailSignature,
   mailboxCatalog,
@@ -10,10 +11,17 @@ import {
   mailMessageMailbox,
   mailThreadSummary,
   mailThreadMetadata,
-  mailboxNotificationSetting
+  mailboxNotificationSetting,
+  passkey
 } from '$lib/server/db/schema'
-import { eq, or, ilike } from 'drizzle-orm'
-import { getDisplayConfig, getOidcConfig, invalidateConfigCache } from '$lib/server/config'
+import { and, eq, ilike, inArray, or } from 'drizzle-orm'
+import {
+  getAuthenticationConfig,
+  getDisplayConfig,
+  invalidateConfigCache,
+  isOAuthClientConfigured,
+  isOidcConfigComplete
+} from '$lib/server/config'
 import { invalidateAuth } from '$lib/server/auth'
 import {
   getCompactModeEnabled,
@@ -102,6 +110,15 @@ function normalizeServerPayload(
   })
 }
 
+function isAllowedAuthUrl(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' || (url.protocol === 'http:' && url.hostname === 'localhost')
+  } catch {
+    return false
+  }
+}
+
 export const GET: RequestHandler = async ({ cookies }) => {
   const config = await getDisplayConfig()
   return json({
@@ -179,7 +196,12 @@ export const POST: RequestHandler = async (event) => {
 
   let shouldPersistConfig = false
   const [existingConfig] = await db.select().from(mailConfig).where(eq(mailConfig.id, 1)).limit(1)
-  const currentOidc = await getOidcConfig()
+  const currentAuthentication = await getAuthenticationConfig()
+  const currentOidc = currentAuthentication.oidc
+  const nextGithub = { ...currentAuthentication.github }
+  const nextDiscord = { ...currentAuthentication.discord }
+  const nextOidc = { ...currentOidc }
+  let oidcIdentityChanged = false
 
   const values: typeof mailConfig.$inferInsert = {
     id: 1,
@@ -221,7 +243,10 @@ export const POST: RequestHandler = async (event) => {
       if (!oldName) continue
 
       const newServer = imapServers.find((s) => s.id === oldId)
-      console.log(`[DEBUG-CLEANUP] Checking server: ${oldName} (id: ${oldId}). Found match:`, JSON.stringify(newServer))
+      console.log(
+        `[DEBUG-CLEANUP] Checking server: ${oldName} (id: ${oldId}). Found match:`,
+        JSON.stringify(newServer)
+      )
       if (!newServer || newServer.name !== oldName) {
         console.log(`[DEBUG-CLEANUP] Found obsolete server name: ${oldName}`)
         obsoleteServerNames.push(oldName)
@@ -291,23 +316,163 @@ export const POST: RequestHandler = async (event) => {
     values.signature = signatureProfiles.find((signature) => signature.isDefault)?.html ?? ''
   }
 
-  // OIDC fields
+  // Authentication providers
+  if (body.github) {
+    shouldPersistConfig = true
+    const github = body.github as Record<string, unknown>
+    const clientSecret = typeof github.clientSecret === 'string' ? github.clientSecret.trim() : ''
+    const submittedSecret = Boolean(clientSecret && clientSecret !== '••••••••')
+    if (typeof github.clientId === 'string') {
+      const clientId = github.clientId.trim()
+      values.githubClientId = clientId || null
+      nextGithub.clientId = clientId || env.GITHUB_CLIENT_ID || ''
+    }
+    if (submittedSecret) {
+      nextGithub.clientSecret = clientSecret
+      values.githubClientSecret = encryptSecret(clientSecret)
+    }
+    if (
+      nextGithub.clientId &&
+      nextGithub.clientId !== currentAuthentication.github.clientId &&
+      !submittedSecret
+    ) {
+      return error(400, 'Enter the GitHub Client Secret when changing the Client ID.')
+    }
+    if (nextGithub.clientId && !nextGithub.clientSecret) {
+      return error(400, 'GitHub Client ID and Client Secret are both required.')
+    }
+  }
+
+  if (body.discord) {
+    shouldPersistConfig = true
+    const discord = body.discord as Record<string, unknown>
+    const clientSecret = typeof discord.clientSecret === 'string' ? discord.clientSecret.trim() : ''
+    const submittedSecret = Boolean(clientSecret && clientSecret !== '••••••••')
+    if (typeof discord.clientId === 'string') {
+      const clientId = discord.clientId.trim()
+      values.discordClientId = clientId || null
+      nextDiscord.clientId = clientId || env.DISCORD_CLIENT_ID || ''
+    }
+    if (submittedSecret) {
+      nextDiscord.clientSecret = clientSecret
+      values.discordClientSecret = encryptSecret(clientSecret)
+    }
+    if (
+      nextDiscord.clientId &&
+      nextDiscord.clientId !== currentAuthentication.discord.clientId &&
+      !submittedSecret
+    ) {
+      return error(400, 'Enter the Discord Client Secret when changing the Client ID.')
+    }
+    if (nextDiscord.clientId && !nextDiscord.clientSecret) {
+      return error(400, 'Discord Client ID and Client Secret are both required.')
+    }
+  }
+
   if (body.oidc) {
     shouldPersistConfig = true
     const oidc = body.oidc as Record<string, unknown>
-    if (typeof oidc.discoveryUrl === 'string') {
-      const discoveryUrl = oidc.discoveryUrl.trim()
-      values.oidcDiscoveryUrl = discoveryUrl || null
-      const nextDiscoveryUrl = discoveryUrl || env.OIDC_DISCOVERY_URL || ''
-      if (nextDiscoveryUrl !== currentOidc.discoveryUrl) values.oidcSubject = null
+    const clientSecret = typeof oidc.clientSecret === 'string' ? oidc.clientSecret.trim() : ''
+    const submittedSecret = Boolean(clientSecret && clientSecret !== '••••••••')
+    if (typeof oidc.issuer === 'string') {
+      const issuer = oidc.issuer.trim()
+      nextOidc.issuer = issuer || env.OIDC_ISSUER || ''
+      values.oidcIssuer = issuer || null
+      if (issuer !== currentOidc.issuer) {
+        values.oidcSubject = null
+      }
+      if (issuer) {
+        values.oidcDiscoveryUrl = null
+        nextOidc.legacyDiscoveryUrl = ''
+      }
     }
-    if (typeof oidc.clientId === 'string') values.oidcClientId = oidc.clientId.trim() || null
+    if (typeof oidc.authorizationUrl === 'string') {
+      const authorizationUrl = oidc.authorizationUrl.trim()
+      nextOidc.authorizationUrl = authorizationUrl || env.OIDC_AUTHORIZATION_URL || ''
+      values.oidcAuthorizationUrl = authorizationUrl || null
+    }
+    if (typeof oidc.tokenUrl === 'string') {
+      const tokenUrl = oidc.tokenUrl.trim()
+      nextOidc.tokenUrl = tokenUrl || env.OIDC_TOKEN_URL || ''
+      values.oidcTokenUrl = tokenUrl || null
+    }
+    if (typeof oidc.userInfoUrl === 'string') {
+      const userInfoUrl = oidc.userInfoUrl.trim()
+      nextOidc.userInfoUrl = userInfoUrl || env.OIDC_USER_INFO_URL || ''
+      values.oidcUserInfoUrl = userInfoUrl || null
+    }
+    if (typeof oidc.clientId === 'string') {
+      const clientId = oidc.clientId.trim()
+      nextOidc.clientId = clientId || env.OIDC_CLIENT_ID || ''
+      values.oidcClientId = clientId || null
+    }
+    if (submittedSecret) {
+      nextOidc.clientSecret = clientSecret
+      values.oidcClientSecret = encryptSecret(clientSecret)
+    }
+
+    const currentIdentity = currentOidc.issuer || currentOidc.legacyDiscoveryUrl
+    const nextOidcIdentity = nextOidc.issuer || nextOidc.legacyDiscoveryUrl
+    oidcIdentityChanged = Boolean(currentIdentity && currentIdentity !== nextOidcIdentity)
+    if (oidcIdentityChanged) {
+      values.oidcSubject = null
+      values.oidcSubjectDiscoveryUrl = nextOidcIdentity || null
+    }
+    const manualUrls = [
+      nextOidc.issuer,
+      nextOidc.authorizationUrl,
+      nextOidc.tokenUrl,
+      nextOidc.userInfoUrl
+    ]
+    const visibleValues = [...manualUrls, nextOidc.clientId]
+    if (visibleValues.some(Boolean) && !isOidcConfigComplete(nextOidc)) {
+      return error(400, 'All manual OIDC endpoints, Client ID, and Client Secret are required.')
+    }
     if (
-      typeof oidc.clientSecret === 'string' &&
-      oidc.clientSecret.trim() &&
-      oidc.clientSecret !== '••••••••'
+      isOidcConfigComplete(nextOidc) &&
+      (oidcIdentityChanged || nextOidc.clientId !== currentOidc.clientId) &&
+      !submittedSecret
     ) {
-      values.oidcClientSecret = oidc.clientSecret
+      return error(400, 'Enter the OIDC Client Secret when changing the issuer or Client ID.')
+    }
+    if (manualUrls.some(Boolean) && !manualUrls.every(isAllowedAuthUrl)) {
+      return error(400, 'OIDC endpoints must be valid HTTPS URLs.')
+    }
+  }
+
+  if (body.github || body.discord || body.oidc) {
+    const userId = event.locals.user?.id
+    const [[credential], [registeredPasskey], linkedAccounts] = userId
+      ? await Promise.all([
+          db
+            .select({ id: account.id })
+            .from(account)
+            .where(
+              and(
+                eq(account.userId, userId),
+                inArray(account.providerId, ['credential', 'email-password'])
+              )
+            )
+            .limit(1),
+          db.select({ id: passkey.id }).from(passkey).where(eq(passkey.userId, userId)).limit(1),
+          db
+            .select({ providerId: account.providerId })
+            .from(account)
+            .where(
+              and(
+                eq(account.userId, userId),
+                inArray(account.providerId, ['github', 'discord', 'oidc'])
+              )
+            )
+        ])
+      : [[], [], []]
+    const linkedProviderIds = new Set(linkedAccounts.map((linked) => linked.providerId))
+    const hasExternalProvider =
+      (isOAuthClientConfigured(nextGithub) && linkedProviderIds.has('github')) ||
+      (isOAuthClientConfigured(nextDiscord) && linkedProviderIds.has('discord')) ||
+      (isOidcConfigComplete(nextOidc) && !oidcIdentityChanged && linkedProviderIds.has('oidc'))
+    if (!credential && !registeredPasskey && !hasExternalProvider) {
+      return error(400, 'At least one login method must remain configured.')
     }
   }
 
@@ -331,9 +496,16 @@ export const POST: RequestHandler = async (event) => {
 
   try {
     if (shouldPersistConfig) {
-      await db.insert(mailConfig).values(values).onConflictDoUpdate({
-        target: mailConfig.id,
-        set: values
+      await db.transaction(async (tx) => {
+        await tx.insert(mailConfig).values(values).onConflictDoUpdate({
+          target: mailConfig.id,
+          set: values
+        })
+        if (oidcIdentityChanged && event.locals.user) {
+          await tx
+            .delete(account)
+            .where(and(eq(account.userId, event.locals.user.id), eq(account.providerId, 'oidc')))
+        }
       })
     }
 
@@ -344,42 +516,44 @@ export const POST: RequestHandler = async (event) => {
           const prefix = `${name}/`
           console.log(`[DEBUG-CLEANUP] Cleaning up database records for prefix: ${prefix}`)
 
-          await tx.delete(mailboxCatalog).where(
-            or(
-              ilike(mailboxCatalog.path, name),
-              ilike(mailboxCatalog.path, `${prefix}%`)
+          await tx
+            .delete(mailboxCatalog)
+            .where(or(ilike(mailboxCatalog.path, name), ilike(mailboxCatalog.path, `${prefix}%`)))
+          await tx
+            .delete(mailboxSync)
+            .where(or(ilike(mailboxSync.mailbox, name), ilike(mailboxSync.mailbox, `${prefix}%`)))
+          await tx
+            .delete(mailMessageMailbox)
+            .where(
+              or(
+                ilike(mailMessageMailbox.mailbox, name),
+                ilike(mailMessageMailbox.mailbox, `${prefix}%`)
+              )
             )
-          )
-          await tx.delete(mailboxSync).where(
-            or(
-              ilike(mailboxSync.mailbox, name),
-              ilike(mailboxSync.mailbox, `${prefix}%`)
+          await tx
+            .delete(mailThreadSummary)
+            .where(
+              or(
+                ilike(mailThreadSummary.mailbox, name),
+                ilike(mailThreadSummary.mailbox, `${prefix}%`)
+              )
             )
-          )
-          await tx.delete(mailMessageMailbox).where(
-            or(
-              ilike(mailMessageMailbox.mailbox, name),
-              ilike(mailMessageMailbox.mailbox, `${prefix}%`)
+          await tx
+            .delete(mailThreadMetadata)
+            .where(
+              or(
+                ilike(mailThreadMetadata.mailbox, name),
+                ilike(mailThreadMetadata.mailbox, `${prefix}%`)
+              )
             )
-          )
-          await tx.delete(mailThreadSummary).where(
-            or(
-              ilike(mailThreadSummary.mailbox, name),
-              ilike(mailThreadSummary.mailbox, `${prefix}%`)
+          await tx
+            .delete(mailboxNotificationSetting)
+            .where(
+              or(
+                ilike(mailboxNotificationSetting.mailbox, name),
+                ilike(mailboxNotificationSetting.mailbox, `${prefix}%`)
+              )
             )
-          )
-          await tx.delete(mailThreadMetadata).where(
-            or(
-              ilike(mailThreadMetadata.mailbox, name),
-              ilike(mailThreadMetadata.mailbox, `${prefix}%`)
-            )
-          )
-          await tx.delete(mailboxNotificationSetting).where(
-            or(
-              ilike(mailboxNotificationSetting.mailbox, name),
-              ilike(mailboxNotificationSetting.mailbox, `${prefix}%`)
-            )
-          )
         }
       })
     }
@@ -472,12 +646,16 @@ export const POST: RequestHandler = async (event) => {
           sections: {
             imap: Boolean(body.imap),
             smtp: Boolean(body.smtp),
+            github: Boolean(body.github),
+            discord: Boolean(body.discord),
             oidc: Boolean(body.oidc),
             signature: typeof body.signature === 'string'
           },
           secretsUpdated: {
             imapPassword: 'imapPassword' in values,
             smtpPassword: 'smtpPassword' in values,
+            githubClientSecret: 'githubClientSecret' in values,
+            discordClientSecret: 'discordClientSecret' in values,
             oidcClientSecret: 'oidcClientSecret' in values
           }
         },
@@ -490,6 +668,8 @@ export const POST: RequestHandler = async (event) => {
     logServerError('api.settings.POST.save', err, {
       hasImap: Boolean(body.imap),
       hasSmtp: Boolean(body.smtp),
+      hasGithub: Boolean(body.github),
+      hasDiscord: Boolean(body.discord),
       hasOidc: Boolean(body.oidc),
       density: normalizeDensityPreference(body.density) ?? 'unchanged',
       compactMode: typeof body.compactMode === 'boolean' ? body.compactMode : 'unchanged',

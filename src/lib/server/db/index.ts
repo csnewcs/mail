@@ -5,9 +5,6 @@ import postgres from 'postgres'
 import * as schema from './schema'
 import { env } from '$env/dynamic/private'
 
-// Disable TLS certificate verification globally (self-signed certs on internal mail servers)
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
-
 const databaseUrl = env.DATABASE_URL
 const demoMode = ['1', 'true', 'yes', 'on'].includes(env.DEMO_MODE?.trim().toLowerCase() ?? '')
 
@@ -21,7 +18,10 @@ const client =
     : postgres(databaseUrl!, {
         max: Number(env.PG_POOL_MAX ?? 10),
         idle_timeout: 20,
-        connect_timeout: 10
+        connect_timeout: 10,
+        ...(env.PG_TLS_REJECT_UNAUTHORIZED?.trim().toLowerCase() === 'false'
+          ? { ssl: { rejectUnauthorized: false } }
+          : {})
       })
 
 const db = demoMode

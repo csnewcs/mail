@@ -23,11 +23,11 @@ export function getSecretStorageStatus() {
   return isSecretEncryptionConfigured()
     ? {
         configured: true,
-        text: 'IMAP and SMTP passwords saved in settings are encrypted at rest.'
+        text: 'Mail passwords and authentication provider secrets are encrypted at rest.'
       }
     : {
         configured: false,
-        text: 'Set MAIL_SECRET_KEY to encrypt newly saved IMAP and SMTP passwords.'
+        text: 'Set MAIL_SECRET_KEY to encrypt newly saved mail and authentication secrets.'
       }
 }
 

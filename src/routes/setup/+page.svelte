@@ -46,60 +46,188 @@
       }}
       class="space-y-8"
     >
-      <!-- OIDC -->
+      <!-- Authentication -->
       <section class="space-y-4">
         <h2 class="text-xs font-semibold tracking-widest text-zinc-500 uppercase">
-          Identity Provider (OIDC)
+          Authentication
         </h2>
+        <p class="text-sm text-zinc-500">
+          Configure at least one method. You can add passkeys after your first sign-in.
+        </p>
 
-        <div class="space-y-3">
+        <div class="space-y-4 rounded-xl border border-white/8 bg-white/3 p-4">
           <div>
-            <label class="mb-1 block text-xs text-zinc-400" for="discoveryUrl"
-              >Discovery URL <span class="text-red-400">*</span></label
-            >
-            <input
-              id="discoveryUrl"
-              name="discoveryUrl"
-              type="url"
-              required
-              placeholder="https://auth.example.com/…/.well-known/openid-configuration"
-              class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
-            />
+            <p class="text-sm font-medium text-zinc-200">Email and password</p>
+            <p class="mt-1 text-xs text-zinc-600">
+              Optional when an external provider is configured.
+            </p>
           </div>
           <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
-              <label class="mb-1 block text-xs text-zinc-400" for="clientId"
-                >Client ID <span class="text-red-400">*</span></label
+              <label class="mb-1 block text-xs text-zinc-400" for="adminName">Name</label>
+              <input
+                id="adminName"
+                name="adminName"
+                type="text"
+                autocomplete="name"
+                placeholder="Your name"
+                class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label class="mb-1 block text-xs text-zinc-400" for="adminEmail">Email</label>
+              <input
+                id="adminEmail"
+                name="adminEmail"
+                type="email"
+                autocomplete="email"
+                placeholder="you@example.com"
+                class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+            <div class="sm:col-span-2">
+              <label class="mb-1 block text-xs text-zinc-400" for="adminPassword">Password</label>
+              <input
+                id="adminPassword"
+                name="adminPassword"
+                type="password"
+                minlength="8"
+                maxlength="128"
+                autocomplete="new-password"
+                placeholder="At least 8 characters"
+                class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div class="space-y-3 rounded-xl border border-white/8 bg-white/3 p-4">
+            <div>
+              <p class="text-sm font-medium text-zinc-200">GitHub OAuth</p>
+              <p class="mt-1 text-xs text-zinc-600">
+                Callback: <span class="font-mono">{data.origin}/api/auth/callback/github</span>
+              </p>
+            </div>
+            <input
+              name="githubClientId"
+              type="text"
+              aria-label="GitHub Client ID"
+              placeholder="Client ID"
+              class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+            />
+            <input
+              name="githubClientSecret"
+              type="password"
+              autocomplete="new-password"
+              aria-label="GitHub Client Secret"
+              placeholder="Client secret"
+              class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+
+          <div class="space-y-3 rounded-xl border border-white/8 bg-white/3 p-4">
+            <div>
+              <p class="text-sm font-medium text-zinc-200">Discord OAuth</p>
+              <p class="mt-1 text-xs text-zinc-600">
+                Callback: <span class="font-mono">{data.origin}/api/auth/callback/discord</span>
+              </p>
+            </div>
+            <input
+              name="discordClientId"
+              type="text"
+              aria-label="Discord Client ID"
+              placeholder="Client ID"
+              class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+            />
+            <input
+              name="discordClientSecret"
+              type="password"
+              autocomplete="new-password"
+              aria-label="Discord Client Secret"
+              placeholder="Client secret"
+              class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+        </div>
+
+        <div class="space-y-3 rounded-xl border border-white/8 bg-white/3 p-4">
+          <div>
+            <p class="text-sm font-medium text-zinc-200">OpenID Connect</p>
+            <p class="mt-1 text-xs text-zinc-600">
+              Manual endpoints only. Callback:
+              <span class="font-mono">{data.origin}/api/auth/oauth2/callback/oidc</span>
+            </p>
+          </div>
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div class="sm:col-span-2">
+              <label class="mb-1 block text-xs text-zinc-400" for="oidcIssuer">Issuer</label>
+              <input
+                id="oidcIssuer"
+                name="oidcIssuer"
+                type="url"
+                placeholder="https://auth.example.com"
+                class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label class="mb-1 block text-xs text-zinc-400" for="oidcAuthorizationUrl"
+                >Authorization URL</label
               >
               <input
-                id="clientId"
-                name="clientId"
+                id="oidcAuthorizationUrl"
+                name="oidcAuthorizationUrl"
+                type="url"
+                placeholder="https://auth.example.com/authorize"
+                class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label class="mb-1 block text-xs text-zinc-400" for="oidcTokenUrl">Token URL</label>
+              <input
+                id="oidcTokenUrl"
+                name="oidcTokenUrl"
+                type="url"
+                placeholder="https://auth.example.com/token"
+                class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label class="mb-1 block text-xs text-zinc-400" for="oidcUserInfoUrl"
+                >User info URL</label
+              >
+              <input
+                id="oidcUserInfoUrl"
+                name="oidcUserInfoUrl"
+                type="url"
+                placeholder="https://auth.example.com/userinfo"
+                class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label class="mb-1 block text-xs text-zinc-400" for="oidcClientId">Client ID</label>
+              <input
+                id="oidcClientId"
+                name="oidcClientId"
                 type="text"
-                required
                 placeholder="your-client-id"
                 class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
               />
             </div>
-            <div>
-              <label class="mb-1 block text-xs text-zinc-400" for="clientSecret"
-                >Client Secret <span class="text-red-400">*</span></label
+            <div class="sm:col-span-2">
+              <label class="mb-1 block text-xs text-zinc-400" for="oidcClientSecret"
+                >Client Secret</label
               >
               <input
-                id="clientSecret"
-                name="clientSecret"
+                id="oidcClientSecret"
+                name="oidcClientSecret"
                 type="password"
-                required
                 autocomplete="new-password"
-                placeholder="••••••••"
+                placeholder="Client secret"
                 class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
               />
             </div>
           </div>
-          <p class="text-xs text-zinc-600">
-            Redirect URI: <span class="font-mono text-zinc-500"
-              >{data.origin}/api/auth/oauth2/callback/oidc</span
-            >
-          </p>
         </div>
       </section>
 

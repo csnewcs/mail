@@ -46,8 +46,22 @@ type DemoDisplayConfig = {
   imapServers: Array<DemoConfigSection & { mailbox: string; pollSeconds: number }>
   smtp: DemoConfigSection & { from: string; undoSendSeconds: number }
   smtpServers: Array<DemoConfigSection & { from: string }>
+  github: {
+    clientId: string
+    clientSecret: string
+    source: string
+  }
+  discord: {
+    clientId: string
+    clientSecret: string
+    source: string
+  }
   oidc: {
-    discoveryUrl: string
+    issuer: string
+    authorizationUrl: string
+    tokenUrl: string
+    userInfoUrl: string
+    legacyDiscoveryUrl: string
     clientId: string
     clientSecret: string
     source: string
@@ -224,8 +238,22 @@ const demoConfig: DemoDisplayConfig = {
   get smtpServers() {
     return [this.smtp]
   },
+  github: {
+    clientId: '',
+    clientSecret: '',
+    source: 'demo'
+  },
+  discord: {
+    clientId: '',
+    clientSecret: '',
+    source: 'demo'
+  },
   oidc: {
-    discoveryUrl: 'https://demo-identity.local/.well-known/openid-configuration',
+    issuer: 'https://demo-identity.local',
+    authorizationUrl: 'https://demo-identity.local/authorize',
+    tokenUrl: 'https://demo-identity.local/token',
+    userInfoUrl: 'https://demo-identity.local/userinfo',
+    legacyDiscoveryUrl: '',
     clientId: 'demo-client',
     clientSecret: 'demo-secret',
     source: 'demo'
@@ -603,6 +631,8 @@ const initialDemoConfig = {
   signatureProfiles: demoConfig.signatureProfiles.map((signature) => ({ ...signature })),
   imap: { ...demoConfig.imap },
   smtp: { ...demoConfig.smtp },
+  github: { ...demoConfig.github },
+  discord: { ...demoConfig.discord },
   oidc: { ...demoConfig.oidc }
 }
 const initialDemoMessages = demoMessages.map((message) => ({
@@ -650,6 +680,8 @@ function resetDemoState() {
   }))
   Object.assign(demoConfig.imap, initialDemoConfig.imap)
   Object.assign(demoConfig.smtp, initialDemoConfig.smtp)
+  Object.assign(demoConfig.github, initialDemoConfig.github)
+  Object.assign(demoConfig.discord, initialDemoConfig.discord)
   Object.assign(demoConfig.oidc, initialDemoConfig.oidc)
 
   demoMessages = initialDemoMessages.map((message) => ({
@@ -791,6 +823,8 @@ export function getDemoDisplayConfig() {
     imapServers: [imap],
     smtp,
     smtpServers: [smtp],
+    github: { ...demoConfig.github },
+    discord: { ...demoConfig.discord },
     oidc: { ...demoConfig.oidc, clientSecret: '••••••••' },
     secretStorage: { configured: false, text: 'Demo mode' },
     quietHours: { ...demoConfig.quietHours }
@@ -877,8 +911,10 @@ export function saveDemoSettings(body: Record<string, unknown>) {
 
   if (body.oidc && typeof body.oidc === 'object') {
     const oidc = body.oidc as Record<string, unknown>
-    if (typeof oidc.discoveryUrl === 'string') {
-      demoConfig.oidc.discoveryUrl = oidc.discoveryUrl.trim() || demoConfig.oidc.discoveryUrl
+    for (const key of ['issuer', 'authorizationUrl', 'tokenUrl', 'userInfoUrl'] as const) {
+      if (typeof oidc[key] === 'string') {
+        demoConfig.oidc[key] = oidc[key].trim() || demoConfig.oidc[key]
+      }
     }
     if (typeof oidc.clientId === 'string')
       demoConfig.oidc.clientId = oidc.clientId.trim() || demoConfig.oidc.clientId
@@ -888,6 +924,20 @@ export function saveDemoSettings(body: Record<string, unknown>) {
       oidc.clientSecret !== '••••••••'
     ) {
       demoConfig.oidc.clientSecret = oidc.clientSecret
+    }
+  }
+
+  for (const provider of ['github', 'discord'] as const) {
+    const value = body[provider]
+    if (!value || typeof value !== 'object') continue
+    const config = value as Record<string, unknown>
+    if (typeof config.clientId === 'string') demoConfig[provider].clientId = config.clientId.trim()
+    if (
+      typeof config.clientSecret === 'string' &&
+      config.clientSecret.trim() &&
+      config.clientSecret !== '••••••••'
+    ) {
+      demoConfig[provider].clientSecret = config.clientSecret
     }
   }
 

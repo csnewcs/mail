@@ -2,6 +2,7 @@
   import { goto, invalidateAll } from '$app/navigation'
   import { resolve } from '$app/paths'
   import { page } from '$app/state'
+  import { authClient } from '$lib/auth-client'
   import ActionModal from '$lib/components/ActionModal.svelte'
   import CustomSelect, { type SelectOption } from '$lib/components/CustomSelect.svelte'
   import ErrorDialog from '$lib/components/ErrorDialog.svelte'
@@ -72,7 +73,7 @@
     { id: 'imap', label: 'IMAP' },
     { id: 'smtp', label: 'SMTP' },
     { id: 'mailboxes', label: 'Mailboxes' },
-    { id: 'oidc', label: 'OIDC' },
+    { id: 'oidc', label: 'Authentication' },
     { id: 'sessions', label: 'Sessions' },
     { id: 'interface', label: 'Interface' },
     { id: 'privacy', label: 'Privacy' },
@@ -154,8 +155,13 @@
         imapServers: Array<ConfigSection & { mailbox: string; pollSeconds: number }>
         smtp: ConfigSection & { from: string }
         smtpServers: Array<ConfigSection & { from: string }>
+        github: OAuthProviderForm
+        discord: OAuthProviderForm
         oidc: {
-          discoveryUrl: string
+          issuer: string
+          authorizationUrl: string
+          tokenUrl: string
+          userInfoUrl: string
           clientId: string
           clientSecret: string
           source: 'db' | 'env'
@@ -171,7 +177,15 @@
           timezone: string
         }
       }
+      demoMode: boolean
       imapMailboxes: ImapMailbox[]
+      loginMethods: {
+        password: boolean
+        passkey: boolean
+        github: boolean
+        discord: boolean
+        oidc: boolean
+      }
       origin: string
       simplifiedView: boolean
       threadModeOnPageLoad: boolean
@@ -202,6 +216,11 @@
     formKey: string
   }
   type OidcForm = Props['data']['config']['oidc'] & { clientSecret: string }
+  type OAuthProviderForm = {
+    clientId: string
+    clientSecret: string
+    source: 'db' | 'env'
+  }
   type SignatureProfile = {
     id?: number
     name: string
@@ -221,6 +240,8 @@
     imapServers = $state<ImapServerForm[]>([])
     smtp = $state({} as SmtpForm)
     smtpServers = $state<SmtpServerForm[]>([])
+    github = $state({} as OAuthProviderForm)
+    discord = $state({} as OAuthProviderForm)
     oidc = $state({} as OidcForm)
     signature = $state('')
     signatureProfiles = $state<SignatureProfile[]>([])
@@ -265,6 +286,8 @@
         password: '',
         formKey: createServerFormKey('smtp')
       }))
+      this.github = { ...config.github, clientSecret: '' }
+      this.discord = { ...config.discord, clientSecret: '' }
       this.oidc = { ...config.oidc, clientSecret: '' }
       this.signature = config.signature
       this.signatureProfiles =
@@ -297,10 +320,6 @@
     return settingsSections.some((item) => item.id === section) ? section : 'imap'
   })
 
-  function settingsSectionClass(id: string) {
-    return selectedSettingsSection === id ? 'space-y-4' : 'hidden'
-  }
-
   // Editable form state must not be derived from `data`: autosave can invalidate route data,
   // and rebuilding this object while typing remounts inputs and drops focus.
   let form = untrack(
@@ -321,6 +340,8 @@
   let imapServers = $derived(form.imapServers)
   let smtp = $derived(form.smtp)
   let smtpServers = $derived(form.smtpServers)
+  let github = $derived(form.github)
+  let discord = $derived(form.discord)
   let oidc = $derived(form.oidc)
   let simplifiedView = $derived(form.simplifiedView)
   let threadModeOnPageLoad = $derived(form.threadModeOnPageLoad)
@@ -421,6 +442,14 @@
     isCurrent: boolean
   }
 
+  type PasskeyItem = {
+    id: string
+    name?: string
+    deviceType: string
+    backedUp: boolean
+    createdAt?: string
+  }
+
   type CleanupRule = {
     id: number
     enabled: boolean
@@ -466,6 +495,18 @@
   let sessions = $state<ManagedSession[]>([])
   let loadingSessions = $state(false)
   let revokingSessionId = $state<string | null>(null)
+  let passkeys = $state<PasskeyItem[]>([])
+  let loadingPasskeys = $state(false)
+  let addingPasskey = $state(false)
+  let deletingPasskeyId = $state<string | null>(null)
+  let passkeyName = $state('')
+  let linkedProviders = $state<string[]>([])
+  let linkingProvider = $state<string | null>(null)
+  let hasPassword = $state(untrack(() => data.loginMethods.password))
+  let currentPassword = $state('')
+  let newPassword = $state('')
+  let confirmPassword = $state('')
+  let savingPassword = $state(false)
   let actionModal = $state<{
     title: string
     message?: string
@@ -732,6 +773,119 @@
       errorDialogMessage = errorMessageFromUnknown(error, 'Failed to load sessions.')
     } finally {
       loadingSessions = false
+    }
+  }
+
+  async function loadPasskeys() {
+    loadingPasskeys = true
+    try {
+      const res = await fetch('/api/auth/passkey/list-user-passkeys')
+      if (!res.ok) throw new Error(await readErrorMessage(res, 'Failed to load passkeys.'))
+      passkeys = (await res.json()) as PasskeyItem[]
+    } catch (error) {
+      errorDialogMessage = errorMessageFromUnknown(error, 'Failed to load passkeys.')
+    } finally {
+      loadingPasskeys = false
+    }
+  }
+
+  async function loadLinkedProviders() {
+    try {
+      const res = await fetch('/api/auth/list-accounts')
+      if (!res.ok) return
+      const accounts = (await res.json()) as Array<{ providerId: string }>
+      linkedProviders = accounts.map((account) => account.providerId)
+    } catch {
+      // Provider linking remains optional if account metadata cannot be loaded.
+    }
+  }
+
+  async function linkProvider(provider: 'github' | 'discord' | 'oidc') {
+    linkingProvider = provider
+    try {
+      const generic = provider === 'oidc'
+      const res = await fetch(generic ? '/api/auth/oauth2/link' : '/api/auth/link-social', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(
+          generic
+            ? {
+                providerId: provider,
+                callbackURL: '/settings/oidc',
+                errorCallbackURL: '/settings/oidc'
+              }
+            : {
+                provider,
+                callbackURL: '/settings/oidc',
+                errorCallbackURL: '/settings/oidc'
+              }
+        )
+      })
+      if (!res.ok) throw new Error(await readErrorMessage(res, 'Failed to link provider.'))
+      const payload = (await res.json()) as { url?: string }
+      if (!payload.url) throw new Error('No provider redirect URL returned.')
+      window.location.href = payload.url
+    } catch (error) {
+      errorDialogMessage = errorMessageFromUnknown(error, 'Failed to link provider.')
+      linkingProvider = null
+    }
+  }
+
+  async function addPasskey() {
+    addingPasskey = true
+    try {
+      const result = await authClient.passkey.addPasskey({ name: passkeyName.trim() || undefined })
+      if (result.error) throw new Error(result.error.message || 'Failed to add passkey.')
+      passkeyName = ''
+      await loadPasskeys()
+      toast('Passkey added')
+    } catch (error) {
+      errorDialogMessage = errorMessageFromUnknown(error, 'Failed to add passkey.')
+    } finally {
+      addingPasskey = false
+    }
+  }
+
+  async function deletePasskey(id: string) {
+    deletingPasskeyId = id
+    try {
+      const res = await fetch(`/api/settings/passkeys/${encodeURIComponent(id)}`, {
+        method: 'DELETE'
+      })
+      if (!res.ok) throw new Error(await readErrorMessage(res, 'Failed to delete passkey.'))
+      await loadPasskeys()
+      toast('Passkey deleted')
+    } catch (error) {
+      errorDialogMessage = errorMessageFromUnknown(error, 'Failed to delete passkey.')
+    } finally {
+      deletingPasskeyId = null
+    }
+  }
+
+  async function savePassword(event: SubmitEvent) {
+    event.preventDefault()
+    if (newPassword !== confirmPassword) {
+      errorDialogMessage = 'The new passwords do not match.'
+      return
+    }
+
+    savingPassword = true
+    try {
+      const res = await fetch('/api/settings/password', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ currentPassword, newPassword })
+      })
+      if (!res.ok) throw new Error(await readErrorMessage(res, 'Failed to save password.'))
+      hasPassword = true
+      currentPassword = ''
+      newPassword = ''
+      confirmPassword = ''
+      toast('Password updated')
+    } catch (error) {
+      errorDialogMessage = errorMessageFromUnknown(error, 'Failed to save password.')
+    } finally {
+      savingPassword = false
     }
   }
 
@@ -1245,6 +1399,8 @@
     void loadFilters()
     void loadTemplates()
     void loadSessions()
+    if (!data.demoMode) void loadPasskeys()
+    if (!data.demoMode) void loadLinkedProviders()
     void loadCleanupRules()
     void loadSenderRules()
     void loadMailboxNotificationRules()
@@ -1376,7 +1532,6 @@
       imapServers,
       smtp,
       smtpServers,
-      oidc,
       signature: defaultSignatureHtml(),
       signatureProfiles,
       simplifiedView,
@@ -1583,7 +1738,9 @@
           imapServers: imapServerPayload(),
           smtp: smtpPrimaryUsesLegacyFields ? smtp : undefined,
           smtpServers: smtpServerPayload(),
-          oidc,
+          github: options.manual ? github : undefined,
+          discord: options.manual ? discord : undefined,
+          oidc: options.manual ? oidc : undefined,
           signature: defaultSignatureHtml(),
           signatureProfiles,
           simplifiedView,
@@ -1617,6 +1774,8 @@
         for (const server of imapServers) server.password = ''
         smtp.password = ''
         for (const server of smtpServers) server.password = ''
+        github.clientSecret = ''
+        discord.clientSecret = ''
         oidc.clientSecret = ''
         lastSavedSettingsSnapshot = settingsSnapshot()
       }
@@ -2571,66 +2730,332 @@
 
         <div class="border-t border-white/8"></div>
 
-        <!-- OIDC -->
+        <!-- Authentication -->
         <section class={selectedSettingsSection === 'oidc' ? 'space-y-4' : 'hidden'}>
-          <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
             <h2 class="text-sm font-semibold tracking-widest text-zinc-500 uppercase">
-              OIDC — Authentication
+              Authentication
             </h2>
-            {#if data.config.oidc.source === 'db'}
-              <span
-                class="rounded-full bg-blue-600/20 px-2 py-0.5 text-xs font-medium text-blue-400"
-                >from DB</span
-              >
-            {:else if data.config.oidc.discoveryUrl || data.config.oidc.clientId}
-              <span
-                class="rounded-full bg-zinc-700/60 px-2 py-0.5 text-xs font-medium text-zinc-400"
-                >from env</span
-              >
-            {/if}
+            <p class="mt-1 text-sm text-zinc-500">
+              Configure sign-in providers and recovery methods for the installation owner.
+            </p>
           </div>
 
-          <div class="space-y-3">
-            <div>
-              <label class="mb-1 block text-xs text-zinc-400" for="oidc-discovery"
-                >Discovery URL</label
+          {#if !data.demoMode}
+            <div class="grid gap-4 xl:grid-cols-2">
+              <form
+                class="space-y-3 rounded-xl border border-white/8 bg-white/3 p-4"
+                onsubmit={savePassword}
               >
-              <input
-                id="oidc-discovery"
-                type="url"
-                placeholder="https://auth.example.com/…/.well-known/openid-configuration"
-                bind:value={oidc.discoveryUrl}
-                class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
-              />
+                <div>
+                  <p class="text-sm font-medium text-zinc-200">
+                    {hasPassword ? 'Change password' : 'Enable password login'}
+                  </p>
+                  <p class="mt-1 text-xs text-zinc-600">
+                    Use the email address shown in your profile when signing in.
+                  </p>
+                </div>
+                {#if hasPassword}
+                  <input
+                    type="password"
+                    bind:value={currentPassword}
+                    autocomplete="current-password"
+                    required
+                    aria-label="Current password"
+                    placeholder="Current password"
+                    class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                  />
+                {/if}
+                <input
+                  type="password"
+                  bind:value={newPassword}
+                  autocomplete="new-password"
+                  minlength="8"
+                  maxlength="128"
+                  required
+                  aria-label="New password"
+                  placeholder="New password"
+                  class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                />
+                <input
+                  type="password"
+                  bind:value={confirmPassword}
+                  autocomplete="new-password"
+                  minlength="8"
+                  maxlength="128"
+                  required
+                  aria-label="Confirm new password"
+                  placeholder="Confirm new password"
+                  class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                />
+                <button
+                  type="submit"
+                  disabled={savingPassword}
+                  class="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-50"
+                >
+                  {savingPassword ? 'Saving…' : hasPassword ? 'Change password' : 'Set password'}
+                </button>
+              </form>
+
+              <div class="space-y-3 rounded-xl border border-white/8 bg-white/3 p-4">
+                <div>
+                  <p class="text-sm font-medium text-zinc-200">Passkeys</p>
+                  <p class="mt-1 text-xs text-zinc-600">
+                    Register this device, a password manager, or a hardware security key.
+                  </p>
+                </div>
+                <div class="flex gap-2">
+                  <input
+                    type="text"
+                    bind:value={passkeyName}
+                    maxlength="64"
+                    aria-label="Passkey name"
+                    placeholder="Passkey name (optional)"
+                    class="min-w-0 flex-1 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onclick={addPasskey}
+                    disabled={addingPasskey}
+                    class="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-50"
+                  >
+                    {addingPasskey ? 'Adding…' : 'Add'}
+                  </button>
+                </div>
+                {#if loadingPasskeys}
+                  <p class="text-xs text-zinc-600">Loading passkeys…</p>
+                {:else if passkeys.length === 0}
+                  <p class="text-xs text-zinc-600">No passkeys registered.</p>
+                {:else}
+                  <div class="space-y-2">
+                    {#each passkeys as registeredPasskey (registeredPasskey.id)}
+                      <div
+                        class="flex items-center justify-between gap-3 rounded-lg border border-white/8 bg-black/15 px-3 py-2"
+                      >
+                        <div class="min-w-0">
+                          <p class="truncate text-sm text-zinc-300">
+                            {registeredPasskey.name || 'Unnamed passkey'}
+                          </p>
+                          <p class="text-xs text-zinc-600">
+                            {registeredPasskey.deviceType}{registeredPasskey.backedUp
+                              ? ' · synced'
+                              : ''}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onclick={() => deletePasskey(registeredPasskey.id)}
+                          disabled={deletingPasskeyId === registeredPasskey.id}
+                          class="text-xs text-rose-400 transition hover:text-rose-300 disabled:opacity-50"
+                        >
+                          {deletingPasskeyId === registeredPasskey.id ? 'Removing…' : 'Remove'}
+                        </button>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
             </div>
-            <div>
-              <label class="mb-1 block text-xs text-zinc-400" for="oidc-client-id">Client ID</label>
-              <input
-                id="oidc-client-id"
-                type="text"
-                placeholder="your-client-id"
-                bind:value={oidc.clientId}
-                class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
-              />
-            </div>
-            <div>
-              <label class="mb-1 block text-xs text-zinc-400" for="oidc-client-secret"
-                >Client Secret</label
-              >
-              <input
-                id="oidc-client-secret"
-                type="password"
-                autocomplete="new-password"
-                placeholder={data.config.oidc.clientSecret ? '(unchanged)' : 'Enter client secret'}
-                bind:value={oidc.clientSecret}
-                class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
-              />
-            </div>
-            <p class="text-xs text-zinc-500">
-              Redirect URI to register with your provider: <span class="font-mono text-zinc-400"
-                >{data.origin}/api/auth/oauth2/callback/oidc</span
-              >
+          {:else}
+            <p class="rounded-xl border border-white/8 bg-white/3 p-4 text-sm text-zinc-500">
+              Password and passkey management are unavailable in demo mode.
             </p>
+          {/if}
+
+          <div class="grid gap-4 xl:grid-cols-2">
+            <div class="space-y-3 rounded-xl border border-white/8 bg-white/3 p-4">
+              <div class="flex items-start justify-between gap-2">
+                <div>
+                  <p class="text-sm font-medium text-zinc-200">GitHub OAuth</p>
+                  <p class="mt-1 text-xs text-zinc-600">
+                    Callback: <span class="font-mono">{data.origin}/api/auth/callback/github</span>
+                  </p>
+                </div>
+                {#if data.config.github.clientId}
+                  <span class="rounded-full bg-blue-600/15 px-2 py-0.5 text-xs text-blue-300">
+                    {data.config.github.source}
+                  </span>
+                {/if}
+              </div>
+              <input
+                type="text"
+                bind:value={github.clientId}
+                aria-label="GitHub Client ID"
+                placeholder="Client ID"
+                class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+              />
+              <input
+                type="password"
+                bind:value={github.clientSecret}
+                autocomplete="new-password"
+                aria-label="GitHub Client Secret"
+                placeholder={data.config.github.clientSecret ? '(unchanged)' : 'Client secret'}
+                class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+              />
+              {#if data.loginMethods.github && !data.demoMode}
+                <button
+                  type="button"
+                  onclick={() => linkProvider('github')}
+                  disabled={linkedProviders.includes('github') || linkingProvider !== null}
+                  class="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-300 transition hover:bg-white/10 disabled:opacity-50"
+                >
+                  {linkedProviders.includes('github')
+                    ? 'GitHub linked'
+                    : linkingProvider === 'github'
+                      ? 'Redirecting…'
+                      : 'Link GitHub account'}
+                </button>
+              {/if}
+            </div>
+
+            <div class="space-y-3 rounded-xl border border-white/8 bg-white/3 p-4">
+              <div class="flex items-start justify-between gap-2">
+                <div>
+                  <p class="text-sm font-medium text-zinc-200">Discord OAuth</p>
+                  <p class="mt-1 text-xs text-zinc-600">
+                    Callback: <span class="font-mono">{data.origin}/api/auth/callback/discord</span>
+                  </p>
+                </div>
+                {#if data.config.discord.clientId}
+                  <span class="rounded-full bg-blue-600/15 px-2 py-0.5 text-xs text-blue-300">
+                    {data.config.discord.source}
+                  </span>
+                {/if}
+              </div>
+              <input
+                type="text"
+                bind:value={discord.clientId}
+                aria-label="Discord Client ID"
+                placeholder="Client ID"
+                class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+              />
+              <input
+                type="password"
+                bind:value={discord.clientSecret}
+                autocomplete="new-password"
+                aria-label="Discord Client Secret"
+                placeholder={data.config.discord.clientSecret ? '(unchanged)' : 'Client secret'}
+                class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+              />
+              {#if data.loginMethods.discord && !data.demoMode}
+                <button
+                  type="button"
+                  onclick={() => linkProvider('discord')}
+                  disabled={linkedProviders.includes('discord') || linkingProvider !== null}
+                  class="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-300 transition hover:bg-white/10 disabled:opacity-50"
+                >
+                  {linkedProviders.includes('discord')
+                    ? 'Discord linked'
+                    : linkingProvider === 'discord'
+                      ? 'Redirecting…'
+                      : 'Link Discord account'}
+                </button>
+              {/if}
+            </div>
+          </div>
+
+          <div class="space-y-3 rounded-xl border border-white/8 bg-white/3 p-4">
+            <div class="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <p class="text-sm font-medium text-zinc-200">OpenID Connect</p>
+                <p class="mt-1 text-xs text-zinc-600">
+                  Configure explicit endpoints; discovery is not required. Callback:
+                  <span class="font-mono">{data.origin}/api/auth/oauth2/callback/oidc</span>
+                </p>
+              </div>
+              {#if data.config.oidc.clientId}
+                <span class="rounded-full bg-blue-600/15 px-2 py-0.5 text-xs text-blue-300">
+                  {data.config.oidc.source}
+                </span>
+              {/if}
+            </div>
+            <div class="grid gap-3 sm:grid-cols-2">
+              <div class="sm:col-span-2">
+                <label class="mb-1 block text-xs text-zinc-400" for="oidc-issuer">Issuer</label>
+                <input
+                  id="oidc-issuer"
+                  type="url"
+                  placeholder="https://auth.example.com"
+                  bind:value={oidc.issuer}
+                  class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label class="mb-1 block text-xs text-zinc-400" for="oidc-authorization"
+                  >Authorization URL</label
+                >
+                <input
+                  id="oidc-authorization"
+                  type="url"
+                  placeholder="https://auth.example.com/authorize"
+                  bind:value={oidc.authorizationUrl}
+                  class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label class="mb-1 block text-xs text-zinc-400" for="oidc-token">Token URL</label>
+                <input
+                  id="oidc-token"
+                  type="url"
+                  placeholder="https://auth.example.com/token"
+                  bind:value={oidc.tokenUrl}
+                  class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label class="mb-1 block text-xs text-zinc-400" for="oidc-user-info"
+                  >User info URL</label
+                >
+                <input
+                  id="oidc-user-info"
+                  type="url"
+                  placeholder="https://auth.example.com/userinfo"
+                  bind:value={oidc.userInfoUrl}
+                  class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label class="mb-1 block text-xs text-zinc-400" for="oidc-client-id"
+                  >Client ID</label
+                >
+                <input
+                  id="oidc-client-id"
+                  type="text"
+                  placeholder="your-client-id"
+                  bind:value={oidc.clientId}
+                  class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+              <div class="sm:col-span-2">
+                <label class="mb-1 block text-xs text-zinc-400" for="oidc-client-secret"
+                  >Client Secret</label
+                >
+                <input
+                  id="oidc-client-secret"
+                  type="password"
+                  autocomplete="new-password"
+                  placeholder={data.config.oidc.clientSecret
+                    ? '(unchanged)'
+                    : 'Enter client secret'}
+                  bind:value={oidc.clientSecret}
+                  class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+            </div>
+            {#if data.loginMethods.oidc && !data.demoMode}
+              <button
+                type="button"
+                onclick={() => linkProvider('oidc')}
+                disabled={linkedProviders.includes('oidc') || linkingProvider !== null}
+                class="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-300 transition hover:bg-white/10 disabled:opacity-50"
+              >
+                {linkedProviders.includes('oidc')
+                  ? 'OpenID Connect linked'
+                  : linkingProvider === 'oidc'
+                    ? 'Redirecting…'
+                    : 'Link OpenID Connect account'}
+              </button>
+            {/if}
           </div>
         </section>
 

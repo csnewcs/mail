@@ -13,12 +13,16 @@ import {
 } from '$lib/server/preferences'
 import { env } from '$env/dynamic/private'
 import { getImapMailboxes } from '$lib/server/mail'
+import { getLoginMethods } from '$lib/server/auth-methods'
+import { isDemoModeEnabled } from '$lib/server/demo'
 
 export const load: PageServerLoad = async ({ cookies }) => {
   const config = await getDisplayConfig()
-  const imapMailboxes = await getImapMailboxes()
+  const [imapMailboxes, loginMethods] = await Promise.all([getImapMailboxes(), getLoginMethods()])
   return {
     config,
+    demoMode: isDemoModeEnabled(),
+    loginMethods,
     imapMailboxes,
     origin: env.ORIGIN ?? '',
     simplifiedView: getSimplifiedViewEnabled(cookies),
