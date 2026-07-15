@@ -11,8 +11,11 @@
     <meta name="apple-mobile-web-app-title" content="Mail" />
     <script>
       ;(() => {
-        const match = document.cookie.match(/(?:^|; )mail_theme_preference=([^;]+)/)
-        const preference = match ? decodeURIComponent(match[1]) : 'system'
+        const readCookie = (name) => {
+          const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]+)`))
+          return match ? decodeURIComponent(match[1]) : null
+        }
+        const preference = readCookie('mail_theme_preference') ?? 'system'
         const theme =
           preference === 'light' || preference === 'dark'
             ? preference
@@ -22,6 +25,45 @@
         document.documentElement.dataset.theme = theme
         document.documentElement.dataset.themePreference = preference
         document.documentElement.style.colorScheme = theme
+
+        const presets = {
+          midnight: ['135deg', '#0f172a, #1d4ed8, #581c87'],
+          ocean: ['145deg', '#0c4a6e, #2563eb, #06b6d4'],
+          aurora: ['125deg', '#312e81, #7c3aed, #10b981'],
+          sunset: ['120deg', '#7c2d12, #e11d48, #f59e0b'],
+          forest: ['140deg', '#052e16, #047857, #84cc16'],
+          berry: ['135deg', '#4c1d95, #be185d, #fb7185'],
+          ember: ['115deg', '#450a0a, #b91c1c, #f97316'],
+          graphite: ['145deg', '#09090b, #3f3f46, #18181b']
+        }
+        let style = null
+        try {
+          style = JSON.parse(readCookie('mail_theme_style') ?? 'null')
+        } catch {
+          style = null
+        }
+        const preset =
+          style?.preset === 'custom' || Object.hasOwn(presets, style?.preset)
+            ? style.preset
+            : 'midnight'
+        const customColors = Array.isArray(style?.colors)
+          ? style.colors
+              .filter((color) => typeof color === 'string' && /^#[0-9a-f]{6}$/i.test(color))
+              .slice(0, 5)
+          : []
+        const customAngle =
+          Number.isFinite(style?.angle) && style.angle >= 0 && style.angle <= 360
+            ? Math.round(style.angle)
+            : 135
+        const [angle, colors] =
+          preset === 'custom' && customColors.length >= 2
+            ? [`${customAngle}deg`, customColors.join(', ')]
+            : presets[preset === 'custom' ? 'midnight' : preset]
+        document.documentElement.dataset.themePreset = preset
+        document.documentElement.style.setProperty(
+          '--app-theme-gradient',
+          `linear-gradient(${angle}, ${colors})`
+        )
       })()
     </script>
     <link rel="manifest" href="/manifest.json" />

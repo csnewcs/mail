@@ -15,6 +15,10 @@
   --app-selection-text: #ffffff;
   --app-scrollbar-thumb: rgba(255, 255, 255, 0.12);
   --app-scrollbar-thumb-hover: rgba(255, 255, 255, 0.22);
+  --app-theme-gradient: linear-gradient(135deg, #0f172a, #1d4ed8, #581c87);
+  --app-theme-wash: rgba(7, 7, 10, 0.78);
+  --app-sidebar-wash: rgba(6, 6, 9, 0.86);
+  --app-themed-content-bg: rgba(13, 13, 16, 0.82);
 }
 
 :root[data-theme='light'] {
@@ -32,6 +36,9 @@
   --app-selection-text: #0f172a;
   --app-scrollbar-thumb: rgba(15, 23, 42, 0.18);
   --app-scrollbar-thumb-hover: rgba(15, 23, 42, 0.28);
+  --app-theme-wash: rgba(244, 246, 251, 0.82);
+  --app-sidebar-wash: rgba(255, 255, 255, 0.88);
+  --app-themed-content-bg: rgba(255, 255, 255, 0.84);
 }
 
 html {
@@ -40,7 +47,10 @@ html {
 }
 
 body {
-  background: var(--app-bg);
+  background:
+    linear-gradient(var(--app-theme-wash), var(--app-theme-wash)), var(--app-theme-gradient),
+    var(--app-bg);
+  background-attachment: fixed;
   font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -68,15 +78,21 @@ html[data-theme='light'] body {
 }
 
 .app-shell {
-  background: var(--app-bg);
+  background:
+    linear-gradient(var(--app-theme-wash), var(--app-theme-wash)), var(--app-theme-gradient),
+    var(--app-bg);
 }
 
 .app-sidebar {
-  background: var(--app-sidebar-bg);
+  background:
+    linear-gradient(var(--app-sidebar-wash), var(--app-sidebar-wash)), var(--app-theme-gradient),
+    var(--app-sidebar-bg);
 }
 
 .app-mobile-header {
-  background: var(--app-mobile-header-bg);
+  background:
+    linear-gradient(var(--app-sidebar-wash), var(--app-sidebar-wash)), var(--app-theme-gradient),
+    var(--app-mobile-header-bg);
 }
 
 .app-popover {
@@ -863,6 +879,10 @@ section[aria-label^='Notifications'] {
   :root[data-theme='light'] .md\:bg-transparent {
     background-color: transparent !important;
   }
+}
+
+:root[data-theme][data-theme-preset] .app-themed-content {
+  background-color: var(--app-themed-content-bg) !important;
 }
 
 @keyframes route-loading-bar {

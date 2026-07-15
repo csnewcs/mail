@@ -31,6 +31,7 @@ import {
   getMailboxPreferences,
   getSimplifiedViewEnabled,
   getThemePreference,
+  getThemeStyle,
   getThreadModeOnPageLoadEnabled,
   getTranslationTargetLanguage,
   normalizeDensityPreference,
@@ -41,6 +42,7 @@ import {
   setRemoteContentAllowedSenders,
   setSimplifiedViewEnabled,
   setThemePreference,
+  setThemeStyle,
   setThreadModeOnPageLoadEnabled,
   setTranslationTargetLanguage
 } from '$lib/server/preferences'
@@ -128,6 +130,7 @@ export const GET: RequestHandler = async ({ cookies }) => {
     density: getDensityPreference(cookies),
     compactMode: getCompactModeEnabled(cookies),
     themePreference: getThemePreference(cookies),
+    themeStyle: getThemeStyle(cookies),
     translationTargetLanguage: getTranslationTargetLanguage(cookies),
     remoteContent: {
       blockRemoteContent: getBlockRemoteContentEnabled(cookies),
@@ -158,6 +161,10 @@ export const POST: RequestHandler = async (event) => {
 
     if (typeof body.themePreference === 'string') {
       setThemePreference(cookies, body.themePreference)
+    }
+
+    if (body.themeStyle && typeof body.themeStyle === 'object') {
+      setThemeStyle(cookies, body.themeStyle)
     }
 
     const density = normalizeDensityPreference(body.density)
@@ -588,6 +595,10 @@ export const POST: RequestHandler = async (event) => {
       setThemePreference(cookies, body.themePreference)
     }
 
+    if (body.themeStyle && typeof body.themeStyle === 'object') {
+      setThemeStyle(cookies, body.themeStyle)
+    }
+
     const density = normalizeDensityPreference(body.density)
     if (density) {
       setDensityPreference(cookies, density)
@@ -629,6 +640,8 @@ export const POST: RequestHandler = async (event) => {
       typeof body.simplifiedView === 'boolean' ? 'simplifiedView' : null,
       typeof body.threadModeOnPageLoad === 'boolean' ? 'threadModeOnPageLoad' : null,
       typeof body.compactMode === 'boolean' ? 'compactMode' : null,
+      typeof body.themePreference === 'string' ? 'themePreference' : null,
+      body.themeStyle && typeof body.themeStyle === 'object' ? 'themeStyle' : null,
       typeof body.translationTargetLanguage === 'string' ? 'translationTargetLanguage' : null,
       body.mailboxPreferences && typeof body.mailboxPreferences === 'object'
         ? 'mailboxPreferences'

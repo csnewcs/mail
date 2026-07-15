@@ -8,10 +8,14 @@ import { getDisplayConfig, invalidateConfigCache } from '$lib/server/config'
 import {
   getCompactModeEnabled,
   getSimplifiedViewEnabled,
+  getThemePreference,
+  getThemeStyle,
   getThreadModeOnPageLoadEnabled,
   getTranslationTargetLanguage,
   setCompactModeEnabled,
   setSimplifiedViewEnabled,
+  setThemePreference,
+  setThemeStyle,
   setThreadModeOnPageLoadEnabled,
   setTranslationTargetLanguage
 } from '$lib/server/preferences'
@@ -69,6 +73,8 @@ export const GET: RequestHandler = async ({ cookies }) => {
       simplifiedView: getSimplifiedViewEnabled(cookies),
       threadModeOnPageLoad: getThreadModeOnPageLoadEnabled(cookies),
       compactMode: getCompactModeEnabled(cookies),
+      themePreference: getThemePreference(cookies),
+      themeStyle: getThemeStyle(cookies),
       translationTargetLanguage: getTranslationTargetLanguage(cookies)
     },
     filters: filters.map((filter) => ({
@@ -108,6 +114,12 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
       }
       if (backup.preferences.compactMode != null) {
         setCompactModeEnabled(cookies, backup.preferences.compactMode)
+      }
+      if (backup.preferences.themePreference != null) {
+        setThemePreference(cookies, backup.preferences.themePreference)
+      }
+      if (backup.preferences.themeStyle != null) {
+        setThemeStyle(cookies, backup.preferences.themeStyle)
       }
       if (backup.preferences.translationTargetLanguage != null) {
         setTranslationTargetLanguage(cookies, backup.preferences.translationTargetLanguage)
@@ -168,6 +180,12 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
     }
     if (backup.preferences.compactMode != null) {
       setCompactModeEnabled(cookies, backup.preferences.compactMode)
+    }
+    if (backup.preferences.themePreference != null) {
+      setThemePreference(cookies, backup.preferences.themePreference)
+    }
+    if (backup.preferences.themeStyle != null) {
+      setThemeStyle(cookies, backup.preferences.themeStyle)
     }
     if (backup.preferences.translationTargetLanguage != null) {
       setTranslationTargetLanguage(cookies, backup.preferences.translationTargetLanguage)

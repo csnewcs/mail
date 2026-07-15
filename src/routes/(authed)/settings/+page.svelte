@@ -10,6 +10,17 @@
   import { invalidateSignatureCache } from '$lib/composer.svelte'
   import { errorMessageFromUnknown, readErrorMessage } from '$lib/http'
   import { normalizeAllowedSenders } from '$lib/remote-content'
+  import {
+    applyThemeStyle,
+    DEFAULT_THEME_STYLE,
+    getThemeGradient,
+    MAX_THEME_COLORS,
+    MIN_THEME_COLORS,
+    normalizeThemeStyle,
+    THEME_PRESETS,
+    type ThemeStyle,
+    type ThemeStyleId
+  } from '$lib/theme'
   import { onMount, untrack } from 'svelte'
   import { Trash2, Plus, GripVertical, Download, Upload } from 'lucide-svelte'
   import { toast } from 'svelte-sonner'
@@ -192,6 +203,7 @@
       density: DensityPreference
       compactMode: boolean
       themePreference: ThemePreference
+      themeStyle: ThemeStyle
       translationTargetLanguage: string
       remoteContent: {
         blockRemoteContent: boolean
@@ -249,6 +261,7 @@
     threadModeOnPageLoad = $state(true)
     compactMode = $state(false)
     themePreference = $state<ThemePreference>('system')
+    themeStyle = $state<ThemeStyle>(normalizeThemeStyle(null))
     density = $state<DensityPreference>('comfortable')
     translationTargetLanguage = $state('Korean')
     blockRemoteContent = $state(true)
@@ -262,6 +275,7 @@
       threadModeOnPageLoad: boolean,
       compactMode: boolean,
       themePreference: ThemePreference,
+      themeStyle: ThemeStyle,
       density: DensityPreference,
       translationTargetLanguage: string,
       remoteContent: Props['data']['remoteContent'],
@@ -303,6 +317,7 @@
       this.threadModeOnPageLoad = threadModeOnPageLoad
       this.compactMode = compactMode
       this.themePreference = themePreference
+      this.themeStyle = normalizeThemeStyle(themeStyle)
       this.density = density
       this.translationTargetLanguage = translationTargetLanguage
       this.blockRemoteContent = remoteContent.blockRemoteContent
@@ -322,19 +337,22 @@
 
   // Editable form state must not be derived from `data`: autosave can invalidate route data,
   // and rebuilding this object while typing remounts inputs and drops focus.
-  let form = untrack(
-    () =>
-      new SettingsFormState(
-        data.config,
-        data.simplifiedView,
-        data.threadModeOnPageLoad,
-        data.compactMode,
-        data.themePreference,
-        data.density,
-        data.translationTargetLanguage,
-        data.remoteContent,
-        data.mailboxPreferences
-      )
+  let form = $state.raw(
+    untrack(
+      () =>
+        new SettingsFormState(
+          data.config,
+          data.simplifiedView,
+          data.threadModeOnPageLoad,
+          data.compactMode,
+          data.themePreference,
+          data.themeStyle,
+          data.density,
+          data.translationTargetLanguage,
+          data.remoteContent,
+          data.mailboxPreferences
+        )
+    )
   )
   let imap = $derived(form.imap)
   let imapServers = $derived(form.imapServers)
@@ -347,6 +365,7 @@
   let threadModeOnPageLoad = $derived(form.threadModeOnPageLoad)
   let compactMode = $derived(form.compactMode)
   let themePreference = $derived(form.themePreference)
+  let themeStyle = $derived(form.themeStyle)
   let density = $derived(form.density)
   let translationTargetLanguage = $derived(form.translationTargetLanguage)
   let blockRemoteContent = $derived(form.blockRemoteContent)
@@ -372,6 +391,61 @@
     document.documentElement.dataset.theme = resolvedTheme
     document.documentElement.dataset.themePreference = preference
     document.documentElement.style.colorScheme = resolvedTheme
+  }
+
+  function updateThemeStyle(style: ThemeStyle) {
+    form.themeStyle = normalizeThemeStyle(style)
+    applyThemeStyle(form.themeStyle)
+    scheduleAutosave(0)
+  }
+
+  function selectThemeStyle(preset: ThemeStyleId) {
+    updateThemeStyle({ ...themeStyle, preset })
+  }
+
+  function updateThemeColor(index: number, color: string) {
+    const colors = themeStyle.colors.map((currentColor, colorIndex) =>
+      colorIndex === index ? color : currentColor
+    )
+    updateThemeStyle({ ...themeStyle, preset: 'custom', colors })
+  }
+
+  function syncColorInput(node: HTMLInputElement, color: string) {
+    node.value = color
+    return {
+      update(nextColor: string) {
+        node.value = nextColor
+      }
+    }
+  }
+
+  function addThemeColor() {
+    if (themeStyle.colors.length >= MAX_THEME_COLORS) return
+    const fallbackColors = ['#22d3ee', '#f59e0b', '#10b981']
+    const color =
+      fallbackColors[(themeStyle.colors.length - MIN_THEME_COLORS) % fallbackColors.length]
+    updateThemeStyle({ ...themeStyle, preset: 'custom', colors: [...themeStyle.colors, color] })
+  }
+
+  function removeThemeColor(index: number) {
+    if (themeStyle.colors.length <= MIN_THEME_COLORS) return
+    updateThemeStyle({
+      ...themeStyle,
+      preset: 'custom',
+      colors: themeStyle.colors.filter((_color, colorIndex) => colorIndex !== index)
+    })
+  }
+
+  function updateThemeAngle(angle: number) {
+    updateThemeStyle({ ...themeStyle, preset: 'custom', angle })
+  }
+
+  function resetCustomTheme() {
+    updateThemeStyle({
+      ...DEFAULT_THEME_STYLE,
+      colors: [...DEFAULT_THEME_STYLE.colors],
+      preset: 'custom'
+    })
   }
 
   type Filter = {
@@ -1288,10 +1362,30 @@
 
   async function importSettingsBackup() {
     if (!settingsBackupFile) return
+    if (saving) {
+      errorDialogMessage = 'Wait for the current settings save to finish before importing.'
+      return
+    }
+    if (autosaveTimer) {
+      clearTimeout(autosaveTimer)
+      autosaveTimer = null
+    }
 
     importingSettings = true
     settingsBackupMessage = null
     try {
+      if (settingsSnapshot() !== lastSavedSettingsSnapshot) {
+        await save({ duringImport: true })
+        if (settingsSnapshot() !== lastSavedSettingsSnapshot) {
+          throw new Error('Save pending settings before importing a backup.')
+        }
+      }
+
+      const unsavedProviders = {
+        github: { ...github },
+        discord: { ...discord },
+        oidc: { ...oidc }
+      }
       const backup = JSON.parse(await settingsBackupFile.text())
       const res = await fetch('/api/settings/backup', {
         method: 'POST',
@@ -1313,6 +1407,28 @@
       settingsBackupFile = null
       await loadFilters()
       await invalidateAll()
+      form = untrack(
+        () =>
+          new SettingsFormState(
+            data.config,
+            data.simplifiedView,
+            data.threadModeOnPageLoad,
+            data.compactMode,
+            data.themePreference,
+            data.themeStyle,
+            data.density,
+            data.translationTargetLanguage,
+            data.remoteContent,
+            data.mailboxPreferences
+          )
+      )
+      form.github = unsavedProviders.github
+      form.discord = unsavedProviders.discord
+      form.oidc = unsavedProviders.oidc
+      applyThemePreference(form.themePreference)
+      applyThemeStyle(form.themeStyle)
+      invalidateSignatureCache()
+      lastSavedSettingsSnapshot = settingsSnapshot()
     } catch (error) {
       errorDialogMessage = errorMessageFromUnknown(error, 'Failed to import settings.')
     } finally {
@@ -1394,6 +1510,7 @@
 
   onMount(async () => {
     applyThemePreference(data.themePreference)
+    applyThemeStyle(data.themeStyle)
     lastSavedSettingsSnapshot = settingsSnapshot()
     autosaveReady = true
     void loadFilters()
@@ -1538,6 +1655,7 @@
       threadModeOnPageLoad,
       compactMode,
       themePreference,
+      themeStyle,
       density,
       translationTargetLanguage,
       blockRemoteContent,
@@ -1723,8 +1841,14 @@
   }
 
   async function save(
-    options: { manual?: boolean; invalidate?: boolean; clearSecrets?: boolean } = {}
+    options: {
+      manual?: boolean
+      invalidate?: boolean
+      clearSecrets?: boolean
+      duringImport?: boolean
+    } = {}
   ) {
+    if (importingSettings && !options.duringImport) return
     const snapshot = settingsSnapshot()
     saving = true
     if (options.manual) saveSuccess = false
@@ -1747,6 +1871,7 @@
           threadModeOnPageLoad,
           compactMode: density !== 'comfortable',
           themePreference,
+          themeStyle,
           density,
           translationTargetLanguage,
           remoteContent: {
@@ -1793,7 +1918,7 @@
   }
 
   function scheduleAutosave(delayMs = 1000) {
-    if (!autosaveReady) return
+    if (!autosaveReady || importingSettings) return
     const snapshot = settingsSnapshot()
     if (snapshot === lastSavedSettingsSnapshot) return
 
@@ -3162,7 +3287,7 @@
           <h2 class="text-sm font-semibold tracking-widest text-zinc-500 uppercase">Interface</h2>
           <div class="rounded-lg border border-white/8 bg-white/3 p-4">
             <label class="block" for="theme-preference">
-              <p class="text-sm font-medium text-zinc-200">Theme</p>
+              <p class="text-sm font-medium text-zinc-200">Color mode</p>
               <p class="mt-1 text-sm text-zinc-500">
                 Choose a light or dark interface, or follow your system setting.
               </p>
@@ -3175,11 +3300,177 @@
                   applyThemePreference(form.themePreference)
                   autosaveToggleChange()
                 }}
-                ariaLabel="Theme"
+                ariaLabel="Color mode"
                 class="mt-3 w-full sm:max-w-xs"
                 buttonClass="px-3 py-2 text-sm"
               />
             </label>
+          </div>
+          <div class="rounded-lg border border-white/8 bg-white/3 p-4">
+            <div>
+              <p class="text-sm font-medium text-zinc-200">Color theme</p>
+              <p class="mt-1 text-sm text-zinc-500">
+                Choose a preset or combine your own colors into a gradient.
+              </p>
+            </div>
+
+            <div class="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+              {#each THEME_PRESETS as preset (preset.id)}
+                <button
+                  type="button"
+                  aria-pressed={themeStyle.preset === preset.id}
+                  onclick={() => selectThemeStyle(preset.id)}
+                  class={[
+                    'overflow-hidden rounded-xl border bg-black/20 text-left transition',
+                    themeStyle.preset === preset.id
+                      ? 'border-blue-400/70 ring-2 ring-blue-500/20'
+                      : 'border-white/10 hover:border-white/20'
+                  ].join(' ')}
+                >
+                  <span
+                    class="block h-16"
+                    style={`background: ${getThemeGradient({
+                      preset: preset.id,
+                      colors: themeStyle.colors,
+                      angle: themeStyle.angle
+                    })}`}
+                  ></span>
+                  <span class="block px-3 py-2.5">
+                    <span class="flex items-center justify-between gap-2">
+                      <span class="text-sm font-medium text-zinc-200">{preset.label}</span>
+                      <span
+                        class={[
+                          'h-2 w-2 rounded-full',
+                          themeStyle.preset === preset.id ? 'bg-blue-400' : 'bg-zinc-700'
+                        ].join(' ')}
+                      ></span>
+                    </span>
+                    <span class="mt-0.5 block truncate text-xs text-zinc-500">
+                      {preset.description}
+                    </span>
+                  </span>
+                </button>
+              {/each}
+
+              <button
+                type="button"
+                aria-pressed={themeStyle.preset === 'custom'}
+                onclick={() => selectThemeStyle('custom')}
+                class={[
+                  'overflow-hidden rounded-xl border bg-black/20 text-left transition',
+                  themeStyle.preset === 'custom'
+                    ? 'border-blue-400/70 ring-2 ring-blue-500/20'
+                    : 'border-white/10 hover:border-white/20'
+                ].join(' ')}
+              >
+                <span
+                  class="block h-16"
+                  style={`background: ${getThemeGradient({ ...themeStyle, preset: 'custom' })}`}
+                ></span>
+                <span class="block px-3 py-2.5">
+                  <span class="flex items-center justify-between gap-2">
+                    <span class="text-sm font-medium text-zinc-200">Custom</span>
+                    <span
+                      class={[
+                        'h-2 w-2 rounded-full',
+                        themeStyle.preset === 'custom' ? 'bg-blue-400' : 'bg-zinc-700'
+                      ].join(' ')}
+                    ></span>
+                  </span>
+                  <span class="mt-0.5 block truncate text-xs text-zinc-500">
+                    {themeStyle.colors.length} color gradient
+                  </span>
+                </span>
+              </button>
+            </div>
+
+            {#if themeStyle.preset === 'custom'}
+              <div class="mt-4 rounded-xl border border-white/10 bg-black/20 p-3 sm:p-4">
+                <div
+                  class="h-24 rounded-lg border border-white/10 shadow-inner"
+                  style={`background: ${getThemeGradient(themeStyle)}`}
+                  aria-label="Custom gradient preview"
+                ></div>
+
+                <div class="mt-4 space-y-2">
+                  {#each themeStyle.colors as color, index (index)}
+                    <div
+                      class="flex items-center gap-3 rounded-lg border border-white/8 bg-white/3 p-2"
+                    >
+                      <label class="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
+                        <input
+                          type="color"
+                          use:syncColorInput={color}
+                          aria-label={`Gradient color ${index + 1}`}
+                          oninput={(event) => updateThemeColor(index, event.currentTarget.value)}
+                          class="h-9 w-12 cursor-pointer rounded-md border border-white/10 bg-transparent p-0.5"
+                        />
+                        <span class="min-w-0">
+                          <span class="block text-xs text-zinc-500">Color {index + 1}</span>
+                          <span class="block truncate font-mono text-sm text-zinc-300 uppercase">
+                            {color}
+                          </span>
+                        </span>
+                      </label>
+                      <button
+                        type="button"
+                        aria-label={`Remove gradient color ${index + 1}`}
+                        title={themeStyle.colors.length <= MIN_THEME_COLORS
+                          ? `A gradient needs at least ${MIN_THEME_COLORS} colors`
+                          : 'Remove color'}
+                        disabled={themeStyle.colors.length <= MIN_THEME_COLORS}
+                        onclick={() => removeThemeColor(index)}
+                        class="rounded-lg p-2 text-zinc-500 hover:bg-white/6 hover:text-rose-300 disabled:opacity-30"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  {/each}
+                </div>
+
+                <div class="mt-3 flex flex-wrap items-center justify-between gap-3">
+                  <button
+                    type="button"
+                    disabled={themeStyle.colors.length >= MAX_THEME_COLORS}
+                    onclick={addThemeColor}
+                    class="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-300 hover:bg-white/8 disabled:opacity-40"
+                  >
+                    <Plus size={14} />
+                    Add color
+                  </button>
+                  <span class="text-xs text-zinc-500">
+                    {themeStyle.colors.length} / {MAX_THEME_COLORS} colors
+                  </span>
+                </div>
+
+                <div class="mt-5">
+                  <div class="flex items-center justify-between gap-3">
+                    <label for="theme-gradient-angle" class="text-sm text-zinc-300">
+                      Gradient angle
+                    </label>
+                    <span class="font-mono text-xs text-zinc-500">{themeStyle.angle}&deg;</span>
+                  </div>
+                  <input
+                    id="theme-gradient-angle"
+                    type="range"
+                    min="0"
+                    max="360"
+                    step="1"
+                    value={themeStyle.angle}
+                    oninput={(event) => updateThemeAngle(Number(event.currentTarget.value))}
+                    class="mt-2 w-full"
+                  />
+                </div>
+
+                <button
+                  type="button"
+                  onclick={resetCustomTheme}
+                  class="mt-3 text-xs font-medium text-zinc-500 hover:text-zinc-300"
+                >
+                  Reset custom gradient
+                </button>
+              </div>
+            {/if}
           </div>
           <div class="rounded-lg border border-white/8 bg-white/3 p-4">
             <label class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -4516,7 +4807,7 @@
               <button
                 type="button"
                 onclick={() => void importSettingsBackup()}
-                disabled={importingSettings || !settingsBackupFile}
+                disabled={saving || importingSettings || !settingsBackupFile}
                 class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-50"
               >
                 {importingSettings ? 'Importing…' : 'Import selected'}
@@ -4539,7 +4830,7 @@
           <button
             type="button"
             onclick={() => void save({ manual: true, invalidate: true, clearSecrets: true })}
-            disabled={saving}
+            disabled={saving || importingSettings}
             class="rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-50"
           >
             {saving ? 'Saving…' : 'Save settings'}

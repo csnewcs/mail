@@ -5,13 +5,17 @@
   import type { Snippet } from 'svelte'
   import { onMount } from 'svelte'
   import { Toaster } from '$lib/components/ui/sonner'
+  import { applyThemeStyle, type ThemeStyle } from '$lib/theme'
 
   type ThemePreference = 'light' | 'dark' | 'system'
 
   let {
     children,
     data
-  }: { children: Snippet; data: { demoMode: boolean; themePreference: ThemePreference } } = $props()
+  }: {
+    children: Snippet
+    data: { demoMode: boolean; themePreference: ThemePreference; themeStyle: ThemeStyle }
+  } = $props()
 
   const isLoading = $derived(Boolean(navigating.to) || appLoading.pending > 0)
 
@@ -30,6 +34,7 @@
 
   onMount(() => {
     applyTheme(data.themePreference)
+    applyThemeStyle(data.themeStyle)
 
     const media = window.matchMedia('(prefers-color-scheme: light)')
     const handleSystemThemeChange = () => {
@@ -42,6 +47,7 @@
 
   $effect(() => {
     applyTheme(data.themePreference)
+    applyThemeStyle(data.themeStyle)
   })
 </script>
 

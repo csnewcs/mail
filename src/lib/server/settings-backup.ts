@@ -1,3 +1,5 @@
+import { isValidThemeStyle, normalizeThemeStyle, type ThemeStyle } from '$lib/theme'
+
 export const SETTINGS_BACKUP_SCHEMA_VERSION = 1
 
 type BackupObject = Record<string, unknown>
@@ -58,6 +60,8 @@ export type SettingsBackup = {
     simplifiedView?: boolean
     threadModeOnPageLoad?: boolean
     compactMode?: boolean
+    themePreference?: 'light' | 'dark' | 'system'
+    themeStyle?: ThemeStyle
     translationTargetLanguage?: string
   }
   filters?: Array<{
@@ -305,6 +309,22 @@ export function validateSettingsBackup(value: unknown): {
   }
 
   if (preferencesObject) {
+    const themePreference = optionalString(
+      preferencesObject.themePreference,
+      'preferences.themePreference',
+      errors
+    )
+    if (themePreference != null && !['light', 'dark', 'system'].includes(themePreference)) {
+      errors.push('preferences.themePreference is invalid')
+    }
+    const themeStyle = optionalObject(
+      preferencesObject.themeStyle,
+      'preferences.themeStyle',
+      errors
+    )
+    if (themeStyle && !isValidThemeStyle(themeStyle)) {
+      errors.push('preferences.themeStyle is invalid')
+    }
     backup.preferences = {
       simplifiedView: optionalBoolean(
         preferencesObject.simplifiedView,
@@ -321,6 +341,12 @@ export function validateSettingsBackup(value: unknown): {
         'preferences.compactMode',
         errors
       ),
+      themePreference:
+        themePreference === 'light' || themePreference === 'dark' || themePreference === 'system'
+          ? themePreference
+          : undefined,
+      themeStyle:
+        themeStyle && isValidThemeStyle(themeStyle) ? normalizeThemeStyle(themeStyle) : undefined,
       translationTargetLanguage: optionalString(
         preferencesObject.translationTargetLanguage,
         'preferences.translationTargetLanguage',

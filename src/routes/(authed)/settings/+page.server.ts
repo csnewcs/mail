@@ -8,6 +8,7 @@ import {
   getRemoteContentAllowedSenders,
   getSimplifiedViewEnabled,
   getThemePreference,
+  getThemeStyle,
   getThreadModeOnPageLoadEnabled,
   getTranslationTargetLanguage
 } from '$lib/server/preferences'
@@ -30,6 +31,7 @@ export const load: PageServerLoad = async ({ cookies }) => {
     density: getDensityPreference(cookies),
     compactMode: getCompactModeEnabled(cookies),
     themePreference: getThemePreference(cookies),
+    themeStyle: getThemeStyle(cookies),
     translationTargetLanguage: getTranslationTargetLanguage(cookies),
     remoteContent: {
       blockRemoteContent: getBlockRemoteContentEnabled(cookies),

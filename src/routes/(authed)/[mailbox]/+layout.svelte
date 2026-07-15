@@ -2271,7 +2271,9 @@
 />
 
 {#if showSimplifiedMailboxView}
-  <section class="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-[#0d0d10]">
+  <section
+    class="app-themed-content flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-[#0d0d10]"
+  >
     <div class={listHeaderClass}>
       <div class="flex items-start justify-between gap-4">
         <div class="min-w-0">
@@ -2727,7 +2729,7 @@
       id="message-list-pane"
       style:--list-basis={listBasis}
       class={[
-        'mail-list-pane flex flex-col overflow-x-hidden bg-[#0d0d10] md:border-r',
+        'app-themed-content mail-list-pane flex flex-col overflow-x-hidden bg-[#0d0d10] md:border-r',
         'md:border-white/8',
         isMailboxRoot ? 'flex min-w-0 flex-1 md:flex-none' : 'hidden md:flex'
       ]}
@@ -3003,7 +3005,7 @@
       <!-- Bulk action toolbar -->
       {#if selectionMode}
         <div
-          class="flex shrink-0 flex-wrap items-center gap-2 bg-[#0d0d10] px-4 py-2 md:border-b md:border-white/8"
+          class="app-themed-content flex shrink-0 flex-wrap items-center gap-2 bg-[#0d0d10] px-4 py-2 md:border-b md:border-white/8"
         >
           <span class="text-xs text-zinc-400">{selectedIds.size} selected</span>
           <div class="flex min-w-0 flex-1 flex-wrap items-center gap-1">
@@ -3443,7 +3445,7 @@
 
     <section
       class={[
-        'min-w-0 overflow-hidden bg-[#0b0b0e]',
+        'app-themed-content min-w-0 overflow-hidden bg-[#0b0b0e]',
         isMailboxRoot ? 'hidden flex-1 md:block' : 'flex-1'
       ]}
     >

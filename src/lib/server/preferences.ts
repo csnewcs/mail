@@ -1,5 +1,6 @@
 import type { Cookies } from '@sveltejs/kit'
 import { LIST_RATIO_COOKIE, parseListRatio } from '$lib/list-width'
+import { normalizeThemeStyle, type ThemeStyle } from '$lib/theme'
 
 const SIMPLIFIED_VIEW_COOKIE = 'mail_simplified_view'
 const THREAD_MODE_ON_PAGE_LOAD_COOKIE = 'mail_thread_mode_on_page_load'
@@ -9,6 +10,7 @@ const TRANSLATION_TARGET_LANGUAGE_COOKIE = 'mail_translation_target_language'
 const BLOCK_REMOTE_CONTENT_COOKIE = 'mail_block_remote_content'
 const REMOTE_CONTENT_ALLOWED_SENDERS_COOKIE = 'mail_remote_content_allowed_senders'
 const THEME_PREFERENCE_COOKIE = 'mail_theme_preference'
+const THEME_STYLE_COOKIE = 'mail_theme_style'
 const MAILBOX_PREFERENCES_COOKIE = 'mail_mailbox_preferences'
 const ONE_YEAR_SECONDS = 60 * 60 * 24 * 365
 const DEFAULT_TRANSLATION_TARGET_LANGUAGE = 'Korean'
@@ -171,6 +173,24 @@ export function getThemePreference(cookies: Pick<Cookies, 'get'>) {
 export function setThemePreference(cookies: Pick<Cookies, 'set'>, value: string) {
   cookies.set(THEME_PREFERENCE_COOKIE, normalizeThemePreference(value), {
     path: '/',
+    httpOnly: false,
+    sameSite: 'lax',
+    maxAge: ONE_YEAR_SECONDS
+  })
+}
+
+export function getThemeStyle(cookies: Pick<Cookies, 'get'>): ThemeStyle {
+  try {
+    return normalizeThemeStyle(JSON.parse(cookies.get(THEME_STYLE_COOKIE) ?? '{}'))
+  } catch {
+    return normalizeThemeStyle(null)
+  }
+}
+
+export function setThemeStyle(cookies: Pick<Cookies, 'set'>, value: unknown) {
+  cookies.set(THEME_STYLE_COOKIE, JSON.stringify(normalizeThemeStyle(value)), {
+    path: '/',
+    httpOnly: false,
     sameSite: 'lax',
     maxAge: ONE_YEAR_SECONDS
   })
