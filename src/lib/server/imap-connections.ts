@@ -26,6 +26,7 @@ function fingerprint(config: ImapConfig) {
     config.host,
     config.port,
     config.secure,
+    config.allowInvalidCertificate,
     config.user,
     config.password,
     config.mailbox
@@ -51,6 +52,7 @@ function createClient(config: ImapConfig, watcher = false) {
     host: config.host,
     port: config.port,
     secure: config.secure,
+    tls: { rejectUnauthorized: !config.allowInvalidCertificate },
     auth: { user: config.user, pass: config.password },
     logger: false,
     connectionTimeout: CONNECT_TIMEOUT_MS,

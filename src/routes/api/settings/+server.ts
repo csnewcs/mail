@@ -99,6 +99,10 @@ function normalizeServerPayload(
         port:
           typeof server.port === 'number' && server.port > 0 ? Math.trunc(server.port) : undefined,
         secure: typeof server.secure === 'boolean' ? server.secure : undefined,
+        allowInvalidCertificate:
+          typeof server.allowInvalidCertificate === 'boolean'
+            ? server.allowInvalidCertificate
+            : undefined,
         user: typeof server.user === 'string' ? server.user.trim() : '',
         password:
           password && password !== passwordMask ? encryptSecret(password) : previousPassword,
@@ -238,6 +242,9 @@ export const POST: RequestHandler = async (event) => {
     if (typeof imap.host === 'string') values.imapHost = imap.host.trim() || null
     if (typeof imap.port === 'number') values.imapPort = imap.port > 0 ? imap.port : null
     if (typeof imap.secure === 'boolean') values.imapSecure = imap.secure
+    if (typeof imap.allowInvalidCertificate === 'boolean') {
+      values.imapAllowInvalidCertificate = imap.allowInvalidCertificate
+    }
     if (typeof imap.user === 'string') values.imapUser = imap.user.trim() || null
     // Empty password means "leave existing / use env" — don't overwrite with empty
     if (typeof imap.password === 'string' && imap.password.trim() && imap.password !== '••••••••') {
@@ -285,6 +292,9 @@ export const POST: RequestHandler = async (event) => {
     if (typeof smtp.host === 'string') values.smtpHost = smtp.host.trim() || null
     if (typeof smtp.port === 'number') values.smtpPort = smtp.port > 0 ? smtp.port : null
     if (typeof smtp.secure === 'boolean') values.smtpSecure = smtp.secure
+    if (typeof smtp.allowInvalidCertificate === 'boolean') {
+      values.smtpAllowInvalidCertificate = smtp.allowInvalidCertificate
+    }
     if (typeof smtp.user === 'string') values.smtpUser = smtp.user.trim() || null
     if (typeof smtp.password === 'string' && smtp.password.trim() && smtp.password !== '••••••••') {
       values.smtpPassword = encryptSecret(smtp.password)

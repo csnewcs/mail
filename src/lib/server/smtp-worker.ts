@@ -150,6 +150,7 @@ async function runJob(job: SmtpJobRow) {
     host: smtpConfig.host,
     port: smtpConfig.port,
     secure: smtpConfig.secure,
+    tls: { rejectUnauthorized: !smtpConfig.allowInvalidCertificate },
     auth: {
       user: smtpConfig.user,
       pass: smtpConfig.password

@@ -150,6 +150,7 @@
     host: string
     port: number
     secure: boolean
+    allowInvalidCertificate: boolean
     user: string
     password: string
     mailbox?: string
@@ -631,6 +632,7 @@
       host: '',
       port: 993,
       secure: true,
+      allowInvalidCertificate: false,
       user: '',
       password: '',
       mailbox: 'INBOX',
@@ -648,6 +650,7 @@
       host: '',
       port: 587,
       secure: false,
+      allowInvalidCertificate: false,
       user: '',
       password: '',
       from: '',
@@ -1976,6 +1979,7 @@
             host: server.host,
             port: server.port,
             secure: server.secure,
+            allowInvalidCertificate: server.allowInvalidCertificate,
             user: server.user,
             password: server.password
           }
@@ -2014,6 +2018,7 @@
             host: server.host,
             port: server.port,
             secure: server.secure,
+            allowInvalidCertificate: server.allowInvalidCertificate,
             user: server.user,
             password: server.password
           }
@@ -2201,6 +2206,23 @@
                 ></div>
                 <span class="text-sm text-zinc-300">TLS / SSL</span>
               </label>
+            </div>
+            <div class="col-span-2">
+              <label class="relative inline-flex cursor-pointer items-center gap-2">
+                <input
+                  type="checkbox"
+                  bind:checked={imap.allowInvalidCertificate}
+                  onchange={autosaveToggleChange}
+                  class="peer sr-only"
+                />
+                <div
+                  class="h-5 w-9 rounded-full bg-zinc-700 transition peer-checked:bg-amber-600 after:absolute after:top-0.5 after:left-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-4"
+                ></div>
+                <span class="text-sm text-zinc-300">Allow self-signed certificate</span>
+              </label>
+              <p class="mt-1 text-xs text-amber-400">
+                Disables certificate verification for this IMAP server.
+              </p>
             </div>
           </div>
 
@@ -2411,6 +2433,23 @@
                           <span class="text-sm text-zinc-300">TLS / SSL</span>
                         </label>
                       </div>
+                      <div class="sm:col-span-2">
+                        <label class="relative inline-flex cursor-pointer items-center gap-2">
+                          <input
+                            type="checkbox"
+                            bind:checked={server.allowInvalidCertificate}
+                            onchange={autosaveToggleChange}
+                            class="peer sr-only"
+                          />
+                          <div
+                            class="h-5 w-9 rounded-full bg-zinc-700 transition peer-checked:bg-amber-600 after:absolute after:top-0.5 after:left-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-4"
+                          ></div>
+                          <span class="text-sm text-zinc-300">Allow self-signed certificate</span>
+                        </label>
+                        <p class="mt-1 text-xs text-amber-400">
+                          Disables certificate verification for this IMAP server.
+                        </p>
+                      </div>
                     </div>
                     {#if secondaryImapTestResults[index]?.message}
                       <p
@@ -2540,6 +2579,23 @@
                 ></div>
                 <span class="text-sm text-zinc-300">TLS / SSL</span>
               </label>
+            </div>
+            <div class="col-span-2">
+              <label class="relative inline-flex cursor-pointer items-center gap-2">
+                <input
+                  type="checkbox"
+                  bind:checked={smtp.allowInvalidCertificate}
+                  onchange={autosaveToggleChange}
+                  class="peer sr-only"
+                />
+                <div
+                  class="h-5 w-9 rounded-full bg-zinc-700 transition peer-checked:bg-amber-600 after:absolute after:top-0.5 after:left-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-4"
+                ></div>
+                <span class="text-sm text-zinc-300">Allow self-signed certificate</span>
+              </label>
+              <p class="mt-1 text-xs text-amber-400">
+                Disables certificate verification for this SMTP server.
+              </p>
             </div>
           </div>
 
@@ -2728,6 +2784,23 @@
                           ></div>
                           <span class="text-sm text-zinc-300">TLS / SSL</span>
                         </label>
+                      </div>
+                      <div class="sm:col-span-2">
+                        <label class="relative inline-flex cursor-pointer items-center gap-2">
+                          <input
+                            type="checkbox"
+                            bind:checked={server.allowInvalidCertificate}
+                            onchange={autosaveToggleChange}
+                            class="peer sr-only"
+                          />
+                          <div
+                            class="h-5 w-9 rounded-full bg-zinc-700 transition peer-checked:bg-amber-600 after:absolute after:top-0.5 after:left-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-4"
+                          ></div>
+                          <span class="text-sm text-zinc-300">Allow self-signed certificate</span>
+                        </label>
+                        <p class="mt-1 text-xs text-amber-400">
+                          Disables certificate verification for this SMTP server.
+                        </p>
                       </div>
                     </div>
                     {#if secondarySmtpTestResults[index]?.message}

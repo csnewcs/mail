@@ -26,6 +26,9 @@ export const POST: RequestHandler = async ({ request }) => {
   const secure =
     (typeof imap?.secure === 'boolean' ? imap.secure : null) ??
     ('secure' in saved ? saved.secure : true)
+  const allowInvalidCertificate =
+    (typeof imap?.allowInvalidCertificate === 'boolean' ? imap.allowInvalidCertificate : null) ??
+    ('allowInvalidCertificate' in saved ? saved.allowInvalidCertificate : false)
   const user = (imap?.user as string | undefined)?.trim() || ('user' in saved ? saved.user : '')
   // Accept new password if provided; fall back to saved (non-masked)
   const rawPassword = imap?.password as string | undefined
@@ -33,15 +36,27 @@ export const POST: RequestHandler = async ({ request }) => {
   if (rawPassword && rawPassword !== '••••••••') {
     password = rawPassword
   } else {
-    if (saved && 'password' in saved && !('missing' in saved) && user === saved.user && host === saved.host) {
+    if (
+      saved &&
+      'password' in saved &&
+      !('missing' in saved) &&
+      user === saved.user &&
+      host === saved.host
+    ) {
       password = saved.password
     } else {
-      const [config] = await db.select({ imapServers: mailConfig.imapServers }).from(mailConfig).where(eq(mailConfig.id, 1)).limit(1)
+      const [config] = await db
+        .select({ imapServers: mailConfig.imapServers })
+        .from(mailConfig)
+        .where(eq(mailConfig.id, 1))
+        .limit(1)
       if (config?.imapServers && Array.isArray(config.imapServers)) {
-        const matched = config.imapServers.find(
-          (s: any) => s && s.user === user && s.host === host
-        )
-        if (matched && matched.password) {
+        const matched = config.imapServers.find((candidate: unknown) => {
+          if (!candidate || typeof candidate !== 'object') return false
+          const server = candidate as Record<string, unknown>
+          return server.user === user && server.host === host
+        }) as Record<string, unknown> | undefined
+        if (typeof matched?.password === 'string') {
           try {
             password = decryptSecret(matched.password)
           } catch (e) {
@@ -61,6 +76,7 @@ export const POST: RequestHandler = async ({ request }) => {
       host,
       port,
       secure,
+      tls: { rejectUnauthorized: !allowInvalidCertificate },
       auth: {
         user,
         pass: password
@@ -77,9 +93,12 @@ export const POST: RequestHandler = async ({ request }) => {
     })
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
-    return json({
-      ok: false,
-      message: `IMAP connection failed: ${msg}`
-    }, { status: 500 })
+    return json(
+      {
+        ok: false,
+        message: `IMAP connection failed: ${msg}`
+      },
+      { status: 500 }
+    )
   }
 }

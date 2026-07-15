@@ -25,21 +25,36 @@ export const POST: RequestHandler = async ({ request }) => {
   const secure =
     (typeof smtp?.secure === 'boolean' ? smtp.secure : null) ??
     ('secure' in saved ? saved.secure : false)
+  const allowInvalidCertificate =
+    (typeof smtp?.allowInvalidCertificate === 'boolean' ? smtp.allowInvalidCertificate : null) ??
+    ('allowInvalidCertificate' in saved ? saved.allowInvalidCertificate : false)
   const user = (smtp?.user as string | undefined)?.trim() || ('user' in saved ? saved.user : '')
   const rawPassword = smtp?.password as string | undefined
   let password = ''
   if (rawPassword && rawPassword !== '••••••••') {
     password = rawPassword
   } else {
-    if (saved && 'password' in saved && !('missing' in saved) && user === saved.user && host === saved.host) {
+    if (
+      saved &&
+      'password' in saved &&
+      !('missing' in saved) &&
+      user === saved.user &&
+      host === saved.host
+    ) {
       password = saved.password
     } else {
-      const [config] = await db.select({ smtpServers: mailConfig.smtpServers }).from(mailConfig).where(eq(mailConfig.id, 1)).limit(1)
+      const [config] = await db
+        .select({ smtpServers: mailConfig.smtpServers })
+        .from(mailConfig)
+        .where(eq(mailConfig.id, 1))
+        .limit(1)
       if (config?.smtpServers && Array.isArray(config.smtpServers)) {
-        const matched = config.smtpServers.find(
-          (s: any) => s && s.user === user && s.host === host
-        )
-        if (matched && matched.password) {
+        const matched = config.smtpServers.find((candidate: unknown) => {
+          if (!candidate || typeof candidate !== 'object') return false
+          const server = candidate as Record<string, unknown>
+          return server.user === user && server.host === host
+        }) as Record<string, unknown> | undefined
+        if (typeof matched?.password === 'string') {
           try {
             password = decryptSecret(matched.password)
           } catch (e) {
@@ -59,6 +74,7 @@ export const POST: RequestHandler = async ({ request }) => {
       host,
       port,
       secure,
+      tls: { rejectUnauthorized: !allowInvalidCertificate },
       auth: {
         user,
         pass: password
@@ -74,9 +90,12 @@ export const POST: RequestHandler = async ({ request }) => {
     })
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
-    return json({
-      ok: false,
-      message: `SMTP connection failed: ${msg}`
-    }, { status: 500 })
+    return json(
+      {
+        ok: false,
+        message: `SMTP connection failed: ${msg}`
+      },
+      { status: 500 }
+    )
   }
 }

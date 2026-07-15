@@ -120,6 +120,7 @@ export const actions: Actions = {
     const imapMailbox = (form.get('imapMailbox') as string)?.trim()
     const imapPollSeconds = Number(form.get('imapPollSeconds'))
     const imapSecure = form.get('imapSecure') === 'true'
+    const imapAllowInvalidCertificate = form.get('imapAllowInvalidCertificate') === 'true'
 
     if (imapHost) values.imapHost = imapHost
     if (imapPort > 0) values.imapPort = imapPort
@@ -128,6 +129,7 @@ export const actions: Actions = {
     if (imapMailbox) values.imapMailbox = imapMailbox
     if (imapPollSeconds > 0) values.imapPollSeconds = imapPollSeconds
     values.imapSecure = imapSecure
+    values.imapAllowInvalidCertificate = imapAllowInvalidCertificate
 
     // SMTP — optional at setup time
     const smtpHost = (form.get('smtpHost') as string)?.trim()
@@ -136,6 +138,7 @@ export const actions: Actions = {
     const smtpPassword = (form.get('smtpPassword') as string)?.trim()
     const smtpFrom = (form.get('smtpFrom') as string)?.trim()
     const smtpSecure = form.get('smtpSecure') === 'true'
+    const smtpAllowInvalidCertificate = form.get('smtpAllowInvalidCertificate') === 'true'
 
     if (smtpHost) values.smtpHost = smtpHost
     if (smtpPort > 0) values.smtpPort = smtpPort
@@ -143,6 +146,7 @@ export const actions: Actions = {
     if (smtpPassword) values.smtpPassword = encryptSecret(smtpPassword)
     if (smtpFrom) values.smtpFrom = smtpFrom
     values.smtpSecure = smtpSecure
+    values.smtpAllowInvalidCertificate = smtpAllowInvalidCertificate
 
     let createdAuthUserId: string | undefined
     if (passwordConfigured) {

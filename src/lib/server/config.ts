@@ -34,6 +34,7 @@ export type ImapConfig = {
   host: string
   port: number
   secure: boolean
+  allowInvalidCertificate: boolean
   user: string
   password: string
   mailbox: string
@@ -46,6 +47,7 @@ export type SmtpConfig = {
   host: string
   port: number
   secure: boolean
+  allowInvalidCertificate: boolean
   user: string
   password: string
   from: string
@@ -139,6 +141,8 @@ function fromLegacyImap(row: MailConfigRow | null): ImapConfig | null {
     host,
     port: row?.imapPort ?? parseNumber(env.IMAP_PORT, 993),
     secure: row?.imapSecure ?? parseBoolean(env.IMAP_SECURE, true),
+    allowInvalidCertificate:
+      row?.imapAllowInvalidCertificate ?? parseBoolean(env.IMAP_ALLOW_INVALID_CERTIFICATE, false),
     user,
     password,
     mailbox: row?.imapMailbox || env.IMAP_MAILBOX || 'INBOX',
@@ -160,6 +164,7 @@ export function normalizeImapServers(row: MailConfigRow | null): ImapConfig[] {
         host,
         port: asNumber(server.port, 993),
         secure: asBoolean(server.secure, true),
+        allowInvalidCertificate: asBoolean(server.allowInvalidCertificate, false),
         user,
         password,
         mailbox: asString(server.mailbox) || 'INBOX',
@@ -183,6 +188,8 @@ function fromLegacySmtp(row: MailConfigRow | null): SmtpConfig | null {
     host,
     port: row?.smtpPort ?? parseNumber(env.SMTP_PORT, 587),
     secure: row?.smtpSecure ?? parseBoolean(env.SMTP_SECURE, false),
+    allowInvalidCertificate:
+      row?.smtpAllowInvalidCertificate ?? parseBoolean(env.SMTP_ALLOW_INVALID_CERTIFICATE, false),
     user,
     password,
     from: row?.smtpFrom || env.SMTP_FROM || user
@@ -203,6 +210,7 @@ export function normalizeSmtpServers(row: MailConfigRow | null): SmtpConfig[] {
         host,
         port: asNumber(server.port, 587),
         secure: asBoolean(server.secure, false),
+        allowInvalidCertificate: asBoolean(server.allowInvalidCertificate, false),
         user,
         password,
         from: asString(server.from) || user
@@ -303,6 +311,8 @@ export async function getImapConfig(): Promise<ImapConfig | { missing: string[] 
     host,
     port: portRaw,
     secure: secureRaw,
+    allowInvalidCertificate:
+      row?.imapAllowInvalidCertificate ?? parseBoolean(env.IMAP_ALLOW_INVALID_CERTIFICATE, false),
     user,
     password,
     mailbox: row?.imapMailbox || env.IMAP_MAILBOX || 'INBOX',
@@ -335,6 +345,8 @@ export async function getSmtpConfig(): Promise<SmtpConfig | { missing: string[] 
     host,
     port: portRaw,
     secure: secureRaw,
+    allowInvalidCertificate:
+      row?.smtpAllowInvalidCertificate ?? parseBoolean(env.SMTP_ALLOW_INVALID_CERTIFICATE, false),
     user,
     password,
     from: row?.smtpFrom || env.SMTP_FROM || user
@@ -474,6 +486,9 @@ export async function getDisplayConfig() {
         host: row?.imapHost ?? env.IMAP_HOST ?? '',
         port: row?.imapPort ?? parseNumber(env.IMAP_PORT, 993),
         secure: row?.imapSecure ?? parseBoolean(env.IMAP_SECURE, true),
+        allowInvalidCertificate:
+          row?.imapAllowInvalidCertificate ??
+          parseBoolean(env.IMAP_ALLOW_INVALID_CERTIFICATE, false),
         user: row?.imapUser ?? env.IMAP_USER ?? '',
         password: row?.imapPassword ? '••••••••' : env.IMAP_PASSWORD ? '••••••••' : '',
         mailbox: row?.imapMailbox ?? env.IMAP_MAILBOX ?? 'INBOX',
@@ -493,6 +508,9 @@ export async function getDisplayConfig() {
         host: row?.smtpHost ?? env.SMTP_HOST ?? '',
         port: row?.smtpPort ?? parseNumber(env.SMTP_PORT, 587),
         secure: row?.smtpSecure ?? parseBoolean(env.SMTP_SECURE, false),
+        allowInvalidCertificate:
+          row?.smtpAllowInvalidCertificate ??
+          parseBoolean(env.SMTP_ALLOW_INVALID_CERTIFICATE, false),
         user: row?.smtpUser ?? env.SMTP_USER ?? '',
         password: row?.smtpPassword ? '••••••••' : env.SMTP_PASSWORD ? '••••••••' : '',
         from: row?.smtpFrom ?? env.SMTP_FROM ?? '',

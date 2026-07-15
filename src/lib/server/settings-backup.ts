@@ -13,6 +13,7 @@ export type SettingsBackup = {
       host?: string
       port?: number
       secure?: boolean
+      allowInvalidCertificate?: boolean
       user?: string
       mailbox?: string
       pollSeconds?: number
@@ -23,6 +24,7 @@ export type SettingsBackup = {
       host?: string
       port?: number
       secure?: boolean
+      allowInvalidCertificate?: boolean
       user?: string
       mailbox?: string
       pollSeconds?: number
@@ -31,6 +33,7 @@ export type SettingsBackup = {
       host?: string
       port?: number
       secure?: boolean
+      allowInvalidCertificate?: boolean
       user?: string
       from?: string
     }
@@ -40,6 +43,7 @@ export type SettingsBackup = {
       host?: string
       port?: number
       secure?: boolean
+      allowInvalidCertificate?: boolean
       user?: string
       from?: string
     }>
@@ -232,6 +236,11 @@ export function validateSettingsBackup(value: unknown): {
         host: optionalString(imapObject.host, 'settings.imap.host', errors),
         port: optionalNumber(imapObject.port, 'settings.imap.port', errors),
         secure: optionalBoolean(imapObject.secure, 'settings.imap.secure', errors),
+        allowInvalidCertificate: optionalBoolean(
+          imapObject.allowInvalidCertificate,
+          'settings.imap.allowInvalidCertificate',
+          errors
+        ),
         user: optionalString(imapObject.user, 'settings.imap.user', errors),
         mailbox: optionalString(imapObject.mailbox, 'settings.imap.mailbox', errors),
         pollSeconds: optionalNumber(imapObject.pollSeconds, 'settings.imap.pollSeconds', errors)
@@ -245,6 +254,11 @@ export function validateSettingsBackup(value: unknown): {
         host: optionalString(server.host, `settings.imapServers[${index}].host`, errors),
         port: optionalNumber(server.port, `settings.imapServers[${index}].port`, errors),
         secure: optionalBoolean(server.secure, `settings.imapServers[${index}].secure`, errors),
+        allowInvalidCertificate: optionalBoolean(
+          server.allowInvalidCertificate,
+          `settings.imapServers[${index}].allowInvalidCertificate`,
+          errors
+        ),
         user: optionalString(server.user, `settings.imapServers[${index}].user`, errors),
         mailbox: optionalString(server.mailbox, `settings.imapServers[${index}].mailbox`, errors),
         pollSeconds: optionalNumber(
@@ -260,6 +274,11 @@ export function validateSettingsBackup(value: unknown): {
         host: optionalString(smtpObject.host, 'settings.smtp.host', errors),
         port: optionalNumber(smtpObject.port, 'settings.smtp.port', errors),
         secure: optionalBoolean(smtpObject.secure, 'settings.smtp.secure', errors),
+        allowInvalidCertificate: optionalBoolean(
+          smtpObject.allowInvalidCertificate,
+          'settings.smtp.allowInvalidCertificate',
+          errors
+        ),
         user: optionalString(smtpObject.user, 'settings.smtp.user', errors),
         from: optionalString(smtpObject.from, 'settings.smtp.from', errors)
       }
@@ -272,6 +291,11 @@ export function validateSettingsBackup(value: unknown): {
         host: optionalString(server.host, `settings.smtpServers[${index}].host`, errors),
         port: optionalNumber(server.port, `settings.smtpServers[${index}].port`, errors),
         secure: optionalBoolean(server.secure, `settings.smtpServers[${index}].secure`, errors),
+        allowInvalidCertificate: optionalBoolean(
+          server.allowInvalidCertificate,
+          `settings.smtpServers[${index}].allowInvalidCertificate`,
+          errors
+        ),
         user: optionalString(server.user, `settings.smtpServers[${index}].user`, errors),
         from: optionalString(server.from, `settings.smtpServers[${index}].from`, errors)
       }))

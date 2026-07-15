@@ -34,6 +34,7 @@ export type DemoConfigSection = {
   host: string
   port: number
   secure: boolean
+  allowInvalidCertificate: boolean
   user: string
   password: string
   source: string
@@ -214,6 +215,7 @@ const demoConfig: DemoDisplayConfig = {
     host: 'demo-imap.local',
     port: 993,
     secure: true,
+    allowInvalidCertificate: false,
     user: 'demo@example.com',
     password: 'demo-password',
     mailbox: 'Inbox',
@@ -226,6 +228,7 @@ const demoConfig: DemoDisplayConfig = {
     host: 'demo-smtp.local',
     port: 587,
     secure: false,
+    allowInvalidCertificate: false,
     user: 'demo@example.com',
     password: 'demo-password',
     from: 'Demo User <demo@example.com>',
@@ -879,6 +882,9 @@ export function saveDemoSettings(body: Record<string, unknown>) {
       demoConfig.imap.host = imap.host.trim() || demoConfig.imap.host
     if (typeof imap.port === 'number' && imap.port > 0) demoConfig.imap.port = imap.port
     if (typeof imap.secure === 'boolean') demoConfig.imap.secure = imap.secure
+    if (typeof imap.allowInvalidCertificate === 'boolean') {
+      demoConfig.imap.allowInvalidCertificate = imap.allowInvalidCertificate
+    }
     if (typeof imap.user === 'string')
       demoConfig.imap.user = imap.user.trim() || demoConfig.imap.user
     if (typeof imap.password === 'string' && imap.password.trim() && imap.password !== '••••••••') {
@@ -897,6 +903,9 @@ export function saveDemoSettings(body: Record<string, unknown>) {
       demoConfig.smtp.host = smtp.host.trim() || demoConfig.smtp.host
     if (typeof smtp.port === 'number' && smtp.port > 0) demoConfig.smtp.port = smtp.port
     if (typeof smtp.secure === 'boolean') demoConfig.smtp.secure = smtp.secure
+    if (typeof smtp.allowInvalidCertificate === 'boolean') {
+      demoConfig.smtp.allowInvalidCertificate = smtp.allowInvalidCertificate
+    }
     if (typeof smtp.user === 'string')
       demoConfig.smtp.user = smtp.user.trim() || demoConfig.smtp.user
     if (typeof smtp.password === 'string' && smtp.password.trim() && smtp.password !== '••••••••') {

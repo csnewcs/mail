@@ -11,12 +11,14 @@
   // IMAP defaults
   let imapPort = $state(993)
   let imapSecure = $state(true)
+  let imapAllowInvalidCertificate = $state(false)
   let imapMailbox = $state('INBOX')
   let imapPollSeconds = $state(15)
 
   // SMTP defaults
   let smtpPort = $state(587)
   let smtpSecure = $state(false)
+  let smtpAllowInvalidCertificate = $state(false)
 
   $effect(() => {
     formError = form?.error ?? null
@@ -310,7 +312,7 @@
               class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
             />
           </div>
-          <div class="col-span-2 flex items-center gap-2">
+          <div class="col-span-2 flex flex-wrap items-center gap-2">
             <!-- hidden field so the value is always submitted -->
             <input type="hidden" name="imapSecure" value={String(imapSecure)} />
             <button
@@ -330,6 +332,31 @@
               ></span>
             </button>
             <span class="text-sm text-zinc-300">TLS / SSL</span>
+          </div>
+          <div class="col-span-2 flex flex-wrap items-center gap-2">
+            <input
+              type="hidden"
+              name="imapAllowInvalidCertificate"
+              value={String(imapAllowInvalidCertificate)}
+            />
+            <button
+              type="button"
+              role="switch"
+              aria-checked={imapAllowInvalidCertificate}
+              aria-label="Allow self-signed IMAP certificate"
+              onclick={() => (imapAllowInvalidCertificate = !imapAllowInvalidCertificate)}
+              class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition {imapAllowInvalidCertificate
+                ? 'bg-amber-600'
+                : 'bg-zinc-700'}"
+            >
+              <span
+                class="inline-block h-4 w-4 translate-x-0.5 rounded-full bg-white shadow transition {imapAllowInvalidCertificate
+                  ? 'translate-x-4'
+                  : ''}"
+              ></span>
+            </button>
+            <span class="text-sm text-zinc-300">Allow self-signed certificate</span>
+            <span class="text-xs text-amber-400">Disables certificate verification</span>
           </div>
         </div>
       </section>
@@ -399,7 +426,7 @@
               class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
             />
           </div>
-          <div class="col-span-2 flex items-center gap-2">
+          <div class="col-span-2 flex flex-wrap items-center gap-2">
             <input type="hidden" name="smtpSecure" value={String(smtpSecure)} />
             <button
               type="button"
@@ -418,6 +445,31 @@
               ></span>
             </button>
             <span class="text-sm text-zinc-300">TLS / SSL</span>
+          </div>
+          <div class="col-span-2 flex flex-wrap items-center gap-2">
+            <input
+              type="hidden"
+              name="smtpAllowInvalidCertificate"
+              value={String(smtpAllowInvalidCertificate)}
+            />
+            <button
+              type="button"
+              role="switch"
+              aria-checked={smtpAllowInvalidCertificate}
+              aria-label="Allow self-signed SMTP certificate"
+              onclick={() => (smtpAllowInvalidCertificate = !smtpAllowInvalidCertificate)}
+              class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition {smtpAllowInvalidCertificate
+                ? 'bg-amber-600'
+                : 'bg-zinc-700'}"
+            >
+              <span
+                class="inline-block h-4 w-4 translate-x-0.5 rounded-full bg-white shadow transition {smtpAllowInvalidCertificate
+                  ? 'translate-x-4'
+                  : ''}"
+              ></span>
+            </button>
+            <span class="text-sm text-zinc-300">Allow self-signed certificate</span>
+            <span class="text-xs text-amber-400">Disables certificate verification</span>
           </div>
         </div>
       </section>

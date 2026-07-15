@@ -54,6 +54,7 @@ export const GET: RequestHandler = async ({ cookies }) => {
         host: config.imap.host,
         port: config.imap.port,
         secure: config.imap.secure,
+        allowInvalidCertificate: config.imap.allowInvalidCertificate,
         user: config.imap.user,
         mailbox: config.imap.mailbox,
         pollSeconds: config.imap.pollSeconds
@@ -63,6 +64,7 @@ export const GET: RequestHandler = async ({ cookies }) => {
         host: config.smtp.host,
         port: config.smtp.port,
         secure: config.smtp.secure,
+        allowInvalidCertificate: config.smtp.allowInvalidCertificate,
         user: config.smtp.user,
         from: config.smtp.from
       },
@@ -141,6 +143,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
       values.imapHost = backup.settings.imap.host?.trim() || null
       values.imapPort = backup.settings.imap.port ?? null
       values.imapSecure = backup.settings.imap.secure ?? null
+      values.imapAllowInvalidCertificate = backup.settings.imap.allowInvalidCertificate ?? null
       values.imapUser = backup.settings.imap.user?.trim() || null
       values.imapMailbox = backup.settings.imap.mailbox?.trim() || null
       values.imapPollSeconds = backup.settings.imap.pollSeconds ?? null
@@ -154,6 +157,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
       values.smtpHost = backup.settings.smtp.host?.trim() || null
       values.smtpPort = backup.settings.smtp.port ?? null
       values.smtpSecure = backup.settings.smtp.secure ?? null
+      values.smtpAllowInvalidCertificate = backup.settings.smtp.allowInvalidCertificate ?? null
       values.smtpUser = backup.settings.smtp.user?.trim() || null
       values.smtpFrom = backup.settings.smtp.from?.trim() || null
     }

@@ -176,6 +176,13 @@
       "when": 1784100000000,
       "tag": "0011_auth_methods",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1784100600000,
+      "tag": "0012_mail_tls_certificate",
+      "breakpoints": true
     }
   ]
 }
