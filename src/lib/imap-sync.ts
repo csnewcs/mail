@@ -18,6 +18,13 @@ export function seenJob(uid: number, mailbox: string, seen: boolean) {
   }
 }
 
+export function seenJobMatchesFlags(type: string, flags: string) {
+  const seen = (JSON.parse(flags) as string[]).includes('\\Seen')
+  if (type === 'mark_read') return seen
+  if (type === 'mark_unread') return !seen
+  return false
+}
+
 export function mailboxStatusUnchanged(
   state: { lastUid: number; uidValidity: number | null; highestModseq: bigint | null },
   status: { uidNext?: number; uidValidity?: bigint; highestModseq?: bigint }

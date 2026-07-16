@@ -11,6 +11,7 @@ import {
   newUidRange,
   previousDraftUidToDelete,
   seenJob,
+  seenJobMatchesFlags,
   shouldUseStatusFastPath,
   syncBatchComplete,
   uidValidityChanged
@@ -82,6 +83,14 @@ test('read and unread intents replace the same queued job', () => {
     type: 'mark_unread',
     dedupeKey: 'seen:Inbox:7'
   })
+})
+
+test('only acknowledges read state jobs after remote flags match', () => {
+  assert.equal(seenJobMatchesFlags('mark_read', '["\\\\Seen"]'), true)
+  assert.equal(seenJobMatchesFlags('mark_read', '[]'), false)
+  assert.equal(seenJobMatchesFlags('mark_unread', '[]'), true)
+  assert.equal(seenJobMatchesFlags('mark_unread', '["\\\\Seen"]'), false)
+  assert.equal(seenJobMatchesFlags('move', '["\\\\Seen"]'), false)
 })
 
 test('uses STATUS as a fast path only with matching identity, UIDNEXT and MODSEQ', () => {

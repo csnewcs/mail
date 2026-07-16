@@ -31,6 +31,7 @@ import {
   newUidRange,
   reconcileMailboxRows,
   seenJob,
+  seenJobMatchesFlags,
   shouldUseStatusFastPath,
   syncBatchComplete,
   uidValidityChanged
@@ -652,6 +653,7 @@ async function reconcileMailbox(client: ImapFlow, mailbox: string, changedSince?
   const remoteUids = searchResult
   const remoteUidSet = new Set(remoteUids)
   const remoteFlags = new Map<number, string>()
+  let requestCount = 1
 
   if (remoteUids.length > 0) {
     for await (const item of client.fetch(
@@ -662,10 +664,11 @@ async function reconcileMailbox(client: ImapFlow, mailbox: string, changedSince?
       if (!item.uid) continue
       remoteFlags.set(item.uid, mailboxFlagsJson(mailbox, Array.from(item.flags ?? []).map(String)))
     }
+    requestCount += 1
   }
 
-  // A job that changed after the remote snapshot began may have completed with newer flags.
-  const [localRows, pendingJobs] = await Promise.all([
+  // Read jobs remain durable until this snapshot confirms their remote flags.
+  const [localRows, activeJobs] = await Promise.all([
     db
       .select({
         id: mailMessageMailbox.id,
@@ -677,7 +680,12 @@ async function reconcileMailbox(client: ImapFlow, mailbox: string, changedSince?
       .innerJoin(mailMessage, eq(mailMessageMailbox.messageId, mailMessage.messageId))
       .where(eq(mailMessageMailbox.mailbox, mailbox)),
     db
-      .select({ uid: imapJob.uid })
+      .select({
+        id: imapJob.id,
+        uid: imapJob.uid,
+        type: imapJob.type,
+        status: imapJob.status
+      })
       .from(imapJob)
       .where(
         and(
@@ -685,14 +693,79 @@ async function reconcileMailbox(client: ImapFlow, mailbox: string, changedSince?
           or(
             eq(imapJob.status, 'pending'),
             eq(imapJob.status, 'running'),
-            gte(imapJob.updatedAt, reconciliationStartedAt)
+            gte(imapJob.updatedAt, reconciliationStartedAt),
+            and(
+              eq(imapJob.status, 'done'),
+              or(eq(imapJob.type, 'mark_read'), eq(imapJob.type, 'mark_unread'))
+            )
           )
         )
       )
   ])
-  const protectedUids = new Set(
-    pendingJobs.map((job) => job.uid).filter((uid): uid is number => uid !== null)
+
+  const completedSeenJobs = activeJobs.filter(
+    (job) => job.status === 'done' && (job.type === 'mark_read' || job.type === 'mark_unread')
   )
+  const unconfirmedUids = [
+    ...new Set(
+      completedSeenJobs
+        .map((job) => job.uid)
+        .filter(
+          (uid): uid is number => uid !== null && remoteUidSet.has(uid) && !remoteFlags.has(uid)
+        )
+    )
+  ]
+  if (unconfirmedUids.length > 0) {
+    for await (const item of client.fetch(
+      unconfirmedUids.join(','),
+      { uid: true, flags: true },
+      { uid: true }
+    )) {
+      if (!item.uid) continue
+      remoteFlags.set(item.uid, mailboxFlagsJson(mailbox, Array.from(item.flags ?? []).map(String)))
+    }
+    requestCount += 1
+  }
+
+  const protectedUids = new Set<number>()
+  for (const job of activeJobs) {
+    if (job.uid === null) continue
+    if (job.status !== 'done' || (job.type !== 'mark_read' && job.type !== 'mark_unread')) {
+      protectedUids.add(job.uid)
+      continue
+    }
+
+    if (!remoteUidSet.has(job.uid)) {
+      await db
+        .delete(imapJob)
+        .where(and(eq(imapJob.id, job.id), eq(imapJob.status, 'done'), eq(imapJob.type, job.type)))
+      continue
+    }
+
+    const flags = remoteFlags.get(job.uid)
+    if (flags !== undefined && seenJobMatchesFlags(job.type, flags)) {
+      await db
+        .delete(imapJob)
+        .where(and(eq(imapJob.id, job.id), eq(imapJob.status, 'done'), eq(imapJob.type, job.type)))
+      continue
+    }
+
+    protectedUids.add(job.uid)
+    if (flags !== undefined) {
+      const now = new Date()
+      await db
+        .update(imapJob)
+        .set({
+          status: 'pending',
+          attemptCount: 0,
+          availableAt: now,
+          lastError: null,
+          updatedAt: now
+        })
+        .where(and(eq(imapJob.id, job.id), eq(imapJob.status, 'done'), eq(imapJob.type, job.type)))
+    }
+  }
+
   const removedThreadKeys = new Set<string>()
 
   for (const change of reconcileMailboxRows(localRows, remoteUidSet, remoteFlags, protectedUids)) {
@@ -703,12 +776,17 @@ async function reconcileMailbox(client: ImapFlow, mailbox: string, changedSince?
       await db
         .update(mailMessageMailbox)
         .set({ flags: change.flags, syncedAt: new Date() })
-        .where(eq(mailMessageMailbox.id, change.row.id))
+        .where(
+          and(
+            eq(mailMessageMailbox.id, change.row.id),
+            eq(mailMessageMailbox.flags, change.row.flags)
+          )
+        )
     }
   }
 
   await refreshThreadSummaries(mailbox, removedThreadKeys)
-  return remoteUids.length > 0 ? 2 : 1
+  return requestCount
 }
 
 async function reconcileMailboxWithFallback(
