@@ -5,20 +5,7 @@ import { db } from '$lib/server/db'
 import { mailConfig, mailFilter, savedSearch } from '$lib/server/db/schema'
 import { invalidateAuth } from '$lib/server/auth'
 import { getDisplayConfig, invalidateConfigCache } from '$lib/server/config'
-import {
-  getCompactModeEnabled,
-  getSimplifiedViewEnabled,
-  getThemePreference,
-  getThemeStyle,
-  getThreadModeOnPageLoadEnabled,
-  getTranslationTargetLanguage,
-  setCompactModeEnabled,
-  setSimplifiedViewEnabled,
-  setThemePreference,
-  setThemeStyle,
-  setThreadModeOnPageLoadEnabled,
-  setTranslationTargetLanguage
-} from '$lib/server/preferences'
+import { getStoredPreferences, updateStoredPreferences } from '$lib/server/preferences'
 import {
   DEFAULT_SETTINGS_RESTORE_SELECTION,
   SETTINGS_BACKUP_SCHEMA_VERSION,
@@ -34,8 +21,9 @@ function exportMailServer(server: Record<string, unknown>) {
   return exported
 }
 
-export const GET: RequestHandler = async ({ cookies }) => {
+export const GET: RequestHandler = async () => {
   const config = await getDisplayConfig()
+  const preferences = await getStoredPreferences()
   const imapServers = config.imapServers
   const smtpServers = config.smtpServers
   const filters = isDemoModeEnabled()
@@ -71,14 +59,7 @@ export const GET: RequestHandler = async ({ cookies }) => {
       smtpServers: smtpServers.map(exportMailServer),
       signature: config.signature
     },
-    preferences: {
-      simplifiedView: getSimplifiedViewEnabled(cookies),
-      threadModeOnPageLoad: getThreadModeOnPageLoadEnabled(cookies),
-      compactMode: getCompactModeEnabled(cookies),
-      themePreference: getThemePreference(cookies),
-      themeStyle: getThemeStyle(cookies),
-      translationTargetLanguage: getTranslationTargetLanguage(cookies)
-    },
+    preferences: { ...preferences, compactMode: preferences.density !== 'comfortable' },
     filters: filters.map((filter) => ({
       field: filter.field,
       operator: filter.operator,
@@ -95,7 +76,7 @@ export const GET: RequestHandler = async ({ cookies }) => {
   })
 }
 
-export const POST: RequestHandler = async ({ request, cookies }) => {
+export const POST: RequestHandler = async ({ request }) => {
   const body = await request.json()
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
     return error(400, 'Request body must be a JSON object')
@@ -108,24 +89,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 
   if (isDemoModeEnabled()) {
     if (selection.preferences && backup.preferences) {
-      if (backup.preferences.simplifiedView != null) {
-        setSimplifiedViewEnabled(cookies, backup.preferences.simplifiedView)
-      }
-      if (backup.preferences.threadModeOnPageLoad != null) {
-        setThreadModeOnPageLoadEnabled(cookies, backup.preferences.threadModeOnPageLoad)
-      }
-      if (backup.preferences.compactMode != null) {
-        setCompactModeEnabled(cookies, backup.preferences.compactMode)
-      }
-      if (backup.preferences.themePreference != null) {
-        setThemePreference(cookies, backup.preferences.themePreference)
-      }
-      if (backup.preferences.themeStyle != null) {
-        setThemeStyle(cookies, backup.preferences.themeStyle)
-      }
-      if (backup.preferences.translationTargetLanguage != null) {
-        setTranslationTargetLanguage(cookies, backup.preferences.translationTargetLanguage)
-      }
+      await updateStoredPreferences(backup.preferences)
     }
 
     return json({ success: true, restored: selection })
@@ -176,24 +140,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
   }
 
   if (selection.preferences && backup.preferences) {
-    if (backup.preferences.simplifiedView != null) {
-      setSimplifiedViewEnabled(cookies, backup.preferences.simplifiedView)
-    }
-    if (backup.preferences.threadModeOnPageLoad != null) {
-      setThreadModeOnPageLoadEnabled(cookies, backup.preferences.threadModeOnPageLoad)
-    }
-    if (backup.preferences.compactMode != null) {
-      setCompactModeEnabled(cookies, backup.preferences.compactMode)
-    }
-    if (backup.preferences.themePreference != null) {
-      setThemePreference(cookies, backup.preferences.themePreference)
-    }
-    if (backup.preferences.themeStyle != null) {
-      setThemeStyle(cookies, backup.preferences.themeStyle)
-    }
-    if (backup.preferences.translationTargetLanguage != null) {
-      setTranslationTargetLanguage(cookies, backup.preferences.translationTargetLanguage)
-    }
+    await updateStoredPreferences(backup.preferences)
   }
 
   if (selection.filters && backup.filters) {

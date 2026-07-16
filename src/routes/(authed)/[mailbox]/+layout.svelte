@@ -39,13 +39,7 @@
   import { encodeThreadId } from '$lib/thread-url'
   import { keyboard, setupKeyboardHandler } from '$lib/keyboard.svelte'
   import { readOfflineList, saveOfflineList, type OfflineListCache } from '$lib/offline-cache'
-  import {
-    LIST_RATIO_COOKIE,
-    LIST_RATIO_COOKIE_MAX_AGE,
-    DEFAULT_LIST_RATIO,
-    MIN_LIST_PX,
-    MIN_DETAIL_PX
-  } from '$lib/list-width'
+  import { DEFAULT_LIST_RATIO, MIN_LIST_PX, MIN_DETAIL_PX } from '$lib/list-width'
 
   type DensityPreference = 'comfortable' | 'compact' | 'condensed'
 
@@ -2097,11 +2091,11 @@
   }
 
   function persistListRatio() {
-    try {
-      document.cookie = `${LIST_RATIO_COOKIE}=${listRatio.toFixed(4)}; path=/; max-age=${LIST_RATIO_COOKIE_MAX_AGE}; samesite=lax`
-    } catch {
-      /* ignore */
-    }
+    void fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ listRatio })
+    })
   }
 
   // Translate a desired list width (px) into a stored ratio, enforcing the

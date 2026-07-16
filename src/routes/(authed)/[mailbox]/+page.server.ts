@@ -7,7 +7,7 @@ import {
   resolveMailboxPath
 } from '$lib/server/mail'
 import { payloadBytes, perfLog, perfMs, perfNow } from '$lib/server/perf'
-import { getThreadModeOnPageLoadEnabled } from '$lib/server/preferences'
+import { getStoredPreferences } from '$lib/server/preferences'
 
 const PAGE_SIZE = 50
 
@@ -37,11 +37,11 @@ function serializeMessage(message: ListRow) {
   }
 }
 
-export const load: PageServerLoad = async ({ params, parent, cookies }) => {
+export const load: PageServerLoad = async ({ params, parent }) => {
   const startedAt = perfNow()
   const { imapMailboxes } = await parent()
   const mailboxPath = await resolveMailboxPath(params.mailbox, imapMailboxes)
-  const threaded = getThreadModeOnPageLoadEnabled(cookies)
+  const threaded = (await getStoredPreferences()).threadModeOnPageLoad
   const [rawMessages, total] = await Promise.all(
     threaded
       ? [listStoredThreads(mailboxPath, PAGE_SIZE + 1, 0), countStoredThreads(mailboxPath)]

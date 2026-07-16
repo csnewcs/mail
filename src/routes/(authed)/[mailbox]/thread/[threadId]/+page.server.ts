@@ -13,10 +13,7 @@ import { mailAttachment } from '$lib/server/db/schema'
 import { payloadBytes, perfLog, perfMs, perfNow } from '$lib/server/perf'
 import { inArray } from 'drizzle-orm'
 import { isDemoModeEnabled, listDemoAttachmentsForMessages } from '$lib/server/demo'
-import {
-  getBlockRemoteContentEnabled,
-  getRemoteContentAllowedSenders
-} from '$lib/server/preferences'
+import { getStoredPreferences } from '$lib/server/preferences'
 import { getThreadNote, serializeThreadNote } from '$lib/server/thread-notes'
 
 function serializeMessage(message: Awaited<ReturnType<typeof getMessagesInThread>>[number]) {
@@ -43,7 +40,7 @@ function serializeMessage(message: Awaited<ReturnType<typeof getMessagesInThread
   }
 }
 
-export const load: PageServerLoad = async ({ params, cookies }) => {
+export const load: PageServerLoad = async ({ params }) => {
   const startedAt = perfNow()
   const threadId = decodeThreadId(params.threadId)
   const mailboxPath = await resolveMailboxPath(params.mailbox)
@@ -91,16 +88,14 @@ export const load: PageServerLoad = async ({ params, cookies }) => {
     getThreadNote(threadId)
   ])
 
+  const preferences = await getStoredPreferences()
   const body = {
     threadId,
     mailbox: mailboxPath,
     messages: messages.map(serializeMessage),
     attachments,
     mailboxRole,
-    remoteContent: {
-      blockRemoteContent: getBlockRemoteContentEnabled(cookies),
-      allowedSenders: getRemoteContentAllowedSenders(cookies)
-    },
+    remoteContent: preferences.remoteContent,
     threadNote: serializeThreadNote(threadNote),
     metadata
   }

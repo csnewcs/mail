@@ -6,11 +6,7 @@ import { mailAttachment } from '$lib/server/db/schema'
 import { payloadBytes, perfLog, perfMs, perfNow } from '$lib/server/perf'
 import { eq } from 'drizzle-orm'
 import { isDemoModeEnabled, listDemoAttachmentsForMessage } from '$lib/server/demo'
-import {
-  getBlockRemoteContentEnabled,
-  getDensityPreference,
-  getRemoteContentAllowedSenders
-} from '$lib/server/preferences'
+import { getStoredPreferences } from '$lib/server/preferences'
 import { countHtmlTracingCodes } from '$lib/tracing-detector'
 
 function markReadAfterLoad(message: NonNullable<Awaited<ReturnType<typeof getStoredMessageById>>>) {
@@ -47,7 +43,7 @@ function serializeMessage(
   }
 }
 
-export const load: PageServerLoad = async ({ params, cookies }) => {
+export const load: PageServerLoad = async ({ params }) => {
   const startedAt = perfNow()
   const message = await getStoredMessageById(params.id)
 
@@ -70,15 +66,13 @@ export const load: PageServerLoad = async ({ params, cookies }) => {
         .from(mailAttachment)
         .where(eq(mailAttachment.messageId, message.messageId))
 
+  const preferences = await getStoredPreferences()
   const body = {
     message: serializeMessage(message, true),
     mailboxRole: getMailboxRole(message.mailbox),
-    density: getDensityPreference(cookies),
+    density: preferences.density,
     attachments,
-    remoteContent: {
-      blockRemoteContent: getBlockRemoteContentEnabled(cookies),
-      allowedSenders: getRemoteContentAllowedSenders(cookies)
-    }
+    remoteContent: preferences.remoteContent
   }
 
   perfLog('load.messagePage', {

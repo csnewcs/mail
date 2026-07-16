@@ -7,12 +7,8 @@
  * reading pane never gets squeezed out of existence.
  *
  * This module is intentionally framework/server agnostic so it can be imported
- * by both the server (cookie read in `+layout.server.ts`) and the client
- * component (cookie write on drag). Keep it free of `$lib/server` imports.
+ * by the server and client component. Keep it free of `$lib/server` imports.
  */
-
-export const LIST_RATIO_COOKIE = 'mail_list_ratio'
-export const LIST_RATIO_COOKIE_MAX_AGE = 60 * 60 * 24 * 365
 
 /** Fraction of the container occupied by the message list. Keep in sync with
  *  the `--list-basis` fallback in `layout.css` (`section.mail-list-pane`). */

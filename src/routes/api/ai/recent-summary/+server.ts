@@ -3,7 +3,7 @@ import type { RequestHandler } from './$types'
 import { listStoredMessages, resolveMailboxPath } from '$lib/server/mail'
 import { createOpenAITextStream } from '$lib/server/openai'
 import { logServerError } from '$lib/server/perf'
-import { getTranslationTargetLanguage } from '$lib/server/preferences'
+import { getStoredPreferences } from '$lib/server/preferences'
 import { generateDemoRecentSummary, isDemoModeEnabled } from '$lib/server/demo'
 
 const DEFAULT_LIMIT = 12
@@ -66,10 +66,10 @@ function textStream(text: string) {
   })
 }
 
-export const GET: RequestHandler = async ({ url, cookies }) => {
+export const GET: RequestHandler = async ({ url }) => {
   const mailboxSlug = url.searchParams.get('mailbox') ?? 'inbox'
   const limit = parseLimit(url.searchParams.get('limit'))
-  const targetLanguage = getTranslationTargetLanguage(cookies)
+  const { translationTargetLanguage: targetLanguage } = await getStoredPreferences()
   const mailboxPath = await resolveMailboxPath(mailboxSlug)
   const messages = await listStoredMessages(mailboxPath, limit, 0)
 

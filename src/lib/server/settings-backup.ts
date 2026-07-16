@@ -67,6 +67,11 @@ export type SettingsBackup = {
     themePreference?: 'light' | 'dark' | 'system'
     themeStyle?: ThemeStyle
     translationTargetLanguage?: string
+    density?: 'comfortable' | 'compact' | 'condensed'
+    remoteContent?: { blockRemoteContent?: boolean; allowedSenders?: string[] }
+    mailboxPreferences?: { order?: string[]; hidden?: string[] }
+    listRatio?: number
+    sidebarWidth?: number
   }
   filters?: Array<{
     field: string
@@ -375,7 +380,22 @@ export function validateSettingsBackup(value: unknown): {
         preferencesObject.translationTargetLanguage,
         'preferences.translationTargetLanguage',
         errors
-      )
+      ),
+      density: ['comfortable', 'compact', 'condensed'].includes(String(preferencesObject.density))
+        ? (preferencesObject.density as 'comfortable' | 'compact' | 'condensed')
+        : undefined,
+      remoteContent: optionalObject(
+        preferencesObject.remoteContent,
+        'preferences.remoteContent',
+        errors
+      ) as NonNullable<SettingsBackup['preferences']>['remoteContent'],
+      mailboxPreferences: optionalObject(
+        preferencesObject.mailboxPreferences,
+        'preferences.mailboxPreferences',
+        errors
+      ) as NonNullable<SettingsBackup['preferences']>['mailboxPreferences'],
+      listRatio: optionalNumber(preferencesObject.listRatio, 'preferences.listRatio', errors),
+      sidebarWidth: optionalNumber(preferencesObject.sidebarWidth, 'preferences.sidebarWidth', errors)
     }
   }
 

@@ -299,18 +299,7 @@
     }))
   )
 
-  function readStorage(key: string, fallback: number): number {
-    if (typeof window === 'undefined') return fallback
-    try {
-      const raw = localStorage.getItem(key)
-      const parsed = raw !== null ? Number(raw) : NaN
-      return Number.isFinite(parsed) ? parsed : fallback
-    } catch {
-      return fallback
-    }
-  }
-
-  let sidebarWidth = $state(readStorage('mail:sidebarWidth', 260))
+  let sidebarWidth = $state(data.sidebarWidth)
   let resizing = $state(false)
   let sync = $state<SyncStatus | null>(null)
   let syncStatusHovered = $state(false)
@@ -925,7 +914,11 @@
 
     function stop() {
       resizing = false
-      localStorage.setItem('mail:sidebarWidth', String(sidebarWidth))
+      void fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sidebarWidth })
+      })
       handle.removeEventListener('pointermove', onMove)
       handle.removeEventListener('pointerup', stop)
       handle.removeEventListener('pointercancel', stop)

@@ -183,6 +183,13 @@
       "when": 1784100600000,
       "tag": "0012_mail_tls_certificate",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1784180259000,
+      "tag": "0013_synced_preferences",
+      "breakpoints": true
     }
   ]
 }

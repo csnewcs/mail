@@ -2,9 +2,9 @@ import { json, error } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
 import { db } from '$lib/server/db'
 import { mailboxCatalog } from '$lib/server/db/schema'
-import { setMailboxPreferences } from '$lib/server/preferences'
+import { updateStoredPreferences } from '$lib/server/preferences'
 
-export const PATCH: RequestHandler = async ({ request, cookies }) => {
+export const PATCH: RequestHandler = async ({ request }) => {
   const body = await request.json().catch(() => ({}))
   if (!body.preferences || typeof body.preferences !== 'object') {
     return error(400, 'preferences object is required')
@@ -15,7 +15,18 @@ export const PATCH: RequestHandler = async ({ request, cookies }) => {
     const mailboxes = await db.select({ path: mailboxCatalog.path }).from(mailboxCatalog)
     const validPaths = mailboxes.map((mb) => mb.path)
 
-    setMailboxPreferences(cookies, body.preferences, validPaths)
+    const validPathSet = new Set(validPaths)
+    const preferences = body.preferences as { order?: unknown; hidden?: unknown }
+    const filterPaths = (value: unknown) =>
+      Array.isArray(value)
+        ? value.filter((path): path is string => typeof path === 'string' && validPathSet.has(path))
+        : []
+    await updateStoredPreferences({
+      mailboxPreferences: {
+        order: filterPaths(preferences.order),
+        hidden: filterPaths(preferences.hidden)
+      }
+    })
 
     return json({ success: true, preferences: body.preferences })
   } catch (err) {

@@ -1,18 +1,18 @@
 import type { LayoutServerLoad } from './$types'
 import { isDemoModeEnabled } from '$lib/server/demo'
-import {
-  getThemePreference,
-  getThemeStyle,
-  setThemePreference,
-  setThemeStyle
-} from '$lib/server/preferences'
+import { getStoredPreferences } from '$lib/server/preferences'
 
 export const load: LayoutServerLoad = async ({ cookies }) => {
-  const themePreference = getThemePreference(cookies)
-  const themeStyle = getThemeStyle(cookies)
-  // Rewrite legacy HttpOnly theme cookies so the pre-paint bootstrap can read them.
-  setThemePreference(cookies, themePreference)
-  setThemeStyle(cookies, themeStyle)
+  const { themePreference, themeStyle } = await getStoredPreferences()
+  // Keep a client-readable cache solely for the pre-hydration theme bootstrap.
+  const options = {
+    path: '/',
+    httpOnly: false,
+    sameSite: 'lax' as const,
+    maxAge: 60 * 60 * 24 * 365
+  }
+  cookies.set('mail_theme_preference', themePreference, options)
+  cookies.set('mail_theme_style', JSON.stringify(themeStyle), options)
 
   return {
     demoMode: isDemoModeEnabled(),

@@ -1,42 +1,25 @@
 import type { PageServerLoad } from './$types'
 import { getDisplayConfig } from '$lib/server/config'
-import {
-  getBlockRemoteContentEnabled,
-  getCompactModeEnabled,
-  getDensityPreference,
-  getMailboxPreferences,
-  getRemoteContentAllowedSenders,
-  getSimplifiedViewEnabled,
-  getThemePreference,
-  getThemeStyle,
-  getThreadModeOnPageLoadEnabled,
-  getTranslationTargetLanguage
-} from '$lib/server/preferences'
+import { getStoredPreferences } from '$lib/server/preferences'
 import { env } from '$env/dynamic/private'
 import { getImapMailboxes } from '$lib/server/mail'
 import { getLoginMethods } from '$lib/server/auth-methods'
 import { isDemoModeEnabled } from '$lib/server/demo'
 
-export const load: PageServerLoad = async ({ cookies }) => {
+export const load: PageServerLoad = async () => {
   const config = await getDisplayConfig()
-  const [imapMailboxes, loginMethods] = await Promise.all([getImapMailboxes(), getLoginMethods()])
+  const [imapMailboxes, loginMethods, preferences] = await Promise.all([
+    getImapMailboxes(),
+    getLoginMethods(),
+    getStoredPreferences()
+  ])
   return {
     config,
     demoMode: isDemoModeEnabled(),
     loginMethods,
     imapMailboxes,
     origin: env.ORIGIN ?? '',
-    simplifiedView: getSimplifiedViewEnabled(cookies),
-    threadModeOnPageLoad: getThreadModeOnPageLoadEnabled(cookies),
-    density: getDensityPreference(cookies),
-    compactMode: getCompactModeEnabled(cookies),
-    themePreference: getThemePreference(cookies),
-    themeStyle: getThemeStyle(cookies),
-    translationTargetLanguage: getTranslationTargetLanguage(cookies),
-    remoteContent: {
-      blockRemoteContent: getBlockRemoteContentEnabled(cookies),
-      allowedSenders: getRemoteContentAllowedSenders(cookies)
-    },
-    mailboxPreferences: getMailboxPreferences(cookies)
+    ...preferences,
+    compactMode: preferences.density !== 'comfortable'
   }
 }

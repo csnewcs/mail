@@ -3,18 +3,14 @@ import { db } from '$lib/server/db'
 import { mailConfig, mailMessage, mailMessageMailbox, savedSearch } from '$lib/server/db/schema'
 import { getImapMailboxes } from '$lib/server/mail'
 import { isAlwaysReadMailbox } from '$lib/mailbox'
-import {
-  applyMailboxPreferences,
-  getMailboxPreferences,
-  getSimplifiedViewEnabled,
-  getTranslationTargetLanguage
-} from '$lib/server/preferences'
+import { applyMailboxPreferences, getStoredPreferences } from '$lib/server/preferences'
 import { asc, eq, notLike, sql } from 'drizzle-orm'
 import { getDemoUnreadCounts, isDemoModeEnabled } from '$lib/server/demo'
 import { getImapConfigs } from '$lib/server/config'
 
-export const load: LayoutServerLoad = async ({ locals, cookies }) => {
-  const mailboxPreferences = getMailboxPreferences(cookies)
+export const load: LayoutServerLoad = async ({ locals }) => {
+  const preferences = await getStoredPreferences()
+  const { mailboxPreferences } = preferences
 
   if (isDemoModeEnabled()) {
     const imapMailboxes = await getImapMailboxes()
@@ -24,8 +20,9 @@ export const load: LayoutServerLoad = async ({ locals, cookies }) => {
       secondaryNames: [],
       unreadCounts: getDemoUnreadCounts(),
       user: locals.user ?? null,
-      simplifiedView: getSimplifiedViewEnabled(cookies),
-      translationTargetLanguage: getTranslationTargetLanguage(cookies),
+      simplifiedView: preferences.simplifiedView,
+      translationTargetLanguage: preferences.translationTargetLanguage,
+      sidebarWidth: preferences.sidebarWidth,
       savedSearches: []
     }
   }
@@ -62,8 +59,9 @@ export const load: LayoutServerLoad = async ({ locals, cookies }) => {
         .map((row) => [row.mailbox, Number(row.count ?? 0)])
     ) as Record<string, number>,
     user: locals.user ?? null,
-    simplifiedView: getSimplifiedViewEnabled(cookies),
-    translationTargetLanguage: getTranslationTargetLanguage(cookies),
+    simplifiedView: preferences.simplifiedView,
+    translationTargetLanguage: preferences.translationTargetLanguage,
+    sidebarWidth: preferences.sidebarWidth,
     savedSearches: savedSearchRows
   }
 }

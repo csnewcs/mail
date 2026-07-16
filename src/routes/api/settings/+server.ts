@@ -25,33 +25,14 @@ import {
 } from '$lib/server/config'
 import { invalidateAuth } from '$lib/server/auth'
 import {
-  getCompactModeEnabled,
-  getBlockRemoteContentEnabled,
-  getRemoteContentAllowedSenders,
-  getDensityPreference,
-  getMailboxPreferences,
-  getSimplifiedViewEnabled,
-  getThemePreference,
-  getThemeStyle,
-  getThreadModeOnPageLoadEnabled,
-  getTranslationTargetLanguage,
+  getStoredPreferences,
   normalizeDensityPreference,
-  setBlockRemoteContentEnabled,
-  setCompactModeEnabled,
-  setDensityPreference,
-  setMailboxPreferences,
-  setRemoteContentAllowedSenders,
-  setSimplifiedViewEnabled,
-  setThemePreference,
-  setThemeStyle,
-  setThreadModeOnPageLoadEnabled,
-  setTranslationTargetLanguage
+  updateStoredPreferences
 } from '$lib/server/preferences'
 import { logServerError } from '$lib/server/perf'
 import { isDemoModeEnabled, saveDemoSettings } from '$lib/server/demo'
 import { encryptSecret } from '$lib/server/secrets'
 import { writeAuditLog } from '$lib/server/audit-log'
-import { getImapMailboxes } from '$lib/server/mail'
 import {
   DEFAULT_QUIET_HOURS,
   normalizeQuietHoursTime,
@@ -126,83 +107,23 @@ function isAllowedAuthUrl(value: string): boolean {
   }
 }
 
-export const GET: RequestHandler = async ({ cookies }) => {
+export const GET: RequestHandler = async () => {
   const config = await getDisplayConfig()
+  const preferences = await getStoredPreferences()
   return json({
     ...config,
-    simplifiedView: getSimplifiedViewEnabled(cookies),
-    threadModeOnPageLoad: getThreadModeOnPageLoadEnabled(cookies),
-    density: getDensityPreference(cookies),
-    compactMode: getCompactModeEnabled(cookies),
-    themePreference: getThemePreference(cookies),
-    themeStyle: getThemeStyle(cookies),
-    translationTargetLanguage: getTranslationTargetLanguage(cookies),
-    remoteContent: {
-      blockRemoteContent: getBlockRemoteContentEnabled(cookies),
-      allowedSenders: getRemoteContentAllowedSenders(cookies)
-    },
-    mailboxPreferences: getMailboxPreferences(cookies)
+    ...preferences,
+    compactMode: preferences.density !== 'comfortable'
   })
 }
 
 export const POST: RequestHandler = async (event) => {
-  const { request, cookies } = event
+  const { request } = event
   const body = await request.json()
 
   if (isDemoModeEnabled()) {
     saveDemoSettings(body as Record<string, unknown>)
-
-    if (typeof body.simplifiedView === 'boolean') {
-      setSimplifiedViewEnabled(cookies, body.simplifiedView)
-    }
-
-    if (typeof body.threadModeOnPageLoad === 'boolean') {
-      setThreadModeOnPageLoadEnabled(cookies, body.threadModeOnPageLoad)
-    }
-
-    if (typeof body.compactMode === 'boolean') {
-      setCompactModeEnabled(cookies, body.compactMode)
-    }
-
-    if (typeof body.themePreference === 'string') {
-      setThemePreference(cookies, body.themePreference)
-    }
-
-    if (body.themeStyle && typeof body.themeStyle === 'object') {
-      setThemeStyle(cookies, body.themeStyle)
-    }
-
-    const density = normalizeDensityPreference(body.density)
-    if (density) {
-      setDensityPreference(cookies, density)
-    }
-
-    if (typeof body.translationTargetLanguage === 'string') {
-      setTranslationTargetLanguage(cookies, body.translationTargetLanguage)
-    }
-
-    if (body.remoteContent && typeof body.remoteContent === 'object') {
-      const remoteContent = body.remoteContent as Record<string, unknown>
-      if (typeof remoteContent.blockRemoteContent === 'boolean') {
-        setBlockRemoteContentEnabled(cookies, remoteContent.blockRemoteContent)
-      }
-      if (Array.isArray(remoteContent.allowedSenders)) {
-        setRemoteContentAllowedSenders(
-          cookies,
-          remoteContent.allowedSenders.filter((value): value is string => typeof value === 'string')
-        )
-      }
-    }
-
-    if (body.mailboxPreferences && typeof body.mailboxPreferences === 'object') {
-      const mailboxes = await getImapMailboxes()
-      setMailboxPreferences(
-        cookies,
-        body.mailboxPreferences,
-        mailboxes.map((mailbox) => mailbox.path)
-      )
-    }
-
+    await updateStoredPreferences(body)
     return json({ success: true })
   }
 
@@ -664,56 +585,7 @@ export const POST: RequestHandler = async (event) => {
       }
     }
 
-    if (typeof body.simplifiedView === 'boolean') {
-      setSimplifiedViewEnabled(cookies, body.simplifiedView)
-    }
-
-    if (typeof body.threadModeOnPageLoad === 'boolean') {
-      setThreadModeOnPageLoadEnabled(cookies, body.threadModeOnPageLoad)
-    }
-
-    if (typeof body.compactMode === 'boolean') {
-      setCompactModeEnabled(cookies, body.compactMode)
-    }
-
-    if (typeof body.themePreference === 'string') {
-      setThemePreference(cookies, body.themePreference)
-    }
-
-    if (body.themeStyle && typeof body.themeStyle === 'object') {
-      setThemeStyle(cookies, body.themeStyle)
-    }
-
-    const density = normalizeDensityPreference(body.density)
-    if (density) {
-      setDensityPreference(cookies, density)
-    }
-
-    if (typeof body.translationTargetLanguage === 'string') {
-      setTranslationTargetLanguage(cookies, body.translationTargetLanguage)
-    }
-
-    if (body.remoteContent && typeof body.remoteContent === 'object') {
-      const remoteContent = body.remoteContent as Record<string, unknown>
-      if (typeof remoteContent.blockRemoteContent === 'boolean') {
-        setBlockRemoteContentEnabled(cookies, remoteContent.blockRemoteContent)
-      }
-      if (Array.isArray(remoteContent.allowedSenders)) {
-        setRemoteContentAllowedSenders(
-          cookies,
-          remoteContent.allowedSenders.filter((value): value is string => typeof value === 'string')
-        )
-      }
-    }
-
-    if (body.mailboxPreferences && typeof body.mailboxPreferences === 'object') {
-      const mailboxes = await getImapMailboxes()
-      setMailboxPreferences(
-        cookies,
-        body.mailboxPreferences,
-        mailboxes.map((mailbox) => mailbox.path)
-      )
-    }
+    await updateStoredPreferences(body)
 
     if (shouldPersistConfig) {
       invalidateConfigCache()

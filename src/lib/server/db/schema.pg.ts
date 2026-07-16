@@ -62,6 +62,7 @@ export const mailConfig = pgTable('mail_config', {
   quietHoursStart: text('quiet_hours_start'),
   quietHoursEnd: text('quiet_hours_end'),
   quietHoursTimezone: text('quiet_hours_timezone'),
+  preferences: jsonb('preferences'),
   updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' })
 })
 

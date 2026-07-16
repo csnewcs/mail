@@ -7,11 +7,11 @@ import { isAlwaysReadMailbox } from '$lib/mailbox'
 import { payloadBytes, perfLog, perfMs, perfNow } from '$lib/server/perf'
 import { eq, notLike, sql } from 'drizzle-orm'
 import { getDemoUnreadCounts, isDemoModeEnabled } from '$lib/server/demo'
-import { applyMailboxPreferences, getMailboxPreferences } from '$lib/server/preferences'
+import { applyMailboxPreferences, getStoredPreferences } from '$lib/server/preferences'
 
-export const GET: RequestHandler = async ({ cookies }) => {
+export const GET: RequestHandler = async () => {
   const startedAt = perfNow()
-  const mailboxPreferences = getMailboxPreferences(cookies)
+  const { mailboxPreferences } = await getStoredPreferences()
 
   if (isDemoModeEnabled()) {
     const mailboxes = applyMailboxPreferences(await getImapMailboxes(), mailboxPreferences)

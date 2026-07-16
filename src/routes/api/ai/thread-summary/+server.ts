@@ -3,7 +3,7 @@ import type { RequestHandler } from './$types'
 import { getMessagesInThread, resolveMailboxPath } from '$lib/server/mail'
 import { createOpenAITextStream } from '$lib/server/openai'
 import { logServerError } from '$lib/server/perf'
-import { getTranslationTargetLanguage } from '$lib/server/preferences'
+import { getStoredPreferences } from '$lib/server/preferences'
 import { generateDemoThreadSummary, isDemoModeEnabled } from '$lib/server/demo'
 
 const encoder = new TextEncoder()
@@ -74,10 +74,10 @@ function textStream(text: string) {
   })
 }
 
-export const GET: RequestHandler = async ({ url, cookies }) => {
+export const GET: RequestHandler = async ({ url }) => {
   const mailboxSlug = url.searchParams.get('mailbox') ?? 'inbox'
   const threadId = url.searchParams.get('threadId')
-  const targetLanguage = getTranslationTargetLanguage(cookies)
+  const { translationTargetLanguage: targetLanguage } = await getStoredPreferences()
   if (!threadId) error(400, 'Missing threadId')
 
   const mailboxPath = await resolveMailboxPath(mailboxSlug)
