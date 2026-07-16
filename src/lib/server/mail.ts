@@ -29,6 +29,7 @@ import {
   isCondstoreRejection,
   newUidRange,
   reconcileMailboxRows,
+  seenJob,
   shouldUseStatusFastPath,
   syncBatchComplete,
   uidValidityChanged
@@ -47,7 +48,7 @@ import {
   imapJob,
   syncRuntime
 } from './db/schema'
-import { enqueueMarkRead, enqueueMarkUnread, enqueueMoveMessage } from './imap-queue'
+import { enqueueMoveMessage } from './imap-queue'
 import { getImapConfig, getImapConfigs, type ImapConfig } from './config'
 import { logServerError, perfError, perfLog, perfMs, perfNow } from './perf'
 import { withRetry } from './retry'
@@ -2260,26 +2261,51 @@ export async function markMessagesSeen(ids: number[], seen: boolean) {
   const changedRows = changedReadStateCopies(rows, new Set(messageIds), seen)
   const touchedThreadKeysByMailbox = new Map<string, Set<string>>()
 
-  for (const row of changedRows) {
-    await db
-      .update(mailMessageMailbox)
-      .set({ flags: row.flags })
-      .where(eq(mailMessageMailbox.id, row.id))
+  await db.transaction(async (tx) => {
+    for (const row of changedRows) {
+      await tx
+        .update(mailMessageMailbox)
+        .set({ flags: row.flags })
+        .where(eq(mailMessageMailbox.id, row.id))
 
-    const touchedThreadKeys = touchedThreadKeysByMailbox.get(row.mailbox) ?? new Set<string>()
-    touchedThreadKeys.add(row.threadKey)
-    touchedThreadKeysByMailbox.set(row.mailbox, touchedThreadKeys)
-  }
+      const job = seenJob(row.uid, row.mailbox, seen)
+      const now = new Date()
+      await tx
+        .insert(imapJob)
+        .values({
+          type: job.type,
+          mailbox: row.mailbox,
+          uid: row.uid,
+          targetMailbox: null,
+          status: 'pending',
+          dedupeKey: job.dedupeKey,
+          attemptCount: 0,
+          availableAt: now,
+          lastError: null,
+          createdAt: now,
+          updatedAt: now
+        })
+        .onConflictDoUpdate({
+          target: imapJob.dedupeKey,
+          set: {
+            type: job.type,
+            status: 'pending',
+            attemptCount: 0,
+            availableAt: now,
+            lastError: null,
+            updatedAt: now
+          }
+        })
+
+      const touchedThreadKeys = touchedThreadKeysByMailbox.get(row.mailbox) ?? new Set<string>()
+      touchedThreadKeys.add(row.threadKey)
+      touchedThreadKeysByMailbox.set(row.mailbox, touchedThreadKeys)
+    }
+  })
 
   for (const [mailbox, threadKeys] of touchedThreadKeysByMailbox) {
     await refreshThreadSummaries(mailbox, threadKeys)
   }
-
-  await Promise.all(
-    changedRows.map((row) =>
-      seen ? enqueueMarkRead(row.uid, row.mailbox) : enqueueMarkUnread(row.uid, row.mailbox)
-    )
-  )
 
   return changedRows.length
 }
