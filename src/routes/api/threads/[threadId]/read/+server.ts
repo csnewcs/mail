@@ -1,7 +1,9 @@
 import { error, json } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
-import { getMessagesInThread, markMessageAsRead, resolveMailboxPath } from '$lib/server/mail'
+import { getMessagesInThread, markMessagesSeen, resolveMailboxPath } from '$lib/server/mail'
+import { unreadMessageRows } from '$lib/read-state'
 import { decodeThreadId } from '$lib/thread-url'
+import { isDemoModeEnabled, markDemoMessagesSeen } from '$lib/server/demo'
 
 export const POST: RequestHandler = async ({ params, request }) => {
   const body = await request.json().catch(() => error(400, 'Invalid JSON body'))
@@ -22,12 +24,15 @@ export const POST: RequestHandler = async ({ params, request }) => {
   }
 
   const messages = await getMessagesInThread(threadId, mailboxPath)
-  const unreadMessages = messages.filter((message) => {
-    const flags = JSON.parse(message.flags) as string[]
-    return !flags.includes('\\Seen')
-  })
+  const unreadMessages = unreadMessageRows(messages)
 
-  await Promise.all(unreadMessages.map((message) => markMessageAsRead(message)))
+  const ids = unreadMessages.map((message) => message.id)
+  const count =
+    ids.length === 0
+      ? 0
+      : isDemoModeEnabled()
+        ? markDemoMessagesSeen(ids, true)
+        : await markMessagesSeen(ids, true)
 
-  return json({ ok: true, count: unreadMessages.length })
+  return json({ ok: true, count })
 }

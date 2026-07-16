@@ -3,7 +3,7 @@ import type { PageServerLoad } from './$types'
 import {
   getMessagesInThread,
   getThreadMetadata,
-  markMessageAsRead,
+  markMessagesSeen,
   getMailboxRole,
   resolveMailboxPath
 } from '$lib/server/mail'
@@ -12,9 +12,14 @@ import { db } from '$lib/server/db'
 import { mailAttachment } from '$lib/server/db/schema'
 import { payloadBytes, perfLog, perfMs, perfNow } from '$lib/server/perf'
 import { inArray } from 'drizzle-orm'
-import { isDemoModeEnabled, listDemoAttachmentsForMessages } from '$lib/server/demo'
+import {
+  isDemoModeEnabled,
+  listDemoAttachmentsForMessages,
+  markDemoMessagesSeen
+} from '$lib/server/demo'
 import { getStoredPreferences } from '$lib/server/preferences'
 import { getThreadNote, serializeThreadNote } from '$lib/server/thread-notes'
+import { unreadMessageRows } from '$lib/read-state'
 
 function serializeMessage(message: Awaited<ReturnType<typeof getMessagesInThread>>[number]) {
   const flags = JSON.parse(message.flags) as string[]
@@ -54,13 +59,15 @@ export const load: PageServerLoad = async ({ params }) => {
     redirect(302, `/${params.mailbox}/${messages[0].id}`)
   }
 
-  const latestMessage = messages.reduce((latest, message) =>
-    (message.receivedAt?.getTime() ?? 0) > (latest.receivedAt?.getTime() ?? 0) ? message : latest
-  )
-  await markMessageAsRead(latestMessage)
-  const latestFlags = JSON.parse(latestMessage.flags) as string[]
-  if (!latestFlags.includes('\\Seen')) {
-    latestMessage.flags = JSON.stringify([...latestFlags, '\\Seen'])
+  const unreadMessages = unreadMessageRows(messages)
+  const unreadIds = unreadMessages.map((message) => message.id)
+  if (unreadIds.length > 0) {
+    if (isDemoModeEnabled()) markDemoMessagesSeen(unreadIds, true)
+    else await markMessagesSeen(unreadIds, true)
+  }
+  for (const message of unreadMessages) {
+    const flags = JSON.parse(message.flags) as string[]
+    message.flags = JSON.stringify([...flags, '\\Seen'])
   }
 
   const messageIds = messages.map((m) => m.messageId)

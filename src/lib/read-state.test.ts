@@ -1,6 +1,19 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { changedReadStateCopies } from './read-state.ts'
+import { changedReadStateCopies, unreadMessageRows } from './read-state.ts'
+
+test('finds every unread message in a thread', () => {
+  const rows = [
+    { id: 1, flags: '["\\\\Seen"]' },
+    { id: 2, flags: '[]' },
+    { id: 3, flags: '["\\\\Flagged"]' }
+  ]
+
+  assert.deepEqual(
+    unreadMessageRows(rows).map((row) => row.id),
+    [2, 3]
+  )
+})
 
 test('updates every mailbox copy selected by Message-ID', () => {
   const rows = [

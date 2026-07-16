@@ -6,6 +6,10 @@ type MessageCopy = {
   flags: string
 }
 
+export function unreadMessageRows<T extends { flags: string }>(rows: T[]) {
+  return rows.filter((row) => !(JSON.parse(row.flags) as string[]).includes('\\Seen'))
+}
+
 export function changedReadStateCopies<T extends MessageCopy>(
   rows: T[],
   messageIds: ReadonlySet<string>,
