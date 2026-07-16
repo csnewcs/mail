@@ -63,6 +63,7 @@
       simplifiedView: boolean
       mailboxPreferences: { order: string[]; hidden: string[] }
       secondaryNames: string[]
+      sidebarWidth: number
       demoMode: boolean
     }
     children: import('svelte').Snippet
