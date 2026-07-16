@@ -9,12 +9,6 @@ import { isDemoModeEnabled, listDemoAttachmentsForMessage } from '$lib/server/de
 import { getStoredPreferences } from '$lib/server/preferences'
 import { countHtmlTracingCodes } from '$lib/tracing-detector'
 
-function markReadAfterLoad(message: NonNullable<Awaited<ReturnType<typeof getStoredMessageById>>>) {
-  void markMessageAsRead(message).catch((error) => {
-    console.error('[message-open] failed to mark read:', error)
-  })
-}
-
 function serializeMessage(
   message: NonNullable<Awaited<ReturnType<typeof getStoredMessageById>>>,
   seen = false
@@ -51,7 +45,7 @@ export const load: PageServerLoad = async ({ params }) => {
     error(404, 'Message not found')
   }
 
-  markReadAfterLoad(message)
+  await markMessageAsRead(message)
 
   // Load attachment metadata (no content blobs — served via /api/attachments/[id])
   const attachments = isDemoModeEnabled()

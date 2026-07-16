@@ -5,6 +5,7 @@ import {
   count,
   desc,
   eq,
+  gte,
   ilike,
   inArray,
   isNull,
@@ -645,6 +646,7 @@ async function resetMailboxForUidValidity(mailbox: string) {
 }
 
 async function reconcileMailbox(client: ImapFlow, mailbox: string, changedSince?: bigint) {
+  const reconciliationStartedAt = new Date()
   const searchResult = await client.search({ all: true }, { uid: true })
   if (searchResult === false) throw new Error(`UID SEARCH failed for ${mailbox}`)
   const remoteUids = searchResult
@@ -662,6 +664,7 @@ async function reconcileMailbox(client: ImapFlow, mailbox: string, changedSince?
     }
   }
 
+  // A job that changed after the remote snapshot began may have completed with newer flags.
   const [localRows, pendingJobs] = await Promise.all([
     db
       .select({
@@ -679,7 +682,11 @@ async function reconcileMailbox(client: ImapFlow, mailbox: string, changedSince?
       .where(
         and(
           eq(imapJob.mailbox, mailbox),
-          or(eq(imapJob.status, 'pending'), eq(imapJob.status, 'running'))
+          or(
+            eq(imapJob.status, 'pending'),
+            eq(imapJob.status, 'running'),
+            gte(imapJob.updatedAt, reconciliationStartedAt)
+          )
         )
       )
   ])
