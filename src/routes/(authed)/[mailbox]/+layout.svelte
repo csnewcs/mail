@@ -386,10 +386,6 @@
 
     return Math.min(simplifiedMarkReadDragDistance / simplifiedMarkReadThreshold, 1)
   })
-  const simplifiedMarkReadReady = $derived(
-    activeSimplifiedMessageUnread && simplifiedMarkReadGestureReady
-  )
-
   $effect(() => {
     const routeQuery = page.url.searchParams.get('q')?.trim() ?? ''
     if (routeQuery === lastRouteSearchQuery) return
@@ -922,7 +918,7 @@
     }
   }
 
-  function markMessageRowRead(message: Message) {
+  function markMessageRowRead(message: Message, showSuccessToast = false) {
     const shouldMarkThread = threadedMode && message.threadId && (message.threadCount ?? 0) > 1
     const shouldMarkMessage = !message.flags.includes('\\Seen')
 
@@ -961,6 +957,7 @@
         }
 
         notifyMailboxStateChanged('message-opened:mark-read')
+        if (showSuccessToast) toast('Message marked as read')
       })
       .catch((error) => {
         errorDialogMessage = errorMessageFromUnknown(error, 'Failed to mark message read.')
@@ -1296,7 +1293,7 @@
     if (shouldMarkReadByDrag) {
       const message = activeSimplifiedMessage
       if (message && isUnread(message.flags, message.hasUnread)) {
-        markMessageRowRead(message)
+        markMessageRowRead(message, true)
       }
       simplifiedDragOffsetX = 0
       simplifiedDragOffsetY = 0
@@ -1365,25 +1362,8 @@
     return 1 - offset * 0.18 + progress * (offset === 1 ? 0.16 : 0.08)
   }
 
-  function simplifiedMarkReadGlowStyle() {
-    const opacity = simplifiedMarkReadReady ? 0.34 : simplifiedMarkReadProgress * 0.22
-    return `opacity: ${opacity};`
-  }
-
-  function simplifiedMarkReadPillStyle() {
-    const progress = simplifiedMarkReadProgress
-    const opacity = progress === 0 ? 0 : Math.min(0.2 + progress * 0.8, 1)
-    const lift = Math.round((1 - progress) * 10)
-    const scale = simplifiedMarkReadReady ? 1 : 0.96 + progress * 0.04
-    return `opacity: ${opacity}; transform: translateX(-50%) translateY(${lift}px) scale(${scale});`
-  }
-
-  function simplifiedMarkReadProgressStyle() {
-    return `opacity: ${simplifiedMarkReadProgress === 0 ? 0 : 1};`
-  }
-
-  function simplifiedMarkReadProgressBarStyle() {
-    return `transform: scaleX(${simplifiedMarkReadProgress});`
+  function simplifiedMarkReadBackgroundStyle() {
+    return `opacity: ${simplifiedMarkReadProgress * 0.1};`
   }
 
   let lastSelectedIndex: number | null = null
@@ -2268,7 +2248,7 @@
   <section
     class="app-themed-content flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-[#0d0d10]"
   >
-    <div class={listHeaderClass}>
+    <div class={[listHeaderClass, 'relative']}>
       <div class="flex items-start justify-between gap-4">
         <div class="min-w-0">
           <p class="truncate text-sm font-semibold text-white sm:text-base">{folderDisplayName}</p>
@@ -2283,7 +2263,7 @@
           {/if}
         </div>
 
-        <div class="flex justify-end overflow-x-auto">
+        <div class="flex justify-end overflow-x-auto md:pt-11">
           <div class="inline-flex min-w-max items-center gap-1.5 sm:gap-2">
             <button
               type="button"
@@ -2394,7 +2374,7 @@
       </p>
 
       {#if isDesktop || mobileSearchOpen || searchQuery.trim().length > 0}
-        <div class="relative mt-3 flex md:mt-4">
+        <div class="relative mt-3 flex md:absolute md:top-4 md:right-5 md:mt-0 md:w-56 lg:w-64">
           <label class="min-w-0 flex-1">
             <span class="sr-only">Search messages</span>
             <input
@@ -2403,7 +2383,7 @@
               placeholder="Search"
               onfocus={onSearchFocus}
               onblur={onSearchBlur}
-              class={listSearchInputClass}
+              class={[listSearchInputClass, 'md:px-3 md:py-2']}
             />
           </label>
           <button
@@ -2411,7 +2391,7 @@
             onclick={() => (showSavedSearchMenu = !showSavedSearchMenu)}
             aria-label="Saved searches"
             title="Saved searches"
-            class="grid w-11 place-items-center rounded-r-xl border border-transparent border-l-white/8 bg-black/30 text-zinc-300 hover:bg-white/8 md:border-white/8"
+            class="grid w-11 place-items-center rounded-r-xl border border-transparent border-l-white/8 bg-black/30 text-zinc-300 hover:bg-white/8 md:w-9 md:border-white/8"
           >
             <Bookmark size={15} />
           </button>
@@ -2563,8 +2543,6 @@
               <article
                 class={[
                   'simplified-mail-card absolute inset-0 overflow-hidden rounded-3xl border border-white/10 bg-[#131319] p-6 text-left shadow-2xl shadow-black/30 lg:p-7',
-                  offset === 0 && simplifiedMarkReadProgress > 0 ? 'border-sky-400/20' : '',
-                  offset === 0 && simplifiedMarkReadReady ? 'ring-1 ring-sky-300/25' : '',
                   offset === 0
                     ? [
                         'cursor-grab touch-none will-change-transform active:cursor-grabbing',
@@ -2582,30 +2560,9 @@
               >
                 {#if offset === 0 && activeSimplifiedMessageUnread}
                   <div
-                    class="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-sky-400/18 via-sky-400/6 to-transparent transition-opacity duration-150"
-                    style={simplifiedMarkReadGlowStyle()}
+                    class="pointer-events-none absolute inset-0 bg-sky-400 transition-opacity duration-150"
+                    style={simplifiedMarkReadBackgroundStyle()}
                   ></div>
-                  <div
-                    class={[
-                      'pointer-events-none absolute top-5 left-1/2 z-20 inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium shadow-lg backdrop-blur transition-[opacity,transform,border-color,background-color,color] duration-150',
-                      simplifiedMarkReadReady
-                        ? 'border-sky-300/30 bg-sky-400/10 text-sky-100 shadow-sky-950/30'
-                        : 'border-white/10 bg-zinc-950/70 text-zinc-300 shadow-black/20'
-                    ]}
-                    style={simplifiedMarkReadPillStyle()}
-                  >
-                    <MailOpen size={13} />
-                    {simplifiedMarkReadReady ? 'Release to mark read' : 'Drag up to mark read'}
-                  </div>
-                  <div
-                    class="pointer-events-none absolute inset-x-6 top-16 z-20 h-px overflow-hidden rounded-full bg-white/8"
-                    style={simplifiedMarkReadProgressStyle()}
-                  >
-                    <div
-                      class="h-full origin-left rounded-full bg-sky-300/80"
-                      style={simplifiedMarkReadProgressBarStyle()}
-                    ></div>
-                  </div>
                 {/if}
 
                 <div class="relative z-10 flex h-full flex-col">
