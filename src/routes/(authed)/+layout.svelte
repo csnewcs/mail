@@ -175,7 +175,7 @@
       let parentKey: string | null = null
 
       for (const [index, segment] of normalizedSegments.entries()) {
-        const prefix = isSecondary ? (segments[0] + mailbox.delimiter) : ''
+        const prefix = isSecondary ? segments[0] + mailbox.delimiter : ''
         const key = prefix + normalizedSegments.slice(0, index + 1).join(mailbox.delimiter)
         let node = nodes.get(key)
 
@@ -308,6 +308,7 @@
   let drafts = $state<DraftListRow[]>([])
   let draftsError = $state<string | null>(null)
   let pushNoticeError = $state<string | null>(null)
+  let pushNoticeSettingUp = $state(false)
   let savedSearches = $state<SavedSearch[]>([])
   let smartFolderError = $state<string | null>(null)
   type ModalState = {
@@ -742,11 +743,22 @@
 
   async function enablePushFromNotice() {
     pushNoticeError = null
+    pushNoticeSettingUp = true
     try {
+      if (pushNotifications.status === 'server-unconfigured') {
+        const response = await fetch('/api/push/generate-vapid', { method: 'POST' })
+        if (!response.ok) {
+          throw new Error(await readErrorMessage(response, 'Failed to generate VAPID keys.'))
+        }
+        await pushNotifications.refresh(true)
+      }
+
       const enabled = await pushNotifications.enable()
       if (enabled) toast('Push notifications enabled')
     } catch (error) {
       pushNoticeError = errorMessageFromUnknown(error, 'Failed to enable notifications.')
+    } finally {
+      pushNoticeSettingUp = false
     }
   }
 
@@ -878,7 +890,7 @@
       if (!res.ok) {
         throw new Error(await readErrorMessage(res, 'Failed to save order.'))
       }
-      
+
       if (data.mailboxPreferences) {
         data.mailboxPreferences.order = filteredBase
       }
@@ -1070,7 +1082,10 @@
             ? mailboxes.findIndex((mb) => mb.slug === row.slug)
             : -1}
           {@const currentServer = getMailboxServer(row.path, data.secondaryNames)}
-          {@const prevServer = index > 0 ? getMailboxServer(visibleMailboxRows[index - 1].path, data.secondaryNames) : null}
+          {@const prevServer =
+            index > 0
+              ? getMailboxServer(visibleMailboxRows[index - 1].path, data.secondaryNames)
+              : null}
 
           {#if index === 0 || currentServer !== prevServer}
             {#if index > 0}
@@ -1079,7 +1094,7 @@
             <button
               type="button"
               onclick={() => toggleAccountCollapsed(currentServer)}
-              class="flex w-full items-center gap-1.5 px-3 pt-2 pb-1 text-[10px] font-bold tracking-wider text-zinc-500 hover:text-zinc-300 uppercase select-none text-left"
+              class="flex w-full items-center gap-1.5 px-3 pt-2 pb-1 text-left text-[10px] font-bold tracking-wider text-zinc-500 uppercase select-none hover:text-zinc-300"
             >
               {#if collapsedAccounts.has(currentServer)}
                 <ChevronRight size={10} class="text-zinc-600" />
@@ -1092,118 +1107,118 @@
 
           {#if !collapsedAccounts.has(currentServer)}
             <div
-            role="listitem"
-            draggable="true"
-            ondragstart={(e) => {
-              if (row.path) {
-                draggingMailboxPath = row.path
-                e.dataTransfer?.setData('text/plain', row.path)
-              }
-            }}
-            ondragover={(e) => {
-              if (row.path) {
-                handleDragOver(e, row.path)
-              }
-            }}
-            ondragleave={() => {
-              dragOverMailboxPath = null
-              dragOverDirection = null
-            }}
-            ondrop={(e) => {
-              e.preventDefault()
-              if (row.path) {
-                void handleMailboxDrop(row.path)
-              }
-            }}
-            class={[
-              'group flex items-center gap-1 rounded-xl transition-all duration-75 relative',
-              row.selectable && mailbox === row.slug
-                ? 'bg-white/8 text-white'
-                : 'text-zinc-400 hover:bg-white/4 hover:text-zinc-200',
-              dragOverMailboxPath === row.path && dragOverDirection === 'above'
-                ? 'shadow-[inset_0_2px_0_0_#10b981]'
-                : '',
-              dragOverMailboxPath === row.path && dragOverDirection === 'below'
-                ? 'shadow-[inset_0_-2px_0_0_#10b981]'
-                : '',
-              row.selectable &&
-              keyboard.panel === 'mailboxes' &&
-              selectableIndex >= 0 &&
-              keyboard.focusedMailboxIndex === selectableIndex
-                ? 'ring-1 ring-blue-500/50 ring-inset'
-                : ''
-            ]}
-            style={`padding-left: ${12 + row.depth * 14}px;`}
-          >
-            {#if row.selectable && row.slug}
-              <a
-                href={resolve(`/${row.slug}`)}
-                data-mailbox-item
-                onclick={() => {
-                  mobileNavOpen = false
-                  keyboard.panel = 'list'
-                }}
-                class={[
-                  'flex min-w-0 flex-1 items-center gap-2.5 rounded-xl px-2 py-2 text-sm transition',
-                  mailbox === row.slug ? 'font-medium text-white' : ''
-                ]}
-              >
-                <row.icon size={15} class="shrink-0" />
-                <span class="truncate">{row.label}</span>
-                {#if row.unreadCount > 0}
-                  <span
-                    class="ml-auto shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-medium text-zinc-200"
-                  >
-                    {row.unreadCount}
-                  </span>
-                {/if}
-                {#if row.hasChildren}
-                  <button
-                    type="button"
-                    class="shrink-0 rounded-md text-zinc-500 transition hover:bg-white/6 hover:text-zinc-200"
-                    aria-label={row.expanded ? `Collapse ${row.label}` : `Expand ${row.label}`}
-                    aria-expanded={row.expanded}
-                    onclick={(event) => {
-                      event.preventDefault()
-                      event.stopPropagation()
-                      toggleMailboxExpanded(row.key)
-                    }}
-                  >
-                    {#if row.expanded}
-                      <ChevronDown size={14} />
-                    {:else}
-                      <ChevronRight size={14} />
-                    {/if}
-                  </button>
-                {/if}
-              </a>
-            {:else}
-              <button
-                type="button"
-                class="flex min-w-0 flex-1 items-center gap-2.5 rounded-xl px-2 py-2 text-left text-sm text-zinc-300 transition"
-                onclick={() => toggleMailboxExpanded(row.key)}
-              >
-                <row.icon size={15} class="shrink-0" />
-                <span class="truncate">{row.label}</span>
-                {#if row.unreadCount > 0}
-                  <span
-                    class="ml-auto shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-medium text-zinc-200"
-                  >
-                    {row.unreadCount}
-                  </span>
-                {/if}
-                {#if row.hasChildren}
-                  <span class="shrink-0 text-zinc-500">
-                    {#if row.expanded}
-                      <ChevronDown size={14} />
-                    {:else}
-                      <ChevronRight size={14} />
-                    {/if}
-                  </span>
-                {/if}
-              </button>
-            {/if}
-          </div>
+              role="listitem"
+              draggable="true"
+              ondragstart={(e) => {
+                if (row.path) {
+                  draggingMailboxPath = row.path
+                  e.dataTransfer?.setData('text/plain', row.path)
+                }
+              }}
+              ondragover={(e) => {
+                if (row.path) {
+                  handleDragOver(e, row.path)
+                }
+              }}
+              ondragleave={() => {
+                dragOverMailboxPath = null
+                dragOverDirection = null
+              }}
+              ondrop={(e) => {
+                e.preventDefault()
+                if (row.path) {
+                  void handleMailboxDrop(row.path)
+                }
+              }}
+              class={[
+                'group relative flex items-center gap-1 rounded-xl transition-all duration-75',
+                row.selectable && mailbox === row.slug
+                  ? 'bg-white/8 text-white'
+                  : 'text-zinc-400 hover:bg-white/4 hover:text-zinc-200',
+                dragOverMailboxPath === row.path && dragOverDirection === 'above'
+                  ? 'shadow-[inset_0_2px_0_0_#10b981]'
+                  : '',
+                dragOverMailboxPath === row.path && dragOverDirection === 'below'
+                  ? 'shadow-[inset_0_-2px_0_0_#10b981]'
+                  : '',
+                row.selectable &&
+                keyboard.panel === 'mailboxes' &&
+                selectableIndex >= 0 &&
+                keyboard.focusedMailboxIndex === selectableIndex
+                  ? 'ring-1 ring-blue-500/50 ring-inset'
+                  : ''
+              ]}
+              style={`padding-left: ${12 + row.depth * 14}px;`}
+            >
+              {#if row.selectable && row.slug}
+                <a
+                  href={resolve(`/${row.slug}`)}
+                  data-mailbox-item
+                  onclick={() => {
+                    mobileNavOpen = false
+                    keyboard.panel = 'list'
+                  }}
+                  class={[
+                    'flex min-w-0 flex-1 items-center gap-2.5 rounded-xl px-2 py-2 text-sm transition',
+                    mailbox === row.slug ? 'font-medium text-white' : ''
+                  ]}
+                >
+                  <row.icon size={15} class="shrink-0" />
+                  <span class="truncate">{row.label}</span>
+                  {#if row.unreadCount > 0}
+                    <span
+                      class="ml-auto shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-medium text-zinc-200"
+                    >
+                      {row.unreadCount}
+                    </span>
+                  {/if}
+                  {#if row.hasChildren}
+                    <button
+                      type="button"
+                      class="shrink-0 rounded-md text-zinc-500 transition hover:bg-white/6 hover:text-zinc-200"
+                      aria-label={row.expanded ? `Collapse ${row.label}` : `Expand ${row.label}`}
+                      aria-expanded={row.expanded}
+                      onclick={(event) => {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        toggleMailboxExpanded(row.key)
+                      }}
+                    >
+                      {#if row.expanded}
+                        <ChevronDown size={14} />
+                      {:else}
+                        <ChevronRight size={14} />
+                      {/if}
+                    </button>
+                  {/if}
+                </a>
+              {:else}
+                <button
+                  type="button"
+                  class="flex min-w-0 flex-1 items-center gap-2.5 rounded-xl px-2 py-2 text-left text-sm text-zinc-300 transition"
+                  onclick={() => toggleMailboxExpanded(row.key)}
+                >
+                  <row.icon size={15} class="shrink-0" />
+                  <span class="truncate">{row.label}</span>
+                  {#if row.unreadCount > 0}
+                    <span
+                      class="ml-auto shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-medium text-zinc-200"
+                    >
+                      {row.unreadCount}
+                    </span>
+                  {/if}
+                  {#if row.hasChildren}
+                    <span class="shrink-0 text-zinc-500">
+                      {#if row.expanded}
+                        <ChevronDown size={14} />
+                      {:else}
+                        <ChevronRight size={14} />
+                      {/if}
+                    </span>
+                  {/if}
+                </button>
+              {/if}
+            </div>
           {/if}
         {/each}
 
@@ -1636,7 +1651,7 @@
                     (pushNotifications.status === 'blocked'
                       ? 'Allow notifications in this browser’s site settings, then reload.'
                       : pushNotifications.status === 'server-unconfigured'
-                        ? 'Generate VAPID keys before setting up this browser.'
+                        ? 'Set up push notifications for the server and this browser.'
                         : pushNotifications.status === 'error'
                           ? 'Check the connection and try again.'
                           : 'Set up this browser to receive push notifications.')}
@@ -1644,14 +1659,14 @@
               </div>
             </div>
 
-            {#if pushNotifications.status === 'unconfigured'}
+            {#if pushNotifications.status === 'unconfigured' || pushNotifications.status === 'server-unconfigured'}
               <button
                 type="button"
                 onclick={() => void enablePushFromNotice()}
-                disabled={pushNotifications.configuring}
+                disabled={pushNoticeSettingUp || pushNotifications.configuring}
                 class="self-start rounded-lg bg-amber-300 px-3 py-1.5 text-sm font-semibold text-amber-950 transition hover:bg-amber-200 disabled:opacity-50 sm:self-auto"
               >
-                {pushNotifications.configuring ? 'Setting up…' : 'Set up'}
+                {pushNoticeSettingUp || pushNotifications.configuring ? 'Setting up…' : 'Set up'}
               </button>
             {:else if pushNotifications.status === 'error'}
               <button
