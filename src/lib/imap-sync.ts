@@ -3,6 +3,18 @@ export function newUidRange(lastUid: number, uidNext: number): string | null {
   return highestUid > lastUid ? `${lastUid + 1}:${highestUid}` : null
 }
 
+export function uidFetchRange(uids: number[]): string | null {
+  const initial = uids[0]
+  if (initial === undefined) return null
+  let first = initial
+  let last = initial
+  for (const uid of uids) {
+    first = Math.min(first, uid)
+    last = Math.max(last, uid)
+  }
+  return first === last ? String(first) : `${first}:${last}`
+}
+
 export function uidValidityChanged(stored: number | null, current: number): boolean {
   return stored !== null && stored !== current
 }

@@ -35,6 +35,7 @@ import {
   seenJobMatchesFlags,
   shouldUseStatusFastPath,
   syncBatchComplete,
+  uidFetchRange,
   uidValidityChanged
 } from '../imap-sync'
 import { client, db } from './db'
@@ -657,9 +658,10 @@ async function reconcileMailbox(client: ImapFlow, mailbox: string, changedSince?
   const remoteFlags = new Map<number, string>()
   let requestCount = 1
 
-  if (remoteUids.length > 0) {
+  const remoteUidRange = uidFetchRange(remoteUids)
+  if (remoteUidRange) {
     for await (const item of client.fetch(
-      remoteUids.join(','),
+      remoteUidRange,
       { uid: true, flags: true },
       { uid: true, changedSince }
     )) {
@@ -717,9 +719,10 @@ async function reconcileMailbox(client: ImapFlow, mailbox: string, changedSince?
         )
     )
   ]
-  if (unconfirmedUids.length > 0) {
+  const unconfirmedUidRange = uidFetchRange(unconfirmedUids)
+  if (unconfirmedUidRange) {
     for await (const item of client.fetch(
-      unconfirmedUids.join(','),
+      unconfirmedUidRange,
       { uid: true, flags: true },
       { uid: true }
     )) {

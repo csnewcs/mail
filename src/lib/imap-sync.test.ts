@@ -15,6 +15,7 @@ import {
   seenJobMatchesFlags,
   shouldUseStatusFastPath,
   syncBatchComplete,
+  uidFetchRange,
   uidValidityChanged
 } from './imap-sync.ts'
 
@@ -22,6 +23,12 @@ test('builds a bounded UID range from UIDNEXT', () => {
   assert.equal(newUidRange(10, 14), '11:13')
   assert.equal(newUidRange(10, 11), null)
   assert.equal(newUidRange(0, 1), null)
+})
+
+test('compacts large UID sets into a bounded fetch range', () => {
+  assert.equal(uidFetchRange([]), null)
+  assert.equal(uidFetchRange([42]), '42')
+  assert.equal(uidFetchRange([42, 3, 19]), '3:42')
 })
 
 test('dedupes autosaves and only deletes a previous draft from the same UID epoch', () => {
