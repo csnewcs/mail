@@ -85,7 +85,7 @@ curl -X POST -H "Authorization: Bearer $MAIL_API_KEY" \\
     <section class="space-y-4">
       <h2 class="text-xl font-semibold text-white">REST endpoints</h2>
       <div class="overflow-hidden rounded-2xl border border-white/8 bg-white/3">
-        {#each [['GET', '/mailboxes', 'List selectable mailboxes and slugs.'], ['GET', '/messages', 'List received messages. Supports mailbox, q, unread, limit, offset.'], ['GET', '/messages/:id', 'Get message body and attachment metadata.'], ['POST', '/messages', 'Queue an outgoing message. Returns HTTP 202 and a job ID.'], ['GET', '/send-jobs/:id', 'Read queued send status.'], ['GET', '/attachments/:id', 'Download a message attachment.']] as endpoint (endpoint[1])}
+        {#each [['GET', '/mailboxes', 'List selectable mailboxes and slugs.'], ['GET', '/messages', 'List received messages. Supports mailbox, q, unread, limit, offset.'], ['GET', '/messages/:id', 'Get message body and attachment metadata.'], ['POST', '/messages', 'Queue an outgoing message. Returns HTTP 202 and a job ID.'], ['GET', '/send-jobs/:id', 'Read queued send status.'], ['GET', '/attachments/:id', 'Download a message attachment.']] as endpoint (`${endpoint[0]} ${endpoint[1]}`)}
           <div
             class="grid gap-2 border-b border-white/8 p-4 last:border-0 sm:grid-cols-[5rem_15rem_1fr]"
           >

@@ -5,6 +5,7 @@ import { maybeRunCleanupRulesFromWorker } from './lib/server/cleanup-rules'
 import { runMigrations } from './lib/server/db'
 import { drainImapQueue, recoverInterruptedImapJobs } from './lib/server/imap-worker'
 import { addDirtyMailbox, closeImapConnections, syncWatchers } from './lib/server/imap-connections'
+import { closePublicImapProxy, startPublicImapProxy } from './lib/server/imap-public-proxy'
 import { getImapConfigs } from './lib/server/config'
 import {
   getMailboxSyncPollMs,
@@ -91,6 +92,7 @@ async function main() {
 
   await runMigrations()
   await repairThreadKeys()
+  await startPublicImapProxy()
   await recoverInterruptedImapJobs()
   await recoverInterruptedSmtpJobs()
   await syncWatchers(await getImapConfigs(), requestMailboxSync)
@@ -100,6 +102,7 @@ async function main() {
     await tick()
     await delay(WORKER_TICK_MS)
   }
+  await closePublicImapProxy()
   await closeImapConnections()
 }
 

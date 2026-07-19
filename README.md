@@ -65,7 +65,11 @@ docker run --name worker --env-file=.env \
 ```
 
 For local container deployment, `docker compose up --build` starts both `web` and
-`worker` services.
+`worker` services. It also publishes port `993` on all host interfaces and transparently
+forwards authenticated IMAP connections to the primary IMAP server configured in the app.
+Set `IMAP_PUBLIC_PORT` to publish a different port or `IMAP_PUBLIC_CONFIG_ID` to select a
+different configured IMAP account. Host firewall and cloud security-group rules must allow
+the selected TCP port.
 
 `.env` template is [here](./.env.example)
 

@@ -37,7 +37,7 @@ if (!building) {
 }
 
 const SETUP_PATHS = ['/setup']
-const AUTH_PATHS = ['/login', '/api/auth', '/share']
+const AUTH_PATHS = ['/login', '/api/auth', '/share', '/api-docs']
 const EXTERNAL_API_PREFIX = '/api/external/v1'
 
 function isExternalApiPath(path: string) {
