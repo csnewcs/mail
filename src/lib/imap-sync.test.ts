@@ -4,6 +4,7 @@ import {
   condstoreChangedSince,
   draftAppendMatches,
   draftDeleteJob,
+  imapKeepaliveDue,
   mailboxStatusUnchanged,
   isCondstoreRejection,
   reconcileMailboxRows,
@@ -72,6 +73,11 @@ test('only treats a previously adopted UIDVALIDITY change as a reset', () => {
 test('does not accept a partially stored UID batch', () => {
   assert.equal(syncBatchComplete(3, 3), true)
   assert.equal(syncBatchComplete(3, 2), false)
+})
+
+test('keeps long local sync processing below the IMAP idle interval', () => {
+  assert.equal(imapKeepaliveDue(1_000, 20_999, 20_000), false)
+  assert.equal(imapKeepaliveDue(1_000, 21_000, 20_000), true)
 })
 
 test('read and unread intents replace the same queued job', () => {

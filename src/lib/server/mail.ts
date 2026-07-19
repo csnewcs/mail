@@ -27,6 +27,7 @@ import {
 import { changedReadStateCopies } from '../read-state'
 import {
   condstoreChangedSince,
+  imapKeepaliveDue,
   isCondstoreRejection,
   newUidRange,
   reconcileMailboxRows,
@@ -80,6 +81,7 @@ import { assignThreadKeys, orderThread, referenceCandidates } from './threading'
 
 const INITIAL_SYNC_FAILURE_RETRY_MS = 10 * 60 * 1000
 const FULL_RECONCILE_INTERVAL_MS = 5 * 60 * 1000
+const IMAP_KEEPALIVE_INTERVAL_MS = 20 * 1000
 const EMPTY_MAILBOX_ERROR_RE = /\bno such message\b/i
 const condstoreRejected = new WeakSet<ImapFlow>()
 
@@ -835,6 +837,7 @@ async function syncOneMailbox(
   let storedCount = 0
   let storedNewMessage = false
   let requestCount = 0
+  const touchedThreadKeys = new Set<string>()
 
   const t0 = Date.now()
   const elapsed = () => `${((Date.now() - t0) / 1000).toFixed(1)}s`
@@ -845,9 +848,10 @@ async function syncOneMailbox(
   )
   let client: ImapFlow | null = null
   try {
-    client = await connectImap(config, `${mailboxPath} sync`)
+    const syncClient = await connectImap(config, `${mailboxPath} sync`)
+    client = syncClient
     console.log(`[sync] ${mailboxPath}: connected (${elapsed()})`)
-    const status = await client.status(remoteMailboxPath, {
+    const status = await syncClient.status(remoteMailboxPath, {
       messages: true,
       unseen: true,
       uidNext: true,
@@ -855,6 +859,14 @@ async function syncOneMailbox(
       highestModseq: true
     })
     requestCount += 1
+    let lastImapActivityAt = Date.now()
+    const keepImapAlive = async () => {
+      const now = Date.now()
+      if (!imapKeepaliveDue(lastImapActivityAt, now, IMAP_KEEPALIVE_INTERVAL_MS)) return
+      await syncClient.noop()
+      requestCount += 1
+      lastImapActivityAt = Date.now()
+    }
     const reconciliationFresh =
       Date.now() - (state?.lastReconciledAt?.getTime() ?? 0) < FULL_RECONCILE_INTERVAL_MS
     if (
@@ -879,11 +891,12 @@ async function syncOneMailbox(
       console.log(`[sync] ${mailboxPath}: STATUS unchanged requests=${requestCount} (${elapsed()})`)
       return false
     }
-    const lock = await client.getMailboxLock(remoteMailboxPath)
+    const lock = await syncClient.getMailboxLock(remoteMailboxPath)
+    lastImapActivityAt = Date.now()
     try {
-      if (!client.mailbox) throw new Error(`Mailbox ${remoteMailboxPath} was not selected`)
-      const uidValidity = Number(client.mailbox.uidValidity)
-      const uidNext = client.mailbox.uidNext
+      if (!syncClient.mailbox) throw new Error(`Mailbox ${remoteMailboxPath} was not selected`)
+      const uidValidity = Number(syncClient.mailbox.uidValidity)
+      const uidNext = syncClient.mailbox.uidNext
 
       if (uidValidityChanged(state?.uidValidity ?? null, uidValidity)) {
         console.warn(`[sync] ${mailboxPath}: UIDVALIDITY changed; resetting mailbox cache`)
@@ -911,7 +924,7 @@ async function syncOneMailbox(
 
       if (range) {
         requestCount += 1
-        for await (const item of client.fetch(
+        for await (const item of syncClient.fetch(
           range,
           { uid: true, envelope: true, flags: true, internalDate: true },
           fetchOptions
@@ -937,6 +950,7 @@ async function syncOneMailbox(
             )
           }
         }
+        lastImapActivityAt = Date.now()
       }
 
       nextLastUid = uidNext - 1
@@ -960,8 +974,6 @@ async function syncOneMailbox(
           existingRows.map((row) => [row.messageId, row.threadKey])
         )
         const existingIds = new Set(existingThreadKeyById.keys())
-        const touchedThreadKeys = new Set<string>()
-
         const needsSourceItems = envelopeItems.filter((i) => !existingIds.has(i.effectiveMessageId))
         const cachedItems = envelopeItems.filter((i) => existingIds.has(i.effectiveMessageId))
         const cachedCount = fetchedCount - needsSourceItems.length
@@ -988,6 +1000,7 @@ async function syncOneMailbox(
             `[sync] ${mailboxPath}: updating ${cachedItems.length} cached mailbox entries...`
           )
           for (let ci = 0; ci < cachedItems.length; ci += CHUNK_SIZE) {
+            await keepImapAlive()
             await beforeChunk?.()
             const chunk = cachedItems.slice(ci, ci + CHUNK_SIZE)
             for (const item of chunk) {
@@ -1032,12 +1045,13 @@ async function syncOneMailbox(
           const byNewest = [...needsSourceItems].sort((a, b) => b.uid - a.uid)
 
           for (let batchStart = 0; batchStart < byNewest.length; batchStart += BATCH_SIZE) {
+            await keepImapAlive()
             await beforeChunk?.()
             const batch = byNewest.slice(batchStart, batchStart + BATCH_SIZE)
             const itemByUid = new Map(batch.map((i) => [i.uid, i]))
 
             requestCount += 1
-            for await (const fetchItem of client.fetch(
+            for await (const fetchItem of syncClient.fetch(
               batch.map((i) => i.uid).join(','),
               { uid: true, source: true },
               { uid: true }
@@ -1073,6 +1087,7 @@ async function syncOneMailbox(
                 )
               }
             }
+            lastImapActivityAt = Date.now()
             // Yield between batches so HTTP requests can be served
             await yieldToEventLoop()
           }
@@ -1089,10 +1104,6 @@ async function syncOneMailbox(
               `[sync] ${mailboxPath}: runFiltersOnMessages ${newlyStoredMessageIds.length} messages ${filterMs}ms`
             )
           }
-        }
-
-        if (touchedThreadKeys.size > 0) {
-          await refreshThreadSummaries(mailboxPath, touchedThreadKeys)
         }
 
         if (!syncBatchComplete(fetchedCount, storedCount)) {
@@ -1156,22 +1167,28 @@ async function syncOneMailbox(
       const lastReconciledAt = state?.lastReconciledAt?.getTime() ?? 0
       const shouldReconcile = force || Date.now() - lastReconciledAt >= FULL_RECONCILE_INTERVAL_MS
       if (shouldReconcile) {
+        await keepImapAlive()
         const changedSince = condstoreChangedSince(
-          client.capabilities.has('CONDSTORE'),
-          condstoreRejected.has(client),
+          syncClient.capabilities.has('CONDSTORE'),
+          condstoreRejected.has(syncClient),
           state?.highestModseq ?? null
         )
-        requestCount += await reconcileMailboxWithFallback(client, mailboxPath, changedSince)
+        requestCount += await reconcileMailboxWithFallback(syncClient, mailboxPath, changedSince)
       }
 
       await saveSyncState(mailboxPath, {
         uidValidity,
-        highestModseq: client.mailbox.highestModseq ?? null,
+        highestModseq: syncClient.mailbox.highestModseq ?? null,
         lastReconciledAt: shouldReconcile ? new Date() : state?.lastReconciledAt
       })
     } finally {
       lock.release()
     }
+
+    // Summary rebuilding can take minutes for large mailboxes and does not need an IMAP lock.
+    await refreshThreadSummaries(mailboxPath, touchedThreadKeys)
+    failureLastUid = nextLastUid
+    failureHistoryComplete = true
 
     await saveSyncRuntime({ workerHeartbeatAt: new Date() })
     console.log(

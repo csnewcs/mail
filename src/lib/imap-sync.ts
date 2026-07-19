@@ -11,6 +11,10 @@ export function syncBatchComplete(fetchedCount: number, storedCount: number): bo
   return fetchedCount === storedCount
 }
 
+export function imapKeepaliveDue(lastActivityAt: number, now: number, intervalMs: number) {
+  return now - lastActivityAt >= intervalMs
+}
+
 export function seenJob(uid: number, mailbox: string, seen: boolean) {
   return {
     type: seen ? 'mark_read' : 'mark_unread',
