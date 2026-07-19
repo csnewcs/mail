@@ -6,8 +6,12 @@ type MessageCopy = {
   flags: string
 }
 
+export function isSeenFlags(flags: string) {
+  return (JSON.parse(flags) as string[]).includes('\\Seen')
+}
+
 export function unreadMessageRows<T extends { flags: string }>(rows: T[]) {
-  return rows.filter((row) => !(JSON.parse(row.flags) as string[]).includes('\\Seen'))
+  return rows.filter((row) => !isSeenFlags(row.flags))
 }
 
 export function changedReadStateCopies<T extends MessageCopy>(
@@ -19,7 +23,7 @@ export function changedReadStateCopies<T extends MessageCopy>(
     if (!messageIds.has(row.messageId) || (!seen && isAlwaysReadMailbox(row.mailbox))) return []
 
     const flags = JSON.parse(row.flags) as string[]
-    if (flags.includes('\\Seen') === seen) return []
+    if (isSeenFlags(row.flags) === seen) return []
 
     return [
       {

@@ -24,7 +24,7 @@ import {
   pathToSlug,
   slugToPath
 } from '../mailbox'
-import { changedReadStateCopies } from '../read-state'
+import { changedReadStateCopies, isSeenFlags } from '../read-state'
 import {
   condstoreChangedSince,
   imapKeepaliveDue,
@@ -772,13 +772,14 @@ async function reconcileMailbox(client: ImapFlow, mailbox: string, changedSince?
   }
 
   const removedThreadKeys = new Set<string>()
+  const readNotificationIds: number[] = []
 
   for (const change of reconcileMailboxRows(localRows, remoteUidSet, remoteFlags, protectedUids)) {
     if (change.action === 'delete') {
       await db.delete(mailMessageMailbox).where(eq(mailMessageMailbox.id, change.row.id))
       removedThreadKeys.add(change.row.threadKey)
     } else {
-      await db
+      const updated = await db
         .update(mailMessageMailbox)
         .set({ flags: change.flags, syncedAt: new Date() })
         .where(
@@ -787,11 +788,26 @@ async function reconcileMailbox(client: ImapFlow, mailbox: string, changedSince?
             eq(mailMessageMailbox.flags, change.row.flags)
           )
         )
+        .returning({ id: mailMessageMailbox.id })
+      if (updated.length > 0 && !isSeenFlags(change.row.flags) && isSeenFlags(change.flags)) {
+        readNotificationIds.push(change.row.id)
+      }
     }
   }
 
+  await dismissReadNotifications(readNotificationIds)
   await refreshThreadSummaries(mailbox, removedThreadKeys)
   return requestCount
+}
+
+async function dismissReadNotifications(messageIds: number[]) {
+  if (messageIds.length === 0) return
+  try {
+    const { dismissReadNotifications: sendDismissPush } = await import('./push')
+    await sendDismissPush(messageIds)
+  } catch (error) {
+    logServerError('push.dismissReadNotifications', error, { messageIds })
+  }
 }
 
 async function reconcileMailboxWithFallback(
@@ -1132,6 +1148,7 @@ async function syncOneMailbox(
                 .where(
                   and(
                     eq(mailMessageMailbox.mailbox, mailboxPath),
+                    notLike(mailMessageMailbox.flags, '%\\\\Seen%'),
                     inArray(mailMessage.messageId, newlyStoredMessageIds)
                   )
                 )
@@ -2434,6 +2451,8 @@ export async function markMessagesSeen(ids: number[], seen: boolean) {
       touchedThreadKeysByMailbox.set(row.mailbox, touchedThreadKeys)
     }
   })
+
+  if (seen) await dismissReadNotifications(changedRows.map((row) => row.id))
 
   for (const [mailbox, threadKeys] of touchedThreadKeysByMailbox) {
     await refreshThreadSummaries(mailbox, threadKeys)
