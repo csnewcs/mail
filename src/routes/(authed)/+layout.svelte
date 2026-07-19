@@ -27,6 +27,7 @@
     ChevronRight,
     ChevronDown,
     BellRing,
+    Braces,
     X
   } from 'lucide-svelte'
   import { resolve } from '$app/paths'
@@ -339,7 +340,9 @@
   )
   const utilityNavActive = $derived(
     page.url.pathname.startsWith('/settings') ||
-      ['/contacts', '/queue-status', '/audit-log', '/manual'].includes(page.url.pathname)
+      ['/contacts', '/queue-status', '/audit-log', '/manual', '/api-docs'].includes(
+        page.url.pathname
+      )
   )
 
   function toggleMailboxExpanded(key: string) {
@@ -1411,6 +1414,23 @@
               >
                 <ShieldCheck size={14} />
                 Audit log
+              </a>
+              <a
+                href={resolve('/api-docs')}
+                role="menuitem"
+                onclick={() => {
+                  mobileNavOpen = false
+                  utilityNavOpen = false
+                }}
+                class={[
+                  'flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm transition',
+                  page.url.pathname === '/api-docs'
+                    ? 'bg-white/8 font-medium text-white'
+                    : 'text-zinc-400 hover:bg-white/6 hover:text-zinc-100'
+                ]}
+              >
+                <Braces size={14} />
+                API docs
               </a>
               <a
                 href={resolve('/manual')}

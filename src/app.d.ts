@@ -7,6 +7,7 @@ declare global {
     interface Locals {
       user?: User
       session?: Session
+      apiKey?: { id: string; userId: string }
     }
 
     // interface Error {}

@@ -21,6 +21,7 @@ RUN DATABASE_URL=postgres://build:build@localhost:5432/build \
 FROM base AS runtime
 WORKDIR /app
 COPY package.json ./
+COPY server.js ./
 COPY drizzle.config.ts ./
 COPY drizzle ./drizzle
 COPY --from=build /app/node_modules ./node_modules
@@ -30,10 +31,11 @@ COPY --from=build /app/src ./src
 
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
-    PORT=3000
+    PORT=3000 \
+    BODY_SIZE_LIMIT=16M
 
 EXPOSE 3000
-CMD ["node", "build/index.js"]
+CMD ["node", "server.js"]
 
 
 # ── worker runtime stage ───────────────────────────────────────────────────────

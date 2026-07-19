@@ -13,7 +13,7 @@
     "build:web": "vite build",
     "build:worker": "vite build --config vite.worker.config.ts",
     "preview": "vite preview",
-    "start:web": "node build",
+    "start:web": "node server.js",
     "start:worker": "node build-worker/worker.js",
     "prepare": "svelte-kit sync || echo ''",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
@@ -37,6 +37,7 @@
     "@types/node": "^24",
     "@types/nodemailer": "^8.0.0",
     "@types/web-push": "^3.6.4",
+    "@types/ws": "^8.18.1",
     "drizzle-kit": "^0.31.10",
     "eslint": "^10.2.0",
     "eslint-config-prettier": "^10.1.8",
@@ -73,6 +74,7 @@
     "nodemailer": "^8.0.5",
     "openai": "^6.34.0",
     "postgres": "^3.4.9",
-    "web-push": "^3.6.7"
+    "web-push": "^3.6.7",
+    "ws": "^8.21.1"
   }
 }

@@ -6,6 +6,7 @@
   import ActionModal from '$lib/components/ActionModal.svelte'
   import CustomSelect, { type SelectOption } from '$lib/components/CustomSelect.svelte'
   import ErrorDialog from '$lib/components/ErrorDialog.svelte'
+  import ApiKeysSettings from '$lib/components/ApiKeysSettings.svelte'
   import { normalizeFilterConditions, type FilterCondition } from '$lib/filter-conditions'
   import { invalidateSignatureCache } from '$lib/composer.svelte'
   import { errorMessageFromUnknown, readErrorMessage } from '$lib/http'
@@ -87,6 +88,7 @@
     { id: 'mailboxes', label: 'Mailboxes' },
     { id: 'oidc', label: 'Authentication' },
     { id: 'sessions', label: 'Sessions' },
+    { id: 'api', label: 'API Keys' },
     { id: 'interface', label: 'Interface' },
     { id: 'privacy', label: 'Privacy' },
     { id: 'signatures', label: 'Signatures' },
@@ -3322,6 +3324,13 @@
               {/each}
             {/if}
           </div>
+        </section>
+
+        <div class="border-t border-white/8"></div>
+
+        <!-- API Keys -->
+        <section class={selectedSettingsSection === 'api' ? 'block' : 'hidden'}>
+          <ApiKeysSettings />
         </section>
 
         <div class="border-t border-white/8"></div>

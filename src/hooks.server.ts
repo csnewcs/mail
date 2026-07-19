@@ -10,6 +10,8 @@ import { runMigrations } from '$lib/server/db'
 import { svelteKitHandler } from 'better-auth/svelte-kit'
 import { getDemoAuthSession, isDemoModeEnabled } from '$lib/server/demo'
 import { claimAuthUser, getAuthUserId } from '$lib/server/auth-owner'
+import { bearerApiKey, verifyApiKey } from '$lib/server/api-keys'
+import { checkApiRateLimit, checkApiSendRateLimit } from '$lib/server/api-rate-limit'
 
 // Warm up eagerly so the first request doesn't pay initialization costs
 if (!building) {
@@ -36,11 +38,22 @@ if (!building) {
 
 const SETUP_PATHS = ['/setup']
 const AUTH_PATHS = ['/login', '/api/auth', '/share']
+const EXTERNAL_API_PREFIX = '/api/external/v1'
+
+function isExternalApiPath(path: string) {
+  return path === EXTERNAL_API_PREFIX || path.startsWith(`${EXTERNAL_API_PREFIX}/`)
+}
 
 const handleBetterAuth: Handle = async ({ event, resolve }) => {
   const path = event.url.pathname
 
   if (isDemoModeEnabled()) {
+    if (isExternalApiPath(path)) {
+      return new Response(JSON.stringify({ error: 'External API is disabled in demo mode' }), {
+        status: 503,
+        headers: { 'content-type': 'application/json' }
+      })
+    }
     const demo = getDemoAuthSession()
     event.locals.session = demo.session
     event.locals.user = demo.user
@@ -58,6 +71,33 @@ const handleBetterAuth: Handle = async ({ event, resolve }) => {
   }
 
   const auth = await getAuth()
+
+  if (isExternalApiPath(path)) {
+    const rawKey = bearerApiKey(event.request.headers)
+    const principal = rawKey ? await verifyApiKey(rawKey) : null
+    const ownerId = principal ? await getAuthUserId() : null
+    if (!principal || !ownerId || principal.userId !== ownerId) {
+      return new Response(JSON.stringify({ error: 'Invalid or missing API key' }), {
+        status: 401,
+        headers: {
+          'content-type': 'application/json',
+          'www-authenticate': 'Bearer realm="mail-api"'
+        }
+      })
+    }
+
+    event.locals.user = principal.user
+    event.locals.apiKey = { id: principal.id, userId: principal.userId }
+    const directSend = event.request.method === 'POST' && path === `${EXTERNAL_API_PREFIX}/messages`
+    if (!checkApiRateLimit(principal.id) || (directSend && !checkApiSendRateLimit(principal.id))) {
+      return new Response(JSON.stringify({ error: 'API rate limit exceeded' }), {
+        status: 429,
+        headers: { 'content-type': 'application/json', 'retry-after': '60' }
+      })
+    }
+    return resolve(event)
+  }
+
   const authSession = await auth.api.getSession({ headers: event.request.headers })
   const ownerId = authSession ? await getAuthUserId() : null
   const authorized = authSession
@@ -93,7 +133,7 @@ const handleBetterAuth: Handle = async ({ event, resolve }) => {
 const handleTraffic: Handle = async ({ event, resolve }) => {
   const start = performance.now()
   const { method } = event.request
-  const path = event.url.pathname + (event.url.search || '')
+  const path = event.url.pathname
 
   const response = await resolve(event)
 

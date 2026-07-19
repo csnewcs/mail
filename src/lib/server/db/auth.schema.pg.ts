@@ -1,5 +1,5 @@
 import { relations } from 'drizzle-orm'
-import { pgTable, text, timestamp, boolean, index, integer } from 'drizzle-orm/pg-core'
+import { pgTable, text, timestamp, boolean, index, integer, uniqueIndex } from 'drizzle-orm/pg-core'
 
 export const user = pgTable('user', {
   id: text('id').primaryKey(),
@@ -104,10 +104,30 @@ export const passkey = pgTable(
   ]
 )
 
+export const mailApiKey = pgTable(
+  'mail_api_key',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    prefix: text('prefix').notNull(),
+    keyHash: text('key_hash').notNull(),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true, mode: 'date' }),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull()
+  },
+  (table) => [
+    index('mail_api_key_user_id_idx').on(table.userId),
+    uniqueIndex('mail_api_key_key_hash_idx').on(table.keyHash)
+  ]
+)
+
 export const userRelations = relations(user, ({ many }) => ({
   sessions: many(session),
   accounts: many(account),
-  passkeys: many(passkey)
+  passkeys: many(passkey),
+  apiKeys: many(mailApiKey)
 }))
 
 export const sessionRelations = relations(session, ({ one }) => ({
