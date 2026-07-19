@@ -893,9 +893,12 @@ async function syncOneMailbox(
     }
     const lock = await syncClient.getMailboxLock(remoteMailboxPath)
     lastImapActivityAt = Date.now()
+    let uidValidity: number | null = null
+    let highestModseq: bigint | null = null
     try {
       if (!syncClient.mailbox) throw new Error(`Mailbox ${remoteMailboxPath} was not selected`)
-      const uidValidity = Number(syncClient.mailbox.uidValidity)
+      uidValidity = Number(syncClient.mailbox.uidValidity)
+      highestModseq = syncClient.mailbox.highestModseq ?? null
       const uidNext = syncClient.mailbox.uidNext
 
       if (uidValidityChanged(state?.uidValidity ?? null, uidValidity)) {
@@ -990,54 +993,7 @@ async function syncOneMailbox(
           )
         }
 
-        // Phase 3a: update mailbox entries for already-cached messages
-        // Written in chunks with event-loop yields between them so the HTTP
-        // server stays responsive. Each chunk runs in a single transaction for
-        // speed (one disk sync per chunk instead of one per row).
-        if (cachedItems.length > 0) {
-          const CHUNK_SIZE = 200
-          console.log(
-            `[sync] ${mailboxPath}: updating ${cachedItems.length} cached mailbox entries...`
-          )
-          for (let ci = 0; ci < cachedItems.length; ci += CHUNK_SIZE) {
-            await keepImapAlive()
-            await beforeChunk?.()
-            const chunk = cachedItems.slice(ci, ci + CHUNK_SIZE)
-            for (const item of chunk) {
-              await db
-                .insert(mailMessageMailbox)
-                .values({
-                  messageId: item.effectiveMessageId,
-                  mailbox: mailboxPath,
-                  uid: item.uid,
-                  flags: mailboxFlagsJson(mailboxPath, item.flags),
-                  receivedAt: item.internalDate ?? null,
-                  syncedAt: new Date()
-                })
-                .onConflictDoUpdate({
-                  target: [mailMessageMailbox.mailbox, mailMessageMailbox.uid],
-                  set: {
-                    messageId: item.effectiveMessageId,
-                    flags: mailboxFlagsJson(mailboxPath, item.flags),
-                    receivedAt: item.internalDate ?? null,
-                    syncedAt: new Date()
-                  }
-                })
-              touchedThreadKeys.add(existingThreadKeyById.get(item.effectiveMessageId)!)
-            }
-            storedCount += chunk.length
-            await setSyncProgress(mailboxPath, storedCount, fetchedCount)
-            if (storedCount % 500 === 0) {
-              console.log(
-                `[sync] ${mailboxPath}: updated ${storedCount}/${fetchedCount} entries (${elapsed()})`
-              )
-            }
-            await yieldToEventLoop()
-          }
-          console.log(`[sync] ${mailboxPath}: cached entries updated (${elapsed()})`)
-        }
-
-        // Phase 3b: fetch source newest-first, in batches so recent mail lands in DB first
+        // Phase 3a: finish remote reads before potentially long local cache updates.
         const newlyStoredMessageIds: string[] = []
         if (needsSourceItems.length > 0) {
           const BATCH_SIZE = 150
@@ -1091,6 +1047,48 @@ async function syncOneMailbox(
             // Yield between batches so HTTP requests can be served
             await yieldToEventLoop()
           }
+        }
+
+        // Phase 3b: update mailbox entries for already-cached messages.
+        if (cachedItems.length > 0) {
+          const CHUNK_SIZE = 200
+          console.log(
+            `[sync] ${mailboxPath}: updating ${cachedItems.length} cached mailbox entries...`
+          )
+          for (let ci = 0; ci < cachedItems.length; ci += CHUNK_SIZE) {
+            const chunk = cachedItems.slice(ci, ci + CHUNK_SIZE)
+            for (const item of chunk) {
+              await db
+                .insert(mailMessageMailbox)
+                .values({
+                  messageId: item.effectiveMessageId,
+                  mailbox: mailboxPath,
+                  uid: item.uid,
+                  flags: mailboxFlagsJson(mailboxPath, item.flags),
+                  receivedAt: item.internalDate ?? null,
+                  syncedAt: new Date()
+                })
+                .onConflictDoUpdate({
+                  target: [mailMessageMailbox.mailbox, mailMessageMailbox.uid],
+                  set: {
+                    messageId: item.effectiveMessageId,
+                    flags: mailboxFlagsJson(mailboxPath, item.flags),
+                    receivedAt: item.internalDate ?? null,
+                    syncedAt: new Date()
+                  }
+                })
+              touchedThreadKeys.add(existingThreadKeyById.get(item.effectiveMessageId)!)
+            }
+            storedCount += chunk.length
+            await setSyncProgress(mailboxPath, storedCount, fetchedCount)
+            if (storedCount % 500 === 0) {
+              console.log(
+                `[sync] ${mailboxPath}: updated ${storedCount}/${fetchedCount} entries (${elapsed()})`
+              )
+            }
+            await yieldToEventLoop()
+          }
+          console.log(`[sync] ${mailboxPath}: cached entries updated (${elapsed()})`)
         }
 
         // Run filter rules on newly stored messages
@@ -1163,30 +1161,50 @@ async function syncOneMailbox(
           }
         }
       }
-
-      const lastReconciledAt = state?.lastReconciledAt?.getTime() ?? 0
-      const shouldReconcile = force || Date.now() - lastReconciledAt >= FULL_RECONCILE_INTERVAL_MS
-      if (shouldReconcile) {
-        await keepImapAlive()
-        const changedSince = condstoreChangedSince(
-          syncClient.capabilities.has('CONDSTORE'),
-          condstoreRejected.has(syncClient),
-          state?.highestModseq ?? null
-        )
-        requestCount += await reconcileMailboxWithFallback(syncClient, mailboxPath, changedSince)
-      }
-
-      await saveSyncState(mailboxPath, {
-        uidValidity,
-        highestModseq: syncClient.mailbox.highestModseq ?? null,
-        lastReconciledAt: shouldReconcile ? new Date() : state?.lastReconciledAt
-      })
     } finally {
       lock.release()
     }
 
-    // Summary rebuilding can take minutes for large mailboxes and does not need an IMAP lock.
+    // Do not keep an IMAP session open while rebuilding a large local cache.
+    invalidateWorkerConnection(config.id, syncClient)
+    client = null
     await refreshThreadSummaries(mailboxPath, touchedThreadKeys)
+
+    const lastReconciledAt = state?.lastReconciledAt?.getTime() ?? 0
+    const shouldReconcile = force || Date.now() - lastReconciledAt >= FULL_RECONCILE_INTERVAL_MS
+    if (shouldReconcile) {
+      const reconcileClient = await connectImap(config, `${mailboxPath} reconcile`)
+      client = reconcileClient
+      const reconcileLock = await reconcileClient.getMailboxLock(remoteMailboxPath)
+      try {
+        if (!reconcileClient.mailbox) {
+          throw new Error(`Mailbox ${remoteMailboxPath} was not selected for reconciliation`)
+        }
+        const reconciledUidValidity = Number(reconcileClient.mailbox.uidValidity)
+        if (uidValidityChanged(uidValidity, reconciledUidValidity)) {
+          throw new Error(`UIDVALIDITY changed while syncing ${mailboxPath}`)
+        }
+        const changedSince = condstoreChangedSince(
+          reconcileClient.capabilities.has('CONDSTORE'),
+          condstoreRejected.has(reconcileClient),
+          state?.highestModseq ?? null
+        )
+        requestCount += await reconcileMailboxWithFallback(
+          reconcileClient,
+          mailboxPath,
+          changedSince
+        )
+        highestModseq = reconcileClient.mailbox.highestModseq ?? null
+      } finally {
+        reconcileLock.release()
+      }
+    }
+
+    await saveSyncState(mailboxPath, {
+      uidValidity,
+      highestModseq,
+      lastReconciledAt: shouldReconcile ? new Date() : state?.lastReconciledAt
+    })
     failureLastUid = nextLastUid
     failureHistoryComplete = true
 
