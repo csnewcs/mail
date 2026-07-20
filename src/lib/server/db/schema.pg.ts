@@ -93,6 +93,8 @@ export const mailboxSync = pgTable('mailbox_sync', {
 
 export const mailboxCatalog = pgTable('mailbox_catalog', {
   path: text('path').primaryKey(),
+  configId: text('config_id'),
+  remotePath: text('remote_path'),
   name: text('name').notNull(),
   delimiter: text('delimiter').notNull().default('/'),
   specialUse: text('special_use'),
@@ -198,7 +200,19 @@ export const mailMessageMailbox = pgTable(
     messageId: text('message_id').notNull(),
     mailbox: text('mailbox').notNull(),
     uid: bigint('uid', { mode: 'number' }).notNull(),
+    uidValidity: bigint('uid_validity', { mode: 'number' }),
     flags: text('flags').notNull().default('[]'),
+    rawSource: bytea('raw_source'),
+    rawSourceCheckedAt: timestamp('raw_source_checked_at', { withTimezone: true, mode: 'date' }),
+    rawSourceAttempts: integer('raw_source_attempts').notNull().default(0),
+    rawSourceNextAttemptAt: timestamp('raw_source_next_attempt_at', {
+      withTimezone: true,
+      mode: 'date'
+    }),
+    spfStatus: text('spf_status'),
+    dkimStatus: text('dkim_status'),
+    dmarcStatus: text('dmarc_status'),
+    authservId: text('authserv_id'),
     receivedAt: timestamp('received_at', { withTimezone: true, mode: 'date' }),
     snoozedUntil: timestamp('snoozed_until', { withTimezone: true, mode: 'date' }),
     syncedAt: timestamp('synced_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull()

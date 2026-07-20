@@ -8,6 +8,7 @@ import {
   gte,
   ilike,
   inArray,
+  isNotNull,
   isNull,
   lte,
   ne,
@@ -58,6 +59,8 @@ import { logServerError, perfError, perfLog, perfMs, perfNow } from './perf'
 import { withRetry } from './retry'
 import { getWorkerConnection, invalidateWorkerConnection } from './imap-connections'
 import { parseAddressFields, upsertContacts } from './contacts'
+import { parseMailAuthentication } from '../mail-authentication'
+import { env } from '$env/dynamic/private'
 import {
   countDemoSearchMessages,
   countDemoStoredMessages,
@@ -85,6 +88,7 @@ const INITIAL_SYNC_FAILURE_RETRY_MS = 10 * 60 * 1000
 const FULL_RECONCILE_INTERVAL_MS = 5 * 60 * 1000
 const IMAP_KEEPALIVE_INTERVAL_MS = 20 * 1000
 const EMPTY_MAILBOX_ERROR_RE = /\bno such message\b/i
+const MAX_RAW_SOURCE_BYTES = 25 * 1024 * 1024
 const condstoreRejected = new WeakSet<ImapFlow>()
 
 async function connectImap(config: ImapConfig, label: string): Promise<ImapFlow> {
@@ -118,6 +122,12 @@ export type MailRow = MailListRow & {
   replyTo: string | null
   inReplyTo: string | null
   references: string | null
+  spfStatus?: string | null
+  dkimStatus?: string | null
+  dmarcStatus?: string | null
+  authservId?: string | null
+  authenticationTrusted?: boolean
+  rawSourceAvailable?: boolean
   threadDepth?: number
 }
 
@@ -225,6 +235,28 @@ function sanitizePgText(value: string): string {
 
 function sanitizeNullablePgText(value: string | null): string | null {
   return value === null ? null : sanitizePgText(value)
+}
+
+function trustedAuthservIds() {
+  return (env.MAIL_AUTH_TRUSTED_AUTHSERV_IDS ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+}
+
+function isTrustedAuthservId(authservId: string | null | undefined) {
+  if (!authservId) return false
+  const normalizedId = authservId.trim().toLowerCase()
+  return trustedAuthservIds().some((trusted) => {
+    const normalized = trusted.toLowerCase()
+    return normalized.startsWith('*.')
+      ? normalizedId.endsWith(normalized.slice(1))
+      : normalizedId === normalized
+  })
+}
+
+function withAuthenticationTrust<T extends { authservId?: string | null }>(row: T) {
+  return { ...row, authenticationTrusted: isTrustedAuthservId(row.authservId) }
 }
 
 function dedupe(values: string[]) {
@@ -367,6 +399,156 @@ export async function touchSyncWorkerHeartbeat() {
   await saveSyncRuntime({ workerHeartbeatAt: new Date() })
 }
 
+async function recordRawBackfillFailure(rows: Array<{ id: number; attempts: number }>) {
+  for (const row of rows) {
+    const attempts = row.attempts + 1
+    await db
+      .update(mailMessageMailbox)
+      .set({
+        rawSourceAttempts: attempts,
+        rawSourceCheckedAt: attempts >= 3 ? new Date() : null,
+        rawSourceNextAttemptAt: attempts >= 3 ? null : new Date(Date.now() + 5 * 60_000)
+      })
+      .where(and(eq(mailMessageMailbox.id, row.id), isNull(mailMessageMailbox.rawSource)))
+  }
+}
+
+export async function backfillMailAuthenticationFromWorker() {
+  if (isDemoModeEnabled()) return 0
+  const [configs, pending] = await Promise.all([
+    getImapConfigs(),
+    db
+      .select({
+        id: mailMessageMailbox.id,
+        mailbox: mailMessageMailbox.mailbox,
+        uid: mailMessageMailbox.uid,
+        uidValidity: mailMessageMailbox.uidValidity,
+        attempts: mailMessageMailbox.rawSourceAttempts,
+        configId: mailboxCatalog.configId,
+        remoteMailbox: mailboxCatalog.remotePath
+      })
+      .from(mailMessageMailbox)
+      .innerJoin(mailboxCatalog, eq(mailboxCatalog.path, mailMessageMailbox.mailbox))
+      .where(
+        and(
+          isNull(mailMessageMailbox.rawSource),
+          isNull(mailMessageMailbox.rawSourceCheckedAt),
+          isNotNull(mailboxCatalog.configId),
+          isNotNull(mailboxCatalog.remotePath),
+          or(
+            isNull(mailMessageMailbox.rawSourceNextAttemptAt),
+            lte(mailMessageMailbox.rawSourceNextAttemptAt, new Date())
+          )
+        )
+      )
+      .orderBy(desc(mailMessageMailbox.id))
+      .limit(10)
+  ])
+  if (pending.length === 0 || configs.length === 0) return 0
+
+  const groups = new Map<
+    string,
+    { config: ImapConfig; remoteMailbox: string; rows: typeof pending }
+  >()
+  for (const row of pending) {
+    const config = configs.find((candidate) => candidate.id === row.configId)
+    if (!config || !row.remoteMailbox) {
+      await recordRawBackfillFailure([row])
+      continue
+    }
+    const key = `${config.id}\0${row.remoteMailbox}`
+    const group = groups.get(key) ?? { config, remoteMailbox: row.remoteMailbox, rows: [] }
+    group.rows.push(row)
+    groups.set(key, group)
+  }
+
+  let stored = 0
+  for (const group of groups.values()) {
+    let attemptedRows = group.rows
+    try {
+      const connection = await connectImap(group.config, `${group.remoteMailbox} raw backfill`)
+      await connection.mailboxOpen(group.remoteMailbox)
+      const openedUidValidity = connection.mailbox ? Number(connection.mailbox.uidValidity) : null
+      const validRows = group.rows.filter(
+        (row) => row.uidValidity !== null && row.uidValidity === openedUidValidity
+      )
+      const invalidRows = group.rows.filter((row) => !validRows.includes(row))
+      if (invalidRows.length > 0) await recordRawBackfillFailure(invalidRows)
+      if (validRows.length === 0) continue
+      attemptedRows = validRows
+
+      const rowByUid = new Map(validRows.map((row) => [row.uid, row]))
+      const returnedUids = new Set<number>()
+      for await (const item of connection.fetch(
+        validRows.map((row) => row.uid).join(','),
+        { uid: true, source: true },
+        { uid: true }
+      )) {
+        if (!item.uid) continue
+        const row = rowByUid.get(item.uid)
+        if (!row) continue
+        returnedUids.add(item.uid)
+        if (!item.source) {
+          await db
+            .update(mailMessageMailbox)
+            .set({ rawSourceCheckedAt: new Date() })
+            .where(eq(mailMessageMailbox.id, row.id))
+          continue
+        }
+        if (item.source.length > MAX_RAW_SOURCE_BYTES) {
+          await db
+            .update(mailMessageMailbox)
+            .set({ rawSourceCheckedAt: new Date() })
+            .where(eq(mailMessageMailbox.id, row.id))
+          continue
+        }
+
+        let authentication = parseMailAuthentication([])
+        try {
+          const parsed = await simpleParser(item.source)
+          authentication = parseMailAuthentication(parsed.headerLines ?? [])
+        } catch (error) {
+          logServerError('mail.raw-source.parse-authentication', error, {
+            mailbox: row.mailbox,
+            uid: row.uid
+          })
+        }
+
+        await db
+          .update(mailMessageMailbox)
+          .set({
+            rawSource: item.source,
+            rawSourceCheckedAt: new Date(),
+            rawSourceNextAttemptAt: null,
+            spfStatus: authentication.spfStatus,
+            dkimStatus: authentication.dkimStatus,
+            dmarcStatus: authentication.dmarcStatus,
+            authservId: authentication.authservId
+          })
+          .where(and(eq(mailMessageMailbox.id, row.id), isNull(mailMessageMailbox.rawSource)))
+        stored += 1
+      }
+
+      const unavailableIds = validRows
+        .filter((row) => !returnedUids.has(row.uid))
+        .map((row) => row.id)
+      if (unavailableIds.length > 0) {
+        await db
+          .update(mailMessageMailbox)
+          .set({ rawSourceCheckedAt: new Date() })
+          .where(inArray(mailMessageMailbox.id, unavailableIds))
+      }
+    } catch (error) {
+      logServerError('mail.raw-source.backfill', error, {
+        configId: group.config.id,
+        mailbox: group.remoteMailbox
+      })
+      await recordRawBackfillFailure(attemptedRows)
+    }
+  }
+  return stored
+}
+
 function fallbackMailboxName(path: string) {
   const parts = path.split(/[\\/]/).filter(Boolean)
   return parts.at(-1) ?? path
@@ -403,6 +585,8 @@ async function readMailboxCatalogRows(): Promise<ImapMailbox[]> {
   const rows = await db
     .select({
       path: mailboxCatalog.path,
+      configId: mailboxCatalog.configId,
+      remotePath: mailboxCatalog.remotePath,
       name: mailboxCatalog.name,
       delimiter: mailboxCatalog.delimiter,
       specialUse: mailboxCatalog.specialUse
@@ -414,6 +598,8 @@ async function readMailboxCatalogRows(): Promise<ImapMailbox[]> {
     return sortImapMailboxes(
       rows.map((row) => ({
         path: row.path,
+        configId: row.configId,
+        remotePath: row.remotePath,
         name: row.name,
         delimiter: row.delimiter,
         specialUse: row.specialUse
@@ -447,6 +633,8 @@ async function replaceMailboxCatalog(mailboxes: ImapMailbox[]) {
       const next = mailboxes[index]
       return (
         row?.path === next?.path &&
+        row?.configId === next?.configId &&
+        row?.remotePath === next?.remotePath &&
         row?.name === next?.name &&
         row?.delimiter === next?.delimiter &&
         row?.specialUse === next?.specialUse
@@ -463,6 +651,8 @@ async function replaceMailboxCatalog(mailboxes: ImapMailbox[]) {
         .insert(mailboxCatalog)
         .values({
           path: mailbox.path,
+          configId: mailbox.configId ?? null,
+          remotePath: mailbox.remotePath ?? null,
           name: mailbox.name,
           delimiter: mailbox.delimiter,
           specialUse: mailbox.specialUse,
@@ -472,6 +662,8 @@ async function replaceMailboxCatalog(mailboxes: ImapMailbox[]) {
           target: mailboxCatalog.path,
           set: {
             name: mailbox.name,
+            configId: mailbox.configId ?? null,
+            remotePath: mailbox.remotePath ?? null,
             delimiter: mailbox.delimiter,
             specialUse: mailbox.specialUse,
             updatedAt: now
@@ -613,19 +805,30 @@ async function storeMailboxEntry(
   effectiveMessageId: string,
   mailbox: string,
   uid: number,
+  uidValidity: number | null,
   flags: string[],
-  receivedAt?: Date | null
+  receivedAt?: Date | null,
+  security?: {
+    rawSource: Buffer | null
+    spfStatus: string | null
+    dkimStatus: string | null
+    dmarcStatus: string | null
+    authservId: string | null
+  }
 ) {
   const startedAt = Date.now()
   const sanitizedMessageId = sanitizePgText(effectiveMessageId)
   const sanitizedMailbox = sanitizePgText(mailbox)
+  const securityValues = security ? { ...security, rawSourceCheckedAt: new Date() } : {}
   await db
     .insert(mailMessageMailbox)
     .values({
       messageId: sanitizedMessageId,
       mailbox: sanitizedMailbox,
       uid,
+      uidValidity,
       flags: mailboxFlagsJson(sanitizedMailbox, flags),
+      ...securityValues,
       receivedAt: receivedAt ?? null,
       syncedAt: new Date()
     })
@@ -633,7 +836,9 @@ async function storeMailboxEntry(
       target: [mailMessageMailbox.mailbox, mailMessageMailbox.uid],
       set: {
         messageId: sanitizedMessageId,
+        uidValidity,
         flags: mailboxFlagsJson(sanitizedMailbox, flags),
+        ...securityValues,
         receivedAt: receivedAt ?? null,
         syncedAt: new Date()
       }
@@ -993,17 +1198,36 @@ async function syncOneMailbox(
         // Phase 2: check which message-ids we already have content for
         console.log(`[sync] ${mailboxPath}: checking cache for ${fetchedCount} message-ids...`)
         const allMessageIds = envelopeItems.map((i) => i.effectiveMessageId)
-        const existingRows = await db
-          .select({ messageId: mailMessage.messageId, threadKey: mailMessage.threadKey })
-          .from(mailMessage)
-          .where(inArray(mailMessage.messageId, allMessageIds))
+        const [existingRows, existingMailboxRows] = await Promise.all([
+          db
+            .select({ messageId: mailMessage.messageId, threadKey: mailMessage.threadKey })
+            .from(mailMessage)
+            .where(inArray(mailMessage.messageId, allMessageIds)),
+          db
+            .select({
+              uid: mailMessageMailbox.uid,
+              rawStored: sql<boolean>`${mailMessageMailbox.rawSource} is not null`
+            })
+            .from(mailMessageMailbox)
+            .where(
+              and(
+                eq(mailMessageMailbox.mailbox, mailboxPath),
+                inArray(
+                  mailMessageMailbox.uid,
+                  envelopeItems.map((item) => item.uid)
+                )
+              )
+            )
+        ])
 
         const existingThreadKeyById = new Map(
           existingRows.map((row) => [row.messageId, row.threadKey])
         )
-        const existingIds = new Set(existingThreadKeyById.keys())
-        const needsSourceItems = envelopeItems.filter((i) => !existingIds.has(i.effectiveMessageId))
-        const cachedItems = envelopeItems.filter((i) => existingIds.has(i.effectiveMessageId))
+        const cachedSourceUids = new Set(
+          existingMailboxRows.filter((row) => row.rawStored).map((row) => row.uid)
+        )
+        const needsSourceItems = envelopeItems.filter((item) => !cachedSourceUids.has(item.uid))
+        const cachedItems = envelopeItems.filter((item) => cachedSourceUids.has(item.uid))
         const cachedCount = fetchedCount - needsSourceItems.length
 
         await setSyncProgress(mailboxPath, 0, fetchedCount)
@@ -1041,6 +1265,7 @@ async function syncOneMailbox(
               const item = itemByUid.get(fetchItem.uid)
               if (!item) continue
               const parsed = await simpleParser(fetchItem.source)
+              const authentication = parseMailAuthentication(parsed.headerLines ?? [])
               const storedMessage = await storeMessageContent(
                 item.effectiveMessageId,
                 parsed,
@@ -1055,8 +1280,17 @@ async function syncOneMailbox(
                 item.effectiveMessageId,
                 mailboxPath,
                 item.uid,
+                uidValidity,
                 item.flags,
-                item.internalDate
+                item.internalDate,
+                {
+                  rawSource:
+                    fetchItem.source.length <= MAX_RAW_SOURCE_BYTES ? fetchItem.source : null,
+                  spfStatus: authentication.spfStatus,
+                  dkimStatus: authentication.dkimStatus,
+                  dmarcStatus: authentication.dmarcStatus,
+                  authservId: authentication.authservId
+                }
               )
               storedCount += 1
               if (storedCount % 100 === 0 || storedCount === fetchedCount) {
@@ -1089,6 +1323,7 @@ async function syncOneMailbox(
                   messageId: item.effectiveMessageId,
                   mailbox: mailboxPath,
                   uid: item.uid,
+                  uidValidity,
                   flags: mailboxFlagsJson(mailboxPath, item.flags),
                   receivedAt: item.internalDate ?? null,
                   syncedAt: new Date()
@@ -1097,6 +1332,7 @@ async function syncOneMailbox(
                   target: [mailMessageMailbox.mailbox, mailMessageMailbox.uid],
                   set: {
                     messageId: item.effectiveMessageId,
+                    uidValidity,
                     flags: mailboxFlagsJson(mailboxPath, item.flags),
                     receivedAt: item.internalDate ?? null,
                     syncedAt: new Date()
@@ -1323,6 +1559,8 @@ async function runSyncAll(config: ImapConfig, options: SyncOptions = {}): Promis
       listed = await listClient.list()
       cachedMailboxes = listed.map((mb) => ({
         path: localMailboxPath(config, mb.path),
+        configId: config.id,
+        remotePath: mb.path,
         name: mb.name,
         delimiter: mb.delimiter ?? '/',
         specialUse: mb.specialUse ?? null
@@ -1542,6 +1780,8 @@ export async function getMailboxSyncStatus(mailboxPath: string): Promise<SyncRes
 
 export type ImapMailbox = {
   path: string
+  configId?: string | null
+  remotePath?: string | null
   name: string
   delimiter: string
   specialUse?: string | null
@@ -1662,7 +1902,12 @@ const detailSelect = {
   htmlContent: mailMessage.htmlContent,
   replyTo: mailMessage.replyTo,
   inReplyTo: mailMessage.inReplyTo,
-  references: mailMessage.references
+  references: mailMessage.references,
+  spfStatus: mailMessageMailbox.spfStatus,
+  dkimStatus: mailMessageMailbox.dkimStatus,
+  dmarcStatus: mailMessageMailbox.dmarcStatus,
+  authservId: mailMessageMailbox.authservId,
+  rawSourceAvailable: sql<boolean>`${mailMessageMailbox.rawSource} is not null`
 }
 
 async function refreshThreadSummary(mailbox: string, threadKey: string) {
@@ -1988,10 +2233,12 @@ export async function listMessagesBySender(mailboxPath: string, sender: string) 
     .orderBy(desc(mailMessageMailbox.receivedAt), desc(mailMessageMailbox.uid))
 
   return rows.map((row) =>
-    normalizeMailRowFlags({
-      ...row,
-      receivedAt: row.receivedAt != null ? new Date(row.receivedAt) : null
-    })
+    withAuthenticationTrust(
+      normalizeMailRowFlags({
+        ...row,
+        receivedAt: row.receivedAt != null ? new Date(row.receivedAt) : null
+      })
+    )
   )
 }
 
@@ -2223,7 +2470,9 @@ export async function getMessagesInThread(
         )
       )
       .orderBy(asc(mailMessage.receivedAt), asc(mailMessageMailbox.uid))
-    const orderedRows = orderThread(rows.map(normalizeMailRowFlags))
+    const orderedRows = orderThread(
+      rows.map((row) => withAuthenticationTrust(normalizeMailRowFlags(row)))
+    )
 
     perfLog('mail.getMessagesInThread', {
       mailbox: mailboxPath,
@@ -2396,7 +2645,39 @@ export async function getStoredMessageById(id: string | number): Promise<MailRow
     .where(eq(mailMessageMailbox.id, numericId))
     .limit(1)
 
-  return message ? normalizeMailRowFlags(message) : null
+  return message ? withAuthenticationTrust(normalizeMailRowFlags(message)) : null
+}
+
+export async function getStoredRawMessageById(
+  id: string | number
+): Promise<Buffer | null | undefined> {
+  if (isDemoModeEnabled()) {
+    const message = getDemoStoredMessageById(id)
+    if (!message) return undefined
+    return Buffer.from(
+      [
+        `Message-ID: ${message.messageId}`,
+        `Date: ${message.receivedAt?.toUTCString() ?? ''}`,
+        `From: ${message.from}`,
+        `To: ${message.to}`,
+        `Subject: ${message.subject}`,
+        'MIME-Version: 1.0',
+        'Content-Type: text/plain; charset=utf-8',
+        '',
+        message.textContent
+      ].join('\r\n')
+    )
+  }
+
+  const numericId = typeof id === 'string' ? Number.parseInt(id, 10) : id
+  if (!Number.isInteger(numericId)) return undefined
+  const [message] = await db
+    .select({ rawSource: mailMessageMailbox.rawSource })
+    .from(mailMessageMailbox)
+    .innerJoin(mailMessage, eq(mailMessageMailbox.messageId, mailMessage.messageId))
+    .where(eq(mailMessageMailbox.id, numericId))
+    .limit(1)
+  return message?.rawSource
 }
 
 export async function snoozeMessages(ids: number[], snoozedUntil: Date | null) {

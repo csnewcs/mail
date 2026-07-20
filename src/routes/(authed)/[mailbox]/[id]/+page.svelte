@@ -21,7 +21,8 @@
     Languages,
     Clock,
     Sparkles,
-    WifiOff
+    WifiOff,
+    Code2
   } from 'lucide-svelte'
   import { goto } from '$app/navigation'
   import { resolve } from '$app/paths'
@@ -29,6 +30,8 @@
   import ActionModal from '$lib/components/ActionModal.svelte'
   import ErrorDialog from '$lib/components/ErrorDialog.svelte'
   import AttachmentSummary from '$lib/components/AttachmentSummary.svelte'
+  import MailAuthenticationIndicators from '$lib/components/MailAuthenticationIndicators.svelte'
+  import RawMessageDialog from '$lib/components/RawMessageDialog.svelte'
   import { errorMessageFromUnknown, readErrorMessage } from '$lib/http'
   import { trackAppLoading } from '$lib/loading.svelte'
   import { onMount } from 'svelte'
@@ -63,6 +66,11 @@
     tracingCodeCount: number
     inReplyTo: string | null
     references: string | null
+    spfStatus: string | null
+    dkimStatus: string | null
+    dmarcStatus: string | null
+    authenticationTrusted: boolean
+    rawSourceAvailable: boolean
     flags: string[]
     receivedAt: string | null
     snoozedUntil: string | null
@@ -125,6 +133,7 @@
   let sharing = $state(false)
   let shareCopied = $state(false)
   let metadataOpen = $state(false)
+  let rawSourceOpen = $state(false)
   let translating = $state(false)
   let draftingReply = $state(false)
   let translationText = $state<string | null>(null)
@@ -1074,6 +1083,16 @@
         </button>
         <button
           type="button"
+          aria-label="View raw message"
+          title={message.rawSourceAvailable ? 'View raw message' : 'Raw source unavailable'}
+          disabled={!message.rawSourceAvailable}
+          onclick={() => (rawSourceOpen = true)}
+          class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-35 md:hidden"
+        >
+          <Code2 size={16} />
+        </button>
+        <button
+          type="button"
           aria-label="Translate"
           title="Translate"
           disabled={translating}
@@ -1210,6 +1229,22 @@
         <div class="group relative">
           <button
             type="button"
+            aria-label="View raw message"
+            disabled={!message.rawSourceAvailable}
+            onclick={() => (rawSourceOpen = true)}
+            class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-35 md:border-white/8"
+          >
+            <Code2 size={16} />
+          </button>
+          <span
+            class="pointer-events-none absolute top-full right-0 mt-2 rounded-md bg-zinc-800 px-2 py-1 text-xs whitespace-nowrap text-zinc-200 opacity-0 transition-opacity group-hover:opacity-100"
+          >
+            {message.rawSourceAvailable ? 'View raw' : 'Raw unavailable'}
+          </span>
+        </div>
+        <div class="group relative">
+          <button
+            type="button"
             aria-label="Translate"
             disabled={translating}
             onclick={() => void translateMessage()}
@@ -1265,6 +1300,14 @@
                 <span>{compactAddress(message.replyTo)}</span>
               </p>
             {/if}
+          </div>
+          <div class="mt-2">
+            <MailAuthenticationIndicators
+              spfStatus={message.spfStatus}
+              dkimStatus={message.dkimStatus}
+              dmarcStatus={message.dmarcStatus}
+              authenticationTrusted={message.authenticationTrusted}
+            />
           </div>
         </div>
       </div>
@@ -1537,6 +1580,14 @@
     </div>
   {/if}
 </div>
+
+{#if rawSourceOpen}
+  <RawMessageDialog
+    messageId={message.id}
+    subject={message.subject}
+    onclose={() => (rawSourceOpen = false)}
+  />
+{/if}
 
 <!-- Preview lightbox -->
 {#if previewIndex !== null}

@@ -31,6 +31,11 @@ function serializeMessage(
     tracingCodeCount: countHtmlTracingCodes(message.htmlContent),
     inReplyTo: message.inReplyTo,
     references: message.references,
+    spfStatus: message.spfStatus ?? null,
+    dkimStatus: message.dkimStatus ?? null,
+    dmarcStatus: message.dmarcStatus ?? null,
+    authenticationTrusted: message.authenticationTrusted ?? false,
+    rawSourceAvailable: message.rawSourceAvailable ?? isDemoModeEnabled(),
     flags: seen && !flags.includes('\\Seen') ? [...flags, '\\Seen'] : flags,
     receivedAt: message.receivedAt?.toISOString() ?? null,
     snoozedUntil: message.snoozedUntil?.toISOString() ?? null

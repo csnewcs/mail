@@ -19,7 +19,8 @@
     Ban,
     Star,
     Pin,
-    StickyNote
+    StickyNote,
+    Code2
   } from 'lucide-svelte'
   import { goto } from '$app/navigation'
   import { resolve } from '$app/paths'
@@ -27,6 +28,8 @@
   import ActionModal from '$lib/components/ActionModal.svelte'
   import ErrorDialog from '$lib/components/ErrorDialog.svelte'
   import AttachmentSummary from '$lib/components/AttachmentSummary.svelte'
+  import MailAuthenticationIndicators from '$lib/components/MailAuthenticationIndicators.svelte'
+  import RawMessageDialog from '$lib/components/RawMessageDialog.svelte'
   import { errorMessageFromUnknown, readErrorMessage } from '$lib/http'
   import { trackAppLoading } from '$lib/loading.svelte'
   import { onMount, tick } from 'svelte'
@@ -57,6 +60,11 @@
     textContent: string | null
     inReplyTo: string | null
     references: string | null
+    spfStatus: string | null
+    dkimStatus: string | null
+    dmarcStatus: string | null
+    authenticationTrusted: boolean
+    rawSourceAvailable: boolean
     flags: string[]
     receivedAt: string | null
     snoozedUntil: string | null
@@ -135,6 +143,7 @@
     resolve: (value: string | boolean | null) => void
   } | null>(null)
   let metadataMessage = $state<Message | null>(null)
+  let rawMessage = $state<Message | null>(null)
   let scrollToLatestPending = $state(false)
   let threadSummary = $state<string | null>(null)
   let summarizingThread = $state(false)
@@ -1243,6 +1252,19 @@
               >
                 <FileText size={14} />
               </button>
+              <button
+                type="button"
+                aria-label="View raw message"
+                title={msg.rawSourceAvailable ? 'View raw message' : 'Raw source unavailable'}
+                disabled={!msg.rawSourceAvailable}
+                onclick={(event) => {
+                  event.stopPropagation()
+                  rawMessage = msg
+                }}
+                class="rounded-lg p-1.5 text-zinc-500 transition hover:bg-white/6 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-35"
+              >
+                <Code2 size={14} />
+              </button>
               <ChevronDown
                 size={14}
                 class="text-zinc-600 transition-transform {isExpanded ? 'rotate-180' : ''}"
@@ -1253,6 +1275,15 @@
           <!-- Expanded content -->
           {#if isExpanded}
             <div class="px-4 pb-4 sm:px-5">
+              <div class="mb-3">
+                <MailAuthenticationIndicators
+                  spfStatus={msg.spfStatus}
+                  dkimStatus={msg.dkimStatus}
+                  dmarcStatus={msg.dmarcStatus}
+                  authenticationTrusted={msg.authenticationTrusted}
+                  compact
+                />
+              </div>
               {#if remoteContentBody.blockedCount > 0}
                 <div
                   class="mb-3 rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-sm text-amber-100"
@@ -1450,6 +1481,14 @@
       </div>
     </div>
   </div>
+{/if}
+
+{#if rawMessage}
+  <RawMessageDialog
+    messageId={rawMessage.id}
+    subject={rawMessage.subject}
+    onclose={() => (rawMessage = null)}
+  />
 {/if}
 
 <ErrorDialog
