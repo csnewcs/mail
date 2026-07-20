@@ -13,6 +13,8 @@ import { claimAuthUser, getAuthUserId } from '$lib/server/auth-owner'
 import { bearerApiKey, verifyApiKey } from '$lib/server/api-keys'
 import { checkApiRateLimit, checkApiSendRateLimit } from '$lib/server/api-rate-limit'
 
+let startupPromise = Promise.resolve()
+
 // Warm up eagerly so the first request doesn't pay initialization costs
 if (!building) {
   // Prevent connection errors or uncaught rejections from killing the process
@@ -24,7 +26,7 @@ if (!building) {
   })
 
   if (!isDemoModeEnabled()) {
-    void runMigrations()
+    startupPromise = runMigrations()
       .then(async () => {
         await repairThreadKeys()
         void getAuth()
@@ -34,6 +36,11 @@ if (!building) {
         process.exit(1)
       })
   }
+}
+
+const handleStartup: Handle = async ({ event, resolve }) => {
+  await startupPromise
+  return resolve(event)
 }
 
 const SETUP_PATHS = ['/setup']
@@ -146,7 +153,7 @@ const handleTraffic: Handle = async ({ event, resolve }) => {
   return response
 }
 
-export const handle: Handle = sequence(handleTraffic, handleBetterAuth)
+export const handle: Handle = sequence(handleStartup, handleTraffic, handleBetterAuth)
 
 export const handleError: HandleServerError = ({ error, event, status, message }) => {
   logServerError('request', error, {

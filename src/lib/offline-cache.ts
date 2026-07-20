@@ -15,6 +15,8 @@ export type OfflineListMessage = {
   preview: string | null
   flags: string[]
   hasUnread?: boolean
+  important?: boolean
+  hasImportantUnread?: boolean
   receivedAt: string | null
   mailbox?: string
   threadId?: string | null

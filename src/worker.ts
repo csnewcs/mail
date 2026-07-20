@@ -7,6 +7,7 @@ import { drainImapQueue, recoverInterruptedImapJobs } from './lib/server/imap-wo
 import { addDirtyMailbox, closeImapConnections, syncWatchers } from './lib/server/imap-connections'
 import { closePublicImapProxy, startPublicImapProxy } from './lib/server/imap-public-proxy'
 import { getImapConfigs } from './lib/server/config'
+import { maybeClassifyPendingMailFromWorker } from './lib/server/mail-importance'
 import {
   getMailboxSyncPollMs,
   repairThreadKeys,
@@ -74,9 +75,8 @@ async function tick() {
     await maybeRunCleanupRulesFromWorker()
 
     // The sync clock is paused while SMTP jobs are pending/running/retrying.
-    if (await hasUnfinishedSmtpJobs()) return
-
-    await maybeRunSync()
+    if (!(await hasUnfinishedSmtpJobs())) await maybeRunSync()
+    void maybeClassifyPendingMailFromWorker()
   } catch (error) {
     console.error('[worker] tick failed:', error)
   } finally {

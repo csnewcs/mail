@@ -65,6 +65,8 @@
     preview: string | null
     flags: string[]
     hasUnread?: boolean
+    important?: boolean
+    hasImportantUnread?: boolean
     receivedAt: string | null
     snoozedUntil?: string | null
     mailbox?: string
@@ -412,28 +414,30 @@
     const requestId = ++searchRequestId
 
     searchTimer = setTimeout(async () => {
-      try {
-        const response = await trackAppLoading(() =>
-          fetch(`/api/messages?q=${encodeURIComponent(query)}&limit=50`)
-        )
-        if (!response.ok) throw new Error('Search failed')
-
-        const payload = (await response.json()) as { messages: Message[]; total: number }
-
-        if (requestId !== searchRequestId) return
-        searchResults = payload.messages
-        searchTotalCount = payload.total
-      } catch {
-        if (requestId !== searchRequestId) return
-        searchResults = []
-        searchTotalCount = 0
-      } finally {
-        if (requestId === searchRequestId) {
-          isSearching = false
-        }
-      }
+      await fetchSearchResults(query, requestId)
     }, 300)
   })
+
+  async function fetchSearchResults(query: string, requestId = ++searchRequestId) {
+    isSearching = true
+    try {
+      const response = await trackAppLoading(() =>
+        fetch(`/api/messages?q=${encodeURIComponent(query)}&limit=50`)
+      )
+      if (!response.ok) throw new Error('Search failed')
+
+      const payload = (await response.json()) as { messages: Message[]; total: number }
+      if (requestId !== searchRequestId) return
+      searchResults = payload.messages
+      searchTotalCount = payload.total
+    } catch {
+      if (requestId !== searchRequestId) return
+      searchResults = []
+      searchTotalCount = 0
+    } finally {
+      if (requestId === searchRequestId) isSearching = false
+    }
+  }
 
   function contactAutocompleteQuery(query: string) {
     const trimmed = query.trim()
@@ -673,6 +677,13 @@
     return hasUnread !== undefined ? hasUnread : !flags.includes('\\Seen')
   }
 
+  function isImportantUnread(message: Message) {
+    return (
+      isUnread(message.flags, message.hasUnread) &&
+      (message.hasImportantUnread ?? message.important ?? false)
+    )
+  }
+
   function senderLabel(from: string | null | undefined) {
     if (!from) return 'Unknown sender'
     return from
@@ -831,6 +842,11 @@
   }
 
   async function refreshVisibleListWindow(reason = 'unknown') {
+    if (isSearchMode) {
+      await fetchSearchResults(searchQuery.trim())
+      return
+    }
+
     const startedAt = now()
     const requestMailbox = mailbox
     const limit = currentWindowSize()
@@ -930,12 +946,14 @@
         ? {
             ...m,
             flags: m.flags.includes('\\Seen') ? m.flags : [...m.flags, '\\Seen'],
-            ...(m.hasUnread !== undefined ? { hasUnread: false } : {})
+            ...(m.hasUnread !== undefined ? { hasUnread: false } : {}),
+            ...(m.hasImportantUnread !== undefined ? { hasImportantUnread: false } : {})
           }
         : m
 
     messages = messages.map(markRead)
     searchResults = searchResults.map(markRead)
+    void cacheCurrentList()
     restoreListScrollTop(scrollTop)
 
     const request = shouldMarkThread
@@ -1568,8 +1586,15 @@
 
   $effect(() => {
     const seed = routeListSeed
+    const importanceKey =
+      seed?.messages
+        .map(
+          (message) =>
+            `${message.id}:${message.important ? 1 : 0}:${message.hasImportantUnread ? 1 : 0}`
+        )
+        .join(',') ?? ''
     const nextKey = seed
-      ? `root:${mailbox}:${seed.pageSize}:${seed.hasMore ? 1 : 0}:${seed.messages.length}:${seed.messages[0]?.id ?? ''}:${seed.messages[seed.messages.length - 1]?.id ?? ''}`
+      ? `root:${mailbox}:${seed.pageSize}:${seed.hasMore ? 1 : 0}:${seed.messages.length}:${seed.messages[0]?.id ?? ''}:${seed.messages[seed.messages.length - 1]?.id ?? ''}:${importanceKey}`
       : `detail:${mailbox}`
 
     if (nextKey === listSyncKey) return
@@ -2560,7 +2585,10 @@
               >
                 {#if offset === 0 && activeSimplifiedMessageUnread}
                   <div
-                    class="pointer-events-none absolute inset-0 bg-sky-400 transition-opacity duration-150"
+                    class={[
+                      'pointer-events-none absolute inset-0 transition-opacity duration-150',
+                      isImportantUnread(message) ? 'bg-rose-400' : 'bg-sky-400'
+                    ]}
                     style={simplifiedMarkReadBackgroundStyle()}
                   ></div>
                 {/if}
@@ -2573,8 +2601,18 @@
                           {senderName(message.from)}
                         </p>
                         {#if isUnread(message.flags, message.hasUnread)}
-                          <span class="h-2 w-2 shrink-0 rounded-full bg-sky-400"></span>
-                          <span class="text-xs font-medium text-sky-300">Unread</span>
+                          <span
+                            class={[
+                              'h-2 w-2 shrink-0 rounded-full',
+                              isImportantUnread(message) ? 'bg-rose-400' : 'bg-sky-400'
+                            ]}
+                          ></span>
+                          <span
+                            class={[
+                              'text-xs font-medium',
+                              isImportantUnread(message) ? 'text-rose-300' : 'text-sky-300'
+                            ]}>Unread</span
+                          >
                         {/if}
                         {#if threadedMode && message.threadCount && message.threadCount > 1}
                           <span
@@ -3148,7 +3186,12 @@
                             {senderName(message.from)}
                           </p>
                           {#if isUnread(message.flags, message.hasUnread)}
-                            <span class="h-2 w-2 rounded-full bg-sky-400"></span>
+                            <span
+                              class={[
+                                'h-2 w-2 rounded-full',
+                                isImportantUnread(message) ? 'bg-rose-400' : 'bg-sky-400'
+                              ]}
+                            ></span>
                           {/if}
                           {#if message.hasThreadNote}
                             <span
@@ -3303,7 +3346,12 @@
                           {senderName(message.from)}
                         </p>
                         {#if isUnread(message.flags, message.hasUnread)}
-                          <span class="h-2 w-2 rounded-full bg-sky-400"></span>
+                          <span
+                            class={[
+                              'h-2 w-2 rounded-full',
+                              isImportantUnread(message) ? 'bg-rose-400' : 'bg-sky-400'
+                            ]}
+                          ></span>
                         {/if}
                         {#if threadedMode && message.threadCount && message.threadCount > 1}
                           <span

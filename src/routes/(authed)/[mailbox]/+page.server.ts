@@ -30,8 +30,10 @@ function serializeMessage(message: ListRow) {
     snoozedUntil: message.snoozedUntil?.toISOString() ?? null,
     threadId: message.threadId ?? null,
     hasThreadNote: 'hasThreadNote' in message ? Boolean(message.hasThreadNote) : false,
+    important: 'important' in message ? (message.important ?? false) : false,
     ...('threadCount' in message ? { threadCount: message.threadCount } : {}),
     ...('hasUnread' in message ? { hasUnread: message.hasUnread } : {}),
+    ...('hasImportantUnread' in message ? { hasImportantUnread: message.hasImportantUnread } : {}),
     threadStarred: 'threadStarred' in message ? (message.threadStarred ?? false) : false,
     threadPinned: 'threadPinned' in message ? (message.threadPinned ?? false) : false
   }

@@ -36,9 +36,11 @@ function serializeMessage(message: MailListRow | ThreadRow, includeMailbox = fal
     threadId: message.threadId ?? null,
     threadStarred: message.threadStarred ?? false,
     threadPinned: message.threadPinned ?? false,
+    important: message.important ?? false,
     ...('hasThreadNote' in message ? { hasThreadNote: Boolean(message.hasThreadNote) } : {}),
     ...('threadCount' in message ? { threadCount: message.threadCount } : {}),
     ...('hasUnread' in message ? { hasUnread: message.hasUnread } : {}),
+    ...('hasImportantUnread' in message ? { hasImportantUnread: message.hasImportantUnread } : {}),
     ...(includeMailbox ? { mailbox: message.mailbox } : {})
   }
 }

@@ -173,6 +173,16 @@ export const mailMessage = pgTable(
     references: text('references'),
     threadId: text('thread_id'),
     threadKey: text('thread_key').notNull().default(''),
+    aiImportant: boolean('ai_important').notNull().default(false),
+    aiImportanceClassifiedAt: timestamp('ai_importance_classified_at', {
+      withTimezone: true,
+      mode: 'date'
+    }),
+    aiImportanceAttempts: integer('ai_importance_attempts').notNull().default(0),
+    aiImportanceClaimedAt: timestamp('ai_importance_claimed_at', {
+      withTimezone: true,
+      mode: 'date'
+    }),
     receivedAt: timestamp('received_at', { withTimezone: true, mode: 'date' })
   },
   (table) => [

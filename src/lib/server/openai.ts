@@ -18,6 +18,10 @@ function getOpenAIConfig(): OpenAIConfig {
   }
 }
 
+export function isOpenAIConfigured() {
+  return !('missing' in getOpenAIConfig())
+}
+
 function truncateInputAt(value: string, maxInputChars = MAX_INPUT_CHARS) {
   if (value.length <= maxInputChars) return value
   return `${value.slice(0, maxInputChars)}\n\n[Input truncated]`
@@ -104,6 +108,7 @@ type OpenAITextParams = {
   maxOutputTokens?: number
   maxInputChars?: number
   textConfig?: Parameters<OpenAI['responses']['create']>[0]['text']
+  timeoutMs?: number
 }
 
 function createClientConfig() {
@@ -123,18 +128,22 @@ export async function generateOpenAIText({
   input,
   maxOutputTokens = 900,
   maxInputChars,
-  textConfig
+  textConfig,
+  timeoutMs
 }: OpenAITextParams) {
   const { client, model } = createClientConfig()
 
-  const response = await client.responses.create({
-    model,
-    instructions,
-    input: truncateInputAt(input, maxInputChars),
-    max_output_tokens: maxOutputTokens,
-    store: false,
-    text: textConfig
-  })
+  const response = await client.responses.create(
+    {
+      model,
+      instructions,
+      input: truncateInputAt(input, maxInputChars),
+      max_output_tokens: maxOutputTokens,
+      store: false,
+      text: textConfig
+    },
+    timeoutMs ? { timeout: timeoutMs } : undefined
+  )
 
   const outputText = extractOutputText(response)
   if (!outputText) {

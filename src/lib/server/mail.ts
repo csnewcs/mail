@@ -107,6 +107,7 @@ export type MailListRow = {
   threadStarred?: boolean
   threadPinned?: boolean
   hasThreadNote?: boolean
+  important?: boolean
 }
 
 // Joined row returned by detail queries
@@ -119,7 +120,11 @@ export type MailRow = MailListRow & {
   threadDepth?: number
 }
 
-export type ThreadRow = MailListRow & { threadCount: number; hasUnread?: boolean }
+export type ThreadRow = MailListRow & {
+  threadCount: number
+  hasUnread?: boolean
+  hasImportantUnread?: boolean
+}
 
 export function normalizeSenderAddress(from: string | null | undefined) {
   if (!from) return ''
@@ -1579,6 +1584,7 @@ const listSelect = {
   receivedAt: mailMessage.receivedAt,
   snoozedUntil: mailMessageMailbox.snoozedUntil,
   threadId: mailMessage.threadKey,
+  important: mailMessage.aiImportant,
   threadStarred: sql<boolean>`exists (
     select 1
     from mail_thread_metadata
@@ -2044,6 +2050,16 @@ export async function listStoredThreads(
           and unread_mmm.mailbox = ${mailThreadSummary.mailbox}
           and unread_mmm.flags not like ${'%\\\\Seen%'}
         )`,
+        important: mailMessage.aiImportant,
+        hasImportantUnread: sql<boolean>`exists (
+          select 1
+          from mail_message_mailbox as important_mmm
+          inner join mail_message as important_mm on important_mmm.message_id = important_mm.message_id
+          where important_mm.thread_key = ${mailThreadSummary.threadKey}
+          and important_mmm.mailbox = ${mailThreadSummary.mailbox}
+          and important_mmm.flags not like ${'%\\\\Seen%'}
+          and important_mm.ai_important = true
+        )`,
         threadStarred: sql<boolean>`exists (
           select 1
           from mail_thread_metadata
@@ -2121,6 +2137,11 @@ export async function listStoredThreads(
         hasUnread: alwaysReadMailbox
           ? false
           : Boolean((row as typeof row & { hasUnread: boolean | null }).hasUnread),
+        hasImportantUnread: alwaysReadMailbox
+          ? false
+          : Boolean(
+              (row as typeof row & { hasImportantUnread: boolean | null }).hasImportantUnread
+            ),
         hasThreadNote: Boolean(
           (row as typeof row & { hasThreadNote: boolean | null }).hasThreadNote
         ),
