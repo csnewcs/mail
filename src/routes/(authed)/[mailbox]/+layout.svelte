@@ -40,6 +40,7 @@
   import { keyboard, setupKeyboardHandler } from '$lib/keyboard.svelte'
   import { readOfflineList, saveOfflineList, type OfflineListCache } from '$lib/offline-cache'
   import { DEFAULT_LIST_RATIO, MIN_LIST_PX, MIN_DETAIL_PX } from '$lib/list-width'
+  import { hasExplicitSearchFilter } from '$lib/mail-search'
 
   type DensityPreference = 'comfortable' | 'compact' | 'condensed'
 
@@ -221,6 +222,8 @@
   let searchResults = $state<Message[]>([])
   let searchTotalCount = $state(0)
   let isSearching = $state(false)
+  let aiSearchQuery = ''
+  let naturalSearchController: AbortController | null = null
   let savedSearches = $state<SavedSearch[]>([])
   let savingSearch = $state(false)
   let showSavedSearchMenu = $state(false)
@@ -404,10 +407,23 @@
     }
 
     if (!query) {
+      naturalSearchController?.abort()
+      naturalSearchController = null
+      aiSearchQuery = ''
+      searchRequestId += 1
       searchResults = []
       searchTotalCount = 0
       isSearching = false
       return
+    }
+
+    if (query === aiSearchQuery) return
+    if (aiSearchQuery) {
+      naturalSearchController?.abort()
+      naturalSearchController = null
+      aiSearchQuery = ''
+      searchRequestId += 1
+      isSearching = false
     }
 
     isSearching = true
@@ -437,6 +453,72 @@
     } finally {
       if (requestId === searchRequestId) isSearching = false
     }
+  }
+
+  async function runNaturalSearch(query: string, preservePosition = false) {
+    if (searchTimer !== null) {
+      clearTimeout(searchTimer)
+      searchTimer = null
+    }
+    if (isSearching && aiSearchQuery) return
+    const requestId = ++searchRequestId
+    const controller = new AbortController()
+    naturalSearchController = controller
+    aiSearchQuery = query
+    isSearching = true
+    showContactSuggestions = false
+    if (!preservePosition) {
+      searchResults = []
+      searchTotalCount = 0
+      simplifiedCardIndex = 0
+      keyboard.focusedIndex = 0
+      restoreListScrollTop(0)
+    }
+
+    try {
+      const response = await trackAppLoading(() =>
+        fetch('/api/ai/search', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ query }),
+          signal: controller.signal
+        })
+      )
+      if (!response.ok) throw new Error(await readErrorMessage(response, 'AI search failed.'))
+
+      const payload = (await response.json()) as { messages: Message[]; total: number }
+      if (requestId !== searchRequestId || searchQuery.trim() !== query) return
+      searchResults = payload.messages
+      searchTotalCount = payload.total
+    } catch (error) {
+      if (requestId !== searchRequestId) return
+      if (!preservePosition) aiSearchQuery = ''
+      if (!controller.signal.aborted) {
+        errorDialogMessage = errorMessageFromUnknown(error, 'AI search failed.')
+      }
+    } finally {
+      if (requestId === searchRequestId) {
+        naturalSearchController = null
+        isSearching = false
+      }
+    }
+  }
+
+  function onSearchKeydown(event: KeyboardEvent) {
+    if (event.key !== 'Enter' || event.isComposing) return
+    const query = searchQuery.trim()
+    if (!query) return
+    event.preventDefault()
+    if (searchTimer !== null) {
+      clearTimeout(searchTimer)
+      searchTimer = null
+    }
+
+    if (hasExplicitSearchFilter(query)) {
+      void fetchSearchResults(query)
+      return
+    }
+    void runNaturalSearch(query)
   }
 
   function contactAutocompleteQuery(query: string) {
@@ -843,6 +925,10 @@
 
   async function refreshVisibleListWindow(reason = 'unknown') {
     if (isSearchMode) {
+      if (searchQuery.trim() === aiSearchQuery) {
+        if (reason !== 'visibility-interval') await runNaturalSearch(aiSearchQuery, true)
+        return
+      }
       await fetchSearchResults(searchQuery.trim())
       return
     }
@@ -2406,6 +2492,7 @@
               bind:value={searchQuery}
               type="search"
               placeholder="Search"
+              onkeydown={onSearchKeydown}
               onfocus={onSearchFocus}
               onblur={onSearchBlur}
               class={[listSearchInputClass, 'md:px-3 md:py-2']}
@@ -2853,6 +2940,7 @@
                 bind:value={searchQuery}
                 type="search"
                 placeholder="Search"
+                onkeydown={onSearchKeydown}
                 onfocus={onSearchFocus}
                 onblur={onSearchBlur}
                 class={listSearchInputClass}

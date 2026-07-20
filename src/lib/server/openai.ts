@@ -111,7 +111,7 @@ type OpenAITextParams = {
   timeoutMs?: number
 }
 
-function createClientConfig() {
+export function createOpenAIClientConfig() {
   const config = getOpenAIConfig()
   if ('missing' in config) {
     throw new Error(`Missing ${config.missing.join(', ')}`)
@@ -131,7 +131,7 @@ export async function generateOpenAIText({
   textConfig,
   timeoutMs
 }: OpenAITextParams) {
-  const { client, model } = createClientConfig()
+  const { client, model } = createOpenAIClientConfig()
 
   const response = await client.responses.create(
     {
@@ -164,7 +164,7 @@ export async function createOpenAITextStream({
   onComplete?: (text: string) => void
   onError?: (error: unknown) => void
 }) {
-  const { client, model } = createClientConfig()
+  const { client, model } = createOpenAIClientConfig()
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {

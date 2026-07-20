@@ -1166,6 +1166,36 @@ export function searchDemoMessages(query: string, limit: number, offset: number)
   return deduped.slice(offset, offset + limit).map(normalizeDemoMailRowFlags)
 }
 
+export function searchDemoMessagesByRegex(pattern: string, limit: number) {
+  const terms = pattern
+    .split('|')
+    .map((term) =>
+      term
+        .replace(/\\[mMyY]|[\\^$.*+?()[\]{}]/g, '')
+        .trim()
+        .toLowerCase()
+    )
+    .filter((term) => term.length >= 2)
+  const results = sortedMessages(
+    demoMessages.filter((message) => {
+      const text = [message.subject, message.from, message.to, message.preview, message.textContent]
+        .join('\n')
+        .toLowerCase()
+      return terms.some((term) => text.includes(term))
+    })
+  )
+
+  const seen = new Set<string>()
+  return results
+    .filter((message) => {
+      if (seen.has(message.messageId)) return false
+      seen.add(message.messageId)
+      return true
+    })
+    .slice(0, limit)
+    .map(normalizeDemoMailRowFlags)
+}
+
 export function countDemoSearchMessages(query: string) {
   return searchDemoMessages(query, Number.MAX_SAFE_INTEGER, 0).length
 }

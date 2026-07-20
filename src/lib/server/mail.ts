@@ -76,6 +76,7 @@ import {
   markDemoMessageAsUnread,
   moveDemoMessage,
   searchDemoMessages,
+  searchDemoMessagesByRegex,
   snoozeDemoMessages
 } from './demo'
 import { assignThreadKeys, orderThread, referenceCandidates } from './threading'
@@ -2285,6 +2286,37 @@ export async function searchMessages(query: string, limit: number, offset: numbe
   })
 
   return deduped.map(normalizeMailRowFlags)
+}
+
+export async function searchMessagesByRegex(pattern: string, limit = 25) {
+  if (isDemoModeEnabled()) return searchDemoMessagesByRegex(pattern, limit)
+
+  const rows = await db.transaction(async (tx) => {
+    await tx.execute(sql`set local statement_timeout = '1500ms'`)
+    return tx
+      .select(listSelect)
+      .from(mailMessage)
+      .innerJoin(mailMessageMailbox, eq(mailMessageMailbox.messageId, mailMessage.messageId))
+      .where(
+        and(
+          sql`concat_ws(E'\n', ${mailMessage.subject}, ${mailMessage.from}, ${mailMessage.to}, ${mailMessage.preview}, ${mailMessage.textContent}) ~* ${pattern}`,
+          activeSnoozeCondition(),
+          noPendingMoveCondition()
+        )
+      )
+      .orderBy(desc(mailMessage.receivedAt))
+      .limit(Math.min(limit * 3, 150))
+  })
+
+  const seen = new Set<string>()
+  return rows
+    .filter((row) => {
+      if (seen.has(row.messageId)) return false
+      seen.add(row.messageId)
+      return true
+    })
+    .slice(0, limit)
+    .map(normalizeMailRowFlags)
 }
 
 export async function countSearchMessages(query: string) {
