@@ -1,5 +1,36 @@
 import { convert } from 'html-to-text'
 import { parseDocument } from 'htmlparser2'
+import addressparser from 'nodemailer/lib/addressparser/index.js'
+
+export function outgoingSenderAddress(value: string) {
+  const address = addressparser(value, { flatten: true })[0]?.address.trim()
+  if (!address) throw new Error('Invalid SMTP payload: invalid sender address')
+  return address
+}
+
+export function outgoingListHeaders(from: string) {
+  const address = outgoingSenderAddress(from)
+  const separator = address.lastIndexOf('@')
+  const local = address.slice(0, separator)
+  const domain = address.slice(separator + 1)
+  const quotedLocal = local.startsWith('"') && local.endsWith('"')
+  const validDomain =
+    (domain.startsWith('[') && domain.endsWith(']')) ||
+    domain
+      .split('.')
+      .every((label) => label.length > 0 && !label.startsWith('-') && !label.endsWith('-'))
+  if (
+    separator <= 0 ||
+    !domain ||
+    (!quotedLocal && (local.includes('@') || local.startsWith('.') || local.endsWith('.'))) ||
+    (!quotedLocal && local.includes('..')) ||
+    !validDomain
+  ) {
+    throw new Error('Invalid SMTP payload: invalid sender address')
+  }
+  const mailtoAddress = `${encodeURIComponent(local)}@${encodeURIComponent(domain)}`
+  return { 'List-Unsubscribe': `<mailto:${mailtoAddress}>` }
+}
 
 export function outgoingMessageBody(value: string | null | undefined) {
   const fragment = value?.trim()

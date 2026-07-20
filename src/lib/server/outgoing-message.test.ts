@@ -1,6 +1,44 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { outgoingMessageBody } from './outgoing-message.ts'
+import nodemailer from 'nodemailer'
+import {
+  outgoingListHeaders,
+  outgoingMessageBody,
+  outgoingSenderAddress
+} from './outgoing-message.ts'
+
+test('creates a mailto List-Unsubscribe header for the sender address', async () => {
+  assert.equal(outgoingSenderAddress('Mail Team <sender@example.com>'), 'sender@example.com')
+  assert.equal(outgoingSenderAddress('sender@example.com (Mail Team)'), 'sender@example.com')
+  assert.equal(outgoingSenderAddress('"Team <Ops>" <sender@example.com>'), 'sender@example.com')
+  assert.equal(
+    outgoingSenderAddress('sender@example.com (support@example.net)'),
+    'sender@example.com'
+  )
+  assert.equal(outgoingSenderAddress('Mail Team <"foo bar"@example.com>'), '"foo bar"@example.com')
+  assert.deepEqual(outgoingListHeaders('Mail Team <"foo bar"@example.com>'), {
+    'List-Unsubscribe': '<mailto:%22foo%20bar%22@example.com>'
+  })
+  assert.deepEqual(outgoingListHeaders('user?tag@example.com'), {
+    'List-Unsubscribe': '<mailto:user%3Ftag@example.com>'
+  })
+  for (const invalid of ['invalid-sender', 'a@@example.com', 'a@example..com', 'a@-example.com']) {
+    assert.throws(() => outgoingListHeaders(invalid), /invalid sender address/)
+  }
+  assert.deepEqual(outgoingListHeaders('Mail Team <sender@example.com>'), {
+    'List-Unsubscribe': '<mailto:sender@example.com>'
+  })
+
+  const transport = nodemailer.createTransport({ streamTransport: true, buffer: true })
+  const sent = await transport.sendMail({
+    from: 'Mail Team <sender@example.com>',
+    to: 'recipient@example.com',
+    subject: 'Header test',
+    text: 'Hello',
+    headers: outgoingListHeaders('Mail Team <sender@example.com>')
+  })
+  assert.match(sent.message.toString(), /^List-Unsubscribe: <mailto:sender@example\.com>\r?$/m)
+})
 
 test('wraps HTML fragments and creates a plain-text alternative', () => {
   const body = outgoingMessageBody('<p>Hello <strong>mail</strong>.</p><p>Second line.</p>')

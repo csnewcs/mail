@@ -7,7 +7,11 @@ import { mailMessage, smtpJob } from './db/schema'
 import { logServerError } from './perf'
 import { isAuthError, withRetry } from './retry'
 import type { SmtpSendJobPayload } from './smtp-queue'
-import { outgoingMessageBody } from './outgoing-message.ts'
+import {
+  outgoingListHeaders,
+  outgoingMessageBody,
+  outgoingSenderAddress
+} from './outgoing-message.ts'
 
 const MAX_JOB_ATTEMPTS = 8
 const PERMANENT_SMTP_ERROR_RE =
@@ -70,11 +74,6 @@ async function resolveSmtpConfig(serverId?: string | null): Promise<SmtpConfig> 
     throw new Error(`Missing SMTP config: ${config.missing.join(', ')}`)
   }
   return config
-}
-
-function extractAddress(value: string) {
-  const match = value.match(/<([^>]+)>/)
-  return match?.[1]?.trim() || value.trim()
 }
 
 async function markJobRunning(job: SmtpJobRow) {
@@ -173,7 +172,7 @@ async function runJob(job: SmtpJobRow) {
     () =>
       transporter.sendMail({
         from: payload.fromName
-          ? { name: payload.fromName, address: extractAddress(smtpConfig.from) }
+          ? { name: payload.fromName, address: outgoingSenderAddress(smtpConfig.from) }
           : smtpConfig.from,
         to: payload.to,
         cc: payload.cc || undefined,
@@ -182,6 +181,7 @@ async function runJob(job: SmtpJobRow) {
         ...outgoingMessageBody(payload.html),
         inReplyTo: payload.inReplyTo || undefined,
         references,
+        headers: outgoingListHeaders(smtpConfig.from),
         attachments: attachments.length > 0 ? attachments : undefined
       }),
     { label: 'smtp sendMail', maxAttempts: 3, baseDelayMs: 1000 }
