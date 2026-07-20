@@ -5,7 +5,7 @@ import { logServerError } from './perf'
 import { eq } from 'drizzle-orm'
 import { getQuietHoursConfig } from './config'
 import { isQuietHoursActive } from './quiet-hours'
-import { readNotificationBatches } from '$lib/push-control'
+import { readControlSubscriptions, readNotificationBatches } from '$lib/push-control'
 
 const PUSH_TTL_SECONDS = 24 * 60 * 60
 const CONTROL_PUSH_ATTEMPTS = 3
@@ -47,7 +47,9 @@ async function sendPushPayload(payload: PushPayload): Promise<void> {
   const ready = await ensureInit()
   if (!ready) return
 
-  const subscriptions = await db.select().from(mailPushSubscription)
+  const allSubscriptions = await db.select().from(mailPushSubscription)
+  const subscriptions =
+    'type' in payload ? readControlSubscriptions(allSubscriptions) : allSubscriptions
   if (subscriptions.length === 0) return
 
   const data = JSON.stringify(payload)

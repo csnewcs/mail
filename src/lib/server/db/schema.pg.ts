@@ -470,5 +470,6 @@ export const mailPushSubscription = pgTable('mail_push_subscription', {
   endpoint: text('endpoint').notNull().unique(),
   p256dh: text('p256dh').notNull(),
   auth: text('auth').notNull(),
+  readControlVersion: integer('read_control_version').notNull().default(0),
   createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull()
 })

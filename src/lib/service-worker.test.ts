@@ -8,8 +8,13 @@ type PushEvent = {
   waitUntil: (value: Promise<unknown>) => void
 }
 
+type WorkerMessageEvent = {
+  data: { type: string }
+  ports: Array<{ postMessage: (value: unknown) => void }>
+}
+
 test('read control pushes close matching notifications without showing a new one', async () => {
-  const listeners = new Map<string, (event: PushEvent) => void>()
+  const listeners = new Map<string, (event: unknown) => void>()
   const closed: number[] = []
   const shown: Array<{ title: string; options: { tag?: string } }> = []
   const markers = new Map<string, Response>()
@@ -25,7 +30,7 @@ test('read control pushes close matching notifications without showing a new one
         shown.push({ title, options })
       }
     },
-    addEventListener: (type: string, handler: (event: PushEvent) => void) => {
+    addEventListener: (type: string, handler: (event: unknown) => void) => {
       listeners.set(type, handler)
     }
   }
@@ -49,8 +54,19 @@ test('read control pushes close matching notifications without showing a new one
     Number,
     Promise
   })
-  const handlePush = listeners.get('push')
+  const handlePush = listeners.get('push') as ((event: PushEvent) => void) | undefined
   assert.ok(handlePush)
+
+  let capabilities: unknown
+  const handleMessage = listeners.get('message') as
+    | ((event: WorkerMessageEvent) => void)
+    | undefined
+  assert.ok(handleMessage)
+  handleMessage({
+    data: { type: 'GET_PUSH_CAPABILITIES' },
+    ports: [{ postMessage: (value) => (capabilities = value) }]
+  })
+  assert.equal((capabilities as { readControlVersion?: number })?.readControlVersion, 1)
 
   const completions: Promise<unknown>[] = []
   handlePush({

@@ -1,4 +1,5 @@
 import { readErrorMessage } from '$lib/http'
+import { READ_CONTROL_VERSION } from '$lib/push-control'
 
 export type PushSetupStatus =
   | 'checking'
@@ -43,11 +44,46 @@ class PushNotificationsState {
     )
   }
 
+  private async waitForServiceWorkerActivation() {
+    const worker = this.registration?.installing ?? this.registration?.waiting
+    if (!worker || worker.state === 'activated') return
+
+    await new Promise<void>((resolve) => {
+      const timeout = window.setTimeout(() => {
+        worker.removeEventListener('statechange', handleStateChange)
+        resolve()
+      }, 2_000)
+      const handleStateChange = () => {
+        if (worker.state !== 'activated' && worker.state !== 'redundant') return
+        window.clearTimeout(timeout)
+        worker.removeEventListener('statechange', handleStateChange)
+        resolve()
+      }
+      worker.addEventListener('statechange', handleStateChange)
+    })
+  }
+
+  private async readControlVersion() {
+    const worker = this.registration?.active
+    if (!worker || typeof MessageChannel === 'undefined') return 0
+
+    return new Promise<number>((resolve) => {
+      const channel = new MessageChannel()
+      const timeout = window.setTimeout(() => resolve(0), 500)
+      channel.port1.onmessage = (event) => {
+        window.clearTimeout(timeout)
+        resolve(event.data?.readControlVersion === READ_CONTROL_VERSION ? READ_CONTROL_VERSION : 0)
+      }
+      worker.postMessage({ type: 'GET_PUSH_CAPABILITIES' }, [channel.port2])
+    })
+  }
+
   private async syncSubscription(subscription: PushSubscription) {
+    const readControlVersion = await this.readControlVersion()
     const response = await fetch('/api/push/subscribe', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(subscription.toJSON())
+      body: JSON.stringify({ ...subscription.toJSON(), readControlVersion })
     })
     if (!response.ok) {
       throw new Error(await readErrorMessage(response, 'Failed to register notifications.'))
@@ -98,6 +134,8 @@ class PushNotificationsState {
 
       this.registration = await navigator.serviceWorker.register('/sw.js', { scope: '/' })
       await navigator.serviceWorker.ready
+      await this.registration.update().catch(() => undefined)
+      await this.waitForServiceWorkerActivation()
       this.subscription = await this.registration.pushManager.getSubscription()
       if (this.subscription && !subscriptionUsesKey(this.subscription, this.publicKey)) {
         await this.removeSubscription(this.subscription)

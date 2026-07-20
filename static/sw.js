@@ -1,6 +1,7 @@
 const CACHE_NAME = 'mail-v4'
 const READ_NOTIFICATION_CACHE = 'mail-read-notifications-v1'
 const READ_NOTIFICATION_TTL_MS = 24 * 60 * 60 * 1000
+const READ_CONTROL_VERSION = 1
 const MARK_READ_ACTION = 'mark-read'
 let pushQueue = Promise.resolve()
 
@@ -157,6 +158,10 @@ self.addEventListener('notificationclick', (event) => {
 })
 
 self.addEventListener('message', (event) => {
+  if (event.data?.type === 'GET_PUSH_CAPABILITIES') {
+    event.ports[0]?.postMessage({ readControlVersion: READ_CONTROL_VERSION })
+    return
+  }
   if (event.data?.type !== 'CLEAR_OFFLINE_CACHE') return
   event.waitUntil(
     caches
