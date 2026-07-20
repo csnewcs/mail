@@ -7,6 +7,7 @@ import { mailMessage, smtpJob } from './db/schema'
 import { logServerError } from './perf'
 import { isAuthError, withRetry } from './retry'
 import type { SmtpSendJobPayload } from './smtp-queue'
+import { outgoingMessageBody } from './outgoing-message.ts'
 
 const MAX_JOB_ATTEMPTS = 8
 const PERMANENT_SMTP_ERROR_RE =
@@ -178,7 +179,7 @@ async function runJob(job: SmtpJobRow) {
         cc: payload.cc || undefined,
         bcc: payload.bcc || undefined,
         subject: payload.subject,
-        html: payload.html ?? undefined,
+        ...outgoingMessageBody(payload.html),
         inReplyTo: payload.inReplyTo || undefined,
         references,
         attachments: attachments.length > 0 ? attachments : undefined

@@ -29,4 +29,8 @@ test('builds a complete draft MIME message with stable headers and attachments',
   assert.match(raw, /X-Pmail-Draft-Version: 2026-07-15T00:00:00\.000Z/i)
   assert.match(raw, /Subject: Draft subject/i)
   assert.match(raw, /filename=note\.txt/i)
+  assert.match(raw, /Content-Type: multipart\/alternative/i)
+  assert.match(raw, /Content-Type: text\/plain/i)
+  assert.match(raw, /Content-Type: text\/html/i)
+  assert.match(raw, /<!doctype html><html>/i)
 })

@@ -1,5 +1,6 @@
 import nodemailer from 'nodemailer'
 import type { ComposerAttachment } from '$lib/mail-attachments'
+import { outgoingMessageBody } from './outgoing-message.ts'
 
 type DraftMessage = {
   id: number
@@ -35,7 +36,7 @@ export async function buildDraftMessage(
     cc: draft.cc || undefined,
     bcc: draft.bcc || undefined,
     subject: draft.subject,
-    html: draft.html || undefined,
+    ...outgoingMessageBody(draft.html),
     inReplyTo: draft.inReplyTo || undefined,
     headers: draftIdentityHeaders(draft.id, draft.updatedAt),
     attachments: attachments.map((attachment) => ({
