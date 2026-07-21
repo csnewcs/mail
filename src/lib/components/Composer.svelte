@@ -98,6 +98,7 @@
   let loadingSmtpServers = $state(false)
   let loadingOpenPgp = $state(false)
   let openPgpKeyEmails = $state<string[]>([])
+  let composeLayout = $state<'simple' | 'advanced'>('simple')
 
   type MessageTemplate = {
     id: number
@@ -137,10 +138,20 @@
   let pendingUndoSend = $state<PendingUndoSend | null>(null)
 
   const isMobile = $derived(viewportWidth < 640)
-  const useFullscreenLayout = $derived(composer.fullscreen || (isMobile && !composer.minimized))
-  const isAttachmentDragActive = $derived(attachmentDragDepth > 0 && !composer.minimized)
+  const isAdvancedLayout = $derived(composeLayout === 'advanced')
+  const useFullscreenLayout = $derived(
+    composer.fullscreen ||
+      (!composer.minimized && (isMobile || (isAdvancedLayout && viewportWidth < 800)))
+  )
+  const isAttachmentDragActive = $derived(
+    isAdvancedLayout && attachmentDragDepth > 0 && !composer.minimized
+  )
   const recipientValidation = $derived(
-    validateRecipientFields({ to: composer.to, cc: composer.cc, bcc: composer.bcc })
+    validateRecipientFields({
+      to: composer.to,
+      cc: isAdvancedLayout ? composer.cc : '',
+      bcc: isAdvancedLayout ? composer.bcc : ''
+    })
   )
   const canSend = $derived(
     !sending && !!composer.subject && recipientValidation.errors.length === 0
@@ -173,12 +184,15 @@
       content: '<p></p>',
       editorProps: {
         attributes: {
-          class: 'composer-editor focus:outline-none min-h-[180px] p-4'
+          class: 'composer-editor focus:outline-none',
+          'aria-label': 'Message content'
         }
       },
       onTransaction: () => {
-        editorTick += 1
-        if (aiPreviewHtml) clearAiPreview()
+        queueMicrotask(() => {
+          editorTick += 1
+          if (aiPreviewHtml) clearAiPreview()
+        })
       }
     })
   })
@@ -187,13 +201,26 @@
   let prevOpen = false
   $effect(() => {
     if (composer.open && !prevOpen && editor) {
-      void loadOpenPgpStatus()
       editor.commands.setContent(composer.initialHtml || '<p></p>')
       const focusPosition =
         composer.mode === 'reply' || composer.mode === 'reply-all' ? 'start' : 'end'
       editor.commands.focus(focusPosition)
       showCc = !!composer.cc
       showBcc = !!composer.bcc
+      sendLaterAt = ''
+      composeLayout =
+        composer.cc ||
+        composer.bcc ||
+        composer.fromName ||
+        composer.attachments.length > 0 ||
+        (composer.selectedSmtpServerId &&
+          composer.selectedSmtpServerId !== composer.smtpServers[0]?.id) ||
+        composer.openPgpSigning !== 'none' ||
+        composer.openPgpEncrypt ||
+        composer.attachPublicKey
+          ? 'advanced'
+          : 'simple'
+      if (composeLayout === 'advanced') void loadOpenPgpStatus()
       lastSavedContent = draftSnapshot(composer.initialHtml || '<p></p>')
       clearAiPreview()
       errorDialogMessage = null
@@ -287,7 +314,6 @@
 
   onMount(() => {
     saveDraftTimer = setInterval(saveDraft, 30_000)
-    void loadOpenPgpStatus()
 
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
       if (!composer.open || !editor) return
@@ -508,6 +534,17 @@
     showLinkInput = false
   }
 
+  function setComposeLayout(layout: 'simple' | 'advanced') {
+    if (layout === composeLayout) return
+    if (layout === 'simple' && markdownMode) toggleMarkdownMode()
+    composeLayout = layout
+    if (layout === 'advanced') void loadOpenPgpStatus()
+    showLinkInput = false
+    showTemplateMenu = false
+    showAiMenu = false
+    showSendLaterMenu = false
+  }
+
   function splitQuotedHtml(html: string) {
     const quoteIndex = html.search(/<blockquote\b/i)
     if (quoteIndex === -1) return { editableHtml: html, quotedHtml: '' }
@@ -601,8 +638,8 @@
     if (!editor || sending) return
     const validation = validateRecipientFields({
       to: composer.to,
-      cc: composer.cc,
-      bcc: composer.bcc
+      cc: isAdvancedLayout ? composer.cc : '',
+      bcc: isAdvancedLayout ? composer.bcc : ''
     })
     if (validation.errors.length > 0) {
       errorDialogMessage = validation.errors.map((issue) => issue.message).join('\n')
@@ -635,19 +672,21 @@
       attachPublicKey?: boolean
     } = {
       to: normalizeRecipientList(composer.to),
-      cc: normalizeRecipientList(composer.cc) || null,
-      bcc: normalizeRecipientList(composer.bcc) || null,
+      cc: isAdvancedLayout ? normalizeRecipientList(composer.cc) || null : null,
+      bcc: isAdvancedLayout ? normalizeRecipientList(composer.bcc) || null : null,
       subject: composer.subject,
       html,
-      attachments: composer.attachments,
+      attachments: isAdvancedLayout ? composer.attachments : [],
       inReplyTo: composer.inReplyTo,
-      smtpServerId: composer.selectedSmtpServerId || null,
-      fromName: composer.fromName.trim() || null,
-      openPgpSigning: composer.openPgpSigning,
-      openPgpEncrypt: composer.openPgpEncrypt,
-      attachPublicKey: composer.attachPublicKey
+      smtpServerId: isAdvancedLayout
+        ? composer.selectedSmtpServerId || null
+        : (composer.smtpServers[0]?.id ?? null),
+      fromName: isAdvancedLayout ? composer.fromName.trim() || null : null,
+      openPgpSigning: isAdvancedLayout ? composer.openPgpSigning : 'none',
+      openPgpEncrypt: isAdvancedLayout && composer.openPgpEncrypt,
+      attachPublicKey: isAdvancedLayout && composer.attachPublicKey
     }
-    if (sendLaterAt) payload.sendAt = new Date(sendLaterAt).toISOString()
+    if (isAdvancedLayout && sendLaterAt) payload.sendAt = new Date(sendLaterAt).toISOString()
     sending = true
     try {
       const res = await fetch('/api/send', {
@@ -901,25 +940,25 @@
   }
 
   function handleAttachmentDragEnter(event: DragEvent) {
-    if (!hasDraggedFiles(event) || composer.minimized) return
+    if (!isAdvancedLayout || !hasDraggedFiles(event) || composer.minimized) return
     event.preventDefault()
     attachmentDragDepth += 1
   }
 
   function handleAttachmentDragOver(event: DragEvent) {
-    if (!hasDraggedFiles(event) || composer.minimized) return
+    if (!isAdvancedLayout || !hasDraggedFiles(event) || composer.minimized) return
     event.preventDefault()
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
   }
 
   function handleAttachmentDragLeave(event: DragEvent) {
-    if (!hasDraggedFiles(event) || composer.minimized) return
+    if (!isAdvancedLayout || !hasDraggedFiles(event) || composer.minimized) return
     event.preventDefault()
     attachmentDragDepth = Math.max(0, attachmentDragDepth - 1)
   }
 
   async function handleAttachmentDrop(event: DragEvent) {
-    if (!hasDraggedFiles(event) || composer.minimized) return
+    if (!isAdvancedLayout || !hasDraggedFiles(event) || composer.minimized) return
     event.preventDefault()
     attachmentDragDepth = 0
     await addAttachmentFiles(Array.from(event.dataTransfer?.files ?? []))
@@ -937,14 +976,14 @@
 
 <div
   class={[
-    'fixed z-50 flex flex-col overflow-hidden border border-white/10 bg-[#18181c] shadow-2xl',
+    'fixed z-50 flex flex-col overflow-x-hidden overflow-y-auto border border-white/10 bg-[#18181c] shadow-2xl',
     useFullscreenLayout
       ? 'inset-0 rounded-none sm:inset-4 sm:rounded-xl'
       : composer.minimized
         ? 'right-0 bottom-0 left-0 rounded-t-xl sm:right-4 sm:left-auto'
         : 'inset-x-0 top-0 bottom-0 rounded-none sm:top-auto sm:right-4 sm:left-auto sm:rounded-t-xl'
   ]}
-  style:width={useFullscreenLayout || isMobile ? null : '580px'}
+  style:width={useFullscreenLayout || isMobile ? null : isAdvancedLayout ? '760px' : '580px'}
   style:height={useFullscreenLayout || isMobile || composer.minimized ? null : '680px'}
   style:max-height={useFullscreenLayout || isMobile || composer.minimized ? null : '90vh'}
   style:display={composer.open ? 'flex' : 'none'}
@@ -957,8 +996,41 @@
   ondrop={handleAttachmentDrop}
 >
   <!-- Title bar -->
-  <div class="flex shrink-0 items-center justify-between bg-[#1e1e24] px-4 py-3 select-none">
-    <span class="text-sm font-medium text-zinc-200">{titleLabel()}</span>
+  <div class="flex shrink-0 items-center justify-between gap-3 bg-[#1e1e24] px-4 py-3 select-none">
+    <span class="hidden text-sm font-medium text-zinc-200 sm:block">{titleLabel()}</span>
+    {#if !composer.minimized}
+      <div
+        class="flex items-center rounded-lg border border-white/10 bg-black/15 p-0.5"
+        aria-label="Compose mode"
+      >
+        <button
+          type="button"
+          aria-pressed={!isAdvancedLayout}
+          onclick={() => setComposeLayout('simple')}
+          class={[
+            'rounded-md px-2.5 py-1 text-xs transition',
+            !isAdvancedLayout
+              ? 'bg-white/10 text-zinc-100 shadow-sm'
+              : 'text-zinc-500 hover:text-zinc-300'
+          ]}
+        >
+          Simple
+        </button>
+        <button
+          type="button"
+          aria-pressed={isAdvancedLayout}
+          onclick={() => setComposeLayout('advanced')}
+          class={[
+            'rounded-md px-2.5 py-1 text-xs transition',
+            isAdvancedLayout
+              ? 'bg-white/10 text-zinc-100 shadow-sm'
+              : 'text-zinc-500 hover:text-zinc-300'
+          ]}
+        >
+          Advanced
+        </button>
+      </div>
+    {/if}
     <div class="flex items-center gap-1">
       <button
         type="button"
@@ -998,34 +1070,36 @@
 
   {#if !composer.minimized}
     <!-- Fields -->
-    <div class="max-h-48 shrink-0 overflow-y-auto border-b border-white/8">
+    <div class="shrink-0 border-b border-white/8">
       <!-- From -->
-      <div class="flex flex-wrap items-center gap-2 border-b border-white/8 px-4 py-2">
-        <span class="w-10 shrink-0 text-sm text-zinc-500">From</span>
-        <input
-          type="text"
-          bind:value={composer.fromName}
-          placeholder="Display name"
-          aria-label="From display name"
-          class="min-w-0 flex-1 bg-transparent text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none"
-        />
-        {#if composer.smtpServers.length > 0}
-          <CustomSelect
-            bind:value={composer.selectedSmtpServerId}
-            ariaLabel="SMTP server"
-            options={composer.smtpServers.map((server) => ({
-              value: server.id,
-              label: `${server.name} · ${server.from}`
-            }))}
-            class="min-w-36"
-            buttonClass="px-2 py-1 text-xs text-zinc-300"
+      {#if isAdvancedLayout}
+        <div class="flex flex-wrap items-center gap-2 border-b border-white/8 px-4 py-2">
+          <span class="w-10 shrink-0 text-sm text-zinc-500">From</span>
+          <input
+            type="text"
+            bind:value={composer.fromName}
+            placeholder="Display name"
+            aria-label="From display name"
+            class="min-w-0 flex-1 bg-transparent text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none"
           />
-        {:else if selectedSmtpServer}
-          <span class="truncate text-xs text-zinc-500">{selectedSmtpServer.from}</span>
-        {:else if loadingSmtpServers}
-          <span class="text-xs text-zinc-600">Loading sender...</span>
-        {/if}
-      </div>
+          {#if composer.smtpServers.length > 0}
+            <CustomSelect
+              bind:value={composer.selectedSmtpServerId}
+              ariaLabel="SMTP server"
+              options={composer.smtpServers.map((server) => ({
+                value: server.id,
+                label: `${server.name} · ${server.from}`
+              }))}
+              class="min-w-36"
+              buttonClass="px-2 py-1 text-xs text-zinc-300"
+            />
+          {:else if selectedSmtpServer}
+            <span class="truncate text-xs text-zinc-500">{selectedSmtpServer.from}</span>
+          {:else if loadingSmtpServers}
+            <span class="text-xs text-zinc-600">Loading sender...</span>
+          {/if}
+        </div>
+      {/if}
 
       <!-- To -->
       <div class="flex flex-wrap items-start gap-2 border-b border-white/8 px-4 py-2">
@@ -1035,18 +1109,22 @@
           bind:value={composer.to}
           placeholder="recipients@example.com"
         />
-        <div class="ml-auto flex shrink-0 gap-1 text-xs text-zinc-500">
-          {#if !showCc}
-            <button type="button" onclick={() => (showCc = true)} class="px-1 hover:text-zinc-300"
-              >Cc</button
-            >
-          {/if}
-          {#if !showBcc}
-            <button type="button" onclick={() => (showBcc = true)} class="px-1 hover:text-zinc-300"
-              >Bcc</button
-            >
-          {/if}
-        </div>
+        {#if isAdvancedLayout}
+          <div class="ml-auto flex shrink-0 gap-1 text-xs text-zinc-500">
+            {#if !showCc}
+              <button type="button" onclick={() => (showCc = true)} class="px-1 hover:text-zinc-300"
+                >Cc</button
+              >
+            {/if}
+            {#if !showBcc}
+              <button
+                type="button"
+                onclick={() => (showBcc = true)}
+                class="px-1 hover:text-zinc-300">Bcc</button
+              >
+            {/if}
+          </div>
+        {/if}
       </div>
 
       {#if recipientValidation.errors.length > 0}
@@ -1055,7 +1133,7 @@
         </div>
       {/if}
 
-      {#if showCc}
+      {#if isAdvancedLayout && showCc}
         <div class="flex flex-wrap items-start gap-2 border-b border-white/8 px-4 py-2">
           <AddressInput
             id="composer-cc"
@@ -1066,7 +1144,7 @@
         </div>
       {/if}
 
-      {#if showBcc}
+      {#if isAdvancedLayout && showBcc}
         <div class="flex flex-wrap items-start gap-2 border-b border-white/8 px-4 py-2">
           <AddressInput
             id="composer-bcc"
@@ -1083,58 +1161,62 @@
           type="text"
           bind:value={composer.subject}
           placeholder="Subject"
+          aria-label="Subject"
           class="flex-1 bg-transparent py-2.5 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none"
         />
       </div>
 
-      <div class="flex flex-wrap items-center gap-3 border-t border-white/8 px-4 py-2 text-xs">
-        <div class="flex items-center gap-1.5 text-zinc-500">
-          <ShieldCheck size={13} />
-          <label for="composer-pgp-signing">OpenPGP</label>
-        </div>
-        <select
-          id="composer-pgp-signing"
-          bind:value={composer.openPgpSigning}
-          disabled={!openPgpSenderAvailable}
-          class="rounded border border-white/10 bg-[#202027] px-2 py-1 text-zinc-300 disabled:opacity-40"
-          title="OpenPGP signing method"
-        >
-          <option value="none">Not signed</option>
-          <option value="cleartext">Cleartext signature</option>
-          <option value="detached">Detached signature</option>
-          <option value="pgp-mime">PGP/MIME signature</option>
-        </select>
-        <label
-          class="flex items-center gap-1.5 text-zinc-400"
-          title="Encrypt for every recipient with a known public key"
-        >
-          <input
-            type="checkbox"
-            bind:checked={composer.openPgpEncrypt}
+      {#if isAdvancedLayout}
+        <div class="flex flex-wrap items-center gap-3 border-t border-white/8 px-4 py-2 text-xs">
+          <div class="flex items-center gap-1.5 text-zinc-500">
+            <ShieldCheck size={13} />
+            <label for="composer-pgp-signing">OpenPGP</label>
+          </div>
+          <select
+            id="composer-pgp-signing"
+            bind:value={composer.openPgpSigning}
             disabled={!openPgpSenderAvailable}
-            class="accent-blue-500"
-          />
-          <LockKeyhole size={12} /> Encrypt
-        </label>
-        <label class="flex items-center gap-1.5 text-zinc-400">
-          <input
-            type="checkbox"
-            bind:checked={composer.attachPublicKey}
-            disabled={!openPgpSenderAvailable}
-            class="accent-blue-500"
-          />
-          <KeyRound size={12} /> Attach public key
-        </label>
-        {#if !openPgpSenderAvailable && !loadingOpenPgp}
-          <a href={resolve('/settings/openpgp')} class="text-amber-300 hover:text-amber-200"
-            >Configure a key for this sender</a
+            class="rounded border border-white/10 bg-[#202027] px-2 py-1 text-zinc-300 disabled:opacity-40"
+            title="OpenPGP signing method"
           >
-        {/if}
-      </div>
+            <option value="none">Not signed</option>
+            <option value="cleartext">Cleartext signature</option>
+            <option value="detached">Detached signature</option>
+            <option value="pgp-mime">PGP/MIME signature</option>
+          </select>
+          <label
+            class="flex items-center gap-1.5 text-zinc-400"
+            title="Encrypt for every recipient with a known public key"
+          >
+            <input
+              type="checkbox"
+              bind:checked={composer.openPgpEncrypt}
+              disabled={!openPgpSenderAvailable}
+              class="accent-blue-500"
+            />
+            <LockKeyhole size={12} /> Encrypt
+          </label>
+          <label class="flex items-center gap-1.5 text-zinc-400">
+            <input
+              type="checkbox"
+              bind:checked={composer.attachPublicKey}
+              disabled={!openPgpSenderAvailable}
+              class="accent-blue-500"
+            />
+            <KeyRound size={12} /> Attach public key
+          </label>
+          {#if !openPgpSenderAvailable && !loadingOpenPgp}
+            <a href={resolve('/settings/openpgp')} class="text-amber-300 hover:text-amber-200"
+              >Configure a key for this sender</a
+            >
+          {/if}
+        </div>
+      {/if}
     </div>
 
     <!-- Toolbar -->
     <div
+      class:hidden={!isAdvancedLayout}
       class="flex shrink-0 flex-wrap items-center gap-0.5 border-b border-white/8 bg-[#16161a] px-2 py-1.5"
     >
       {#if !markdownMode}
@@ -1373,7 +1455,7 @@
     {/if}
 
     <!-- Editor -->
-    <div class="composer-editor-wrap relative min-h-0 flex-1 overflow-y-auto">
+    <div class="composer-editor-wrap relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
       {#if markdownMode}
         <div
           class="border-b border-amber-400/15 bg-amber-400/8 px-4 py-2 text-xs text-amber-100/85"
@@ -1388,7 +1470,7 @@
           placeholder="Write markdown, e.g. **bold**, [link](https://example.com), - lists, > quotes"
         ></textarea>
       {/if}
-      <div class:hidden={markdownMode} bind:this={editorEl}></div>
+      <div class="h-full" class:hidden={markdownMode} bind:this={editorEl}></div>
 
       {#if isAttachmentDragActive}
         <div
@@ -1405,13 +1487,13 @@
       {/if}
     </div>
 
-    {#if attachmentError}
+    {#if isAdvancedLayout && attachmentError}
       <div class="border-t border-rose-400/20 bg-rose-500/10 px-4 py-2 text-xs text-rose-200">
         {attachmentError}
       </div>
     {/if}
 
-    {#if aiPreviewHtml && aiRewriteMode}
+    {#if isAdvancedLayout && aiPreviewHtml && aiRewriteMode}
       <div class="shrink-0 border-t border-sky-400/20 bg-sky-400/8 px-4 py-3">
         <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
           <p class="text-xs font-medium tracking-wide text-sky-200 uppercase">
@@ -1442,7 +1524,7 @@
       </div>
     {/if}
 
-    {#if composer.attachments.length > 0}
+    {#if isAdvancedLayout && composer.attachments.length > 0}
       <div class="border-t border-white/8 bg-[#16161a] px-4 py-3">
         {#if composer.attachments.length > 0}
           <div class="flex flex-wrap gap-2">
@@ -1475,13 +1557,6 @@
       class="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-white/8 bg-[#16161a] px-4 py-2.5"
     >
       <div class="flex min-w-0 flex-wrap items-center gap-2">
-        <input
-          bind:this={attachmentInput}
-          type="file"
-          multiple
-          class="hidden"
-          onchange={handleAttachmentChange}
-        />
         <button
           type="button"
           disabled={!canSend}
@@ -1491,7 +1566,14 @@
           <Send size={14} />
           {sending ? 'Sending…' : 'Send'}
         </button>
-        <div class="relative">
+        <input
+          bind:this={attachmentInput}
+          type="file"
+          multiple
+          class="hidden"
+          onchange={handleAttachmentChange}
+        />
+        <div class:hidden={!isAdvancedLayout} class="relative">
           <button
             type="button"
             disabled={sending}
@@ -1560,6 +1642,7 @@
           {/if}
         </div>
         <button
+          class:hidden={!isAdvancedLayout}
           type="button"
           disabled={sending}
           onclick={() => attachmentInput?.click()}
@@ -1568,7 +1651,7 @@
           <Paperclip size={14} />
           Attach
         </button>
-        <div class="relative">
+        <div class:hidden={!isAdvancedLayout} class="relative">
           <button
             type="button"
             disabled={sending || loadingTemplates}
@@ -1605,7 +1688,7 @@
             </div>
           {/if}
         </div>
-        {#if composer.mode === 'compose' && composer.draftId === null && composer.signatureProfiles.length > 0}
+        {#if isAdvancedLayout && composer.mode === 'compose' && composer.draftId === null && composer.signatureProfiles.length > 0}
           <label class="sr-only" for="composer-signature">Signature</label>
           <CustomSelect
             id="composer-signature"
@@ -1624,7 +1707,7 @@
             buttonClass="px-2 py-1.5 text-sm text-zinc-300"
           />
         {/if}
-        <div class="relative">
+        <div class:hidden={!isAdvancedLayout} class="relative">
           <button
             type="button"
             disabled={sending || composingAi}
@@ -1774,7 +1857,7 @@
 
 <style>
   :global(.composer-editor-wrap .ProseMirror) {
-    min-height: 300px;
+    min-height: 100%;
     padding: 1rem;
     color: #e4e4e7; /* zinc-200 */
     font-size: 0.875rem;

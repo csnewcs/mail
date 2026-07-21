@@ -186,6 +186,7 @@
     onblur={onBlur}
     autocomplete="off"
     role="combobox"
+    aria-label={label ?? 'Recipient'}
     aria-autocomplete="list"
     aria-expanded={showDropdown}
     aria-controls={listboxId}
