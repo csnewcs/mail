@@ -361,6 +361,14 @@
   const activeSimplifiedMessage = $derived(simplifiedCards[simplifiedCardIndex] ?? null)
   const canShowPreviousCard = $derived(simplifiedCardIndex > 0)
   const canShowNextCard = $derived(simplifiedCardIndex < simplifiedCards.length - 1)
+  const simplifiedVisibleCards = $derived.by(() => {
+    const startIndex = Math.max(simplifiedCardIndex - 1, 0)
+
+    return simplifiedCards.slice(startIndex, simplifiedCardIndex + 3).map((message, index) => ({
+      message,
+      offset: startIndex + index - simplifiedCardIndex
+    }))
+  })
   const simplifiedCardWidthEstimate = $derived.by(() => {
     if (viewportWidth >= 1024) {
       return Math.min(Math.max(viewportWidth - 160, 360), 800)
@@ -370,6 +378,9 @@
   })
   const simplifiedSwipeProgress = $derived(
     Math.min(Math.abs(simplifiedDragOffsetX) / (simplifiedCardWidthEstimate * 0.35), 1)
+  )
+  const simplifiedPreviousSwipeProgress = $derived(
+    Math.min(Math.max(simplifiedDragOffsetX, 0) / (simplifiedCardWidthEstimate * 0.35), 1)
   )
   const activeSimplifiedMessageUnread = $derived(
     activeSimplifiedMessage
@@ -1444,13 +1455,18 @@
   }
 
   function simplifiedCardTransform(offset: number) {
-    const progress = simplifiedSwipeProgress
-
     if (offset === 0) {
       const rotate = simplifiedDragOffsetX / 36
       return `translate3d(${simplifiedDragOffsetX}px, ${simplifiedDragOffsetY}px, 0) rotate(${rotate}deg) scale(1)`
     }
 
+    if (offset === -1) {
+      const x = -24 * (1 - simplifiedPreviousSwipeProgress)
+      const scale = 0.96 + simplifiedPreviousSwipeProgress * 0.04
+      return `translate3d(${x}px, 0, 0) scale(${scale})`
+    }
+
+    const progress = simplifiedSwipeProgress
     const directionLift = offset === 1 ? 10 : 6
     const directionScale = offset === 1 ? 0.045 : 0.03
     const xParallax = simplifiedDragOffsetX * (offset === 1 ? 0.1 : 0.05)
@@ -1462,8 +1478,15 @@
 
   function simplifiedCardOpacity(offset: number) {
     if (offset === 0) return 1
+    if (offset === -1) return simplifiedPreviousSwipeProgress
     const progress = simplifiedSwipeProgress
     return 1 - offset * 0.18 + progress * (offset === 1 ? 0.16 : 0.08)
+  }
+
+  function simplifiedCardZIndex(offset: number) {
+    if (offset === 0) return 10
+    if (offset === -1) return 9
+    return 8 - offset
   }
 
   function simplifiedMarkReadBackgroundStyle() {
@@ -2651,7 +2674,7 @@
       {:else}
         <div class="flex w-full max-w-lg flex-col items-center gap-6">
           <div class="relative h-108 w-full max-w-xl lg:h-[34rem] lg:max-w-2xl">
-            {#each simplifiedCards.slice(simplifiedCardIndex, simplifiedCardIndex + 3) as message, offset (message.id)}
+            {#each simplifiedVisibleCards as { message, offset } (message.id)}
               <article
                 class={[
                   'simplified-mail-card absolute inset-0 overflow-hidden rounded-3xl border border-white/10 bg-[#131319] p-6 text-left shadow-2xl shadow-black/30 lg:p-7',
@@ -2664,7 +2687,7 @@
                       ]
                     : 'pointer-events-none'
                 ]}
-                style={`transform: ${simplifiedCardTransform(offset)}; opacity: ${simplifiedCardOpacity(offset)}; z-index: ${10 - offset};`}
+                style={`transform: ${simplifiedCardTransform(offset)}; opacity: ${simplifiedCardOpacity(offset)}; z-index: ${simplifiedCardZIndex(offset)};`}
                 onpointerdown={offset === 0 ? handleSimplifiedCardPointerDown : undefined}
                 onpointermove={offset === 0 ? handleSimplifiedCardPointerMove : undefined}
                 onpointerup={offset === 0 ? handleSimplifiedCardPointerUp : undefined}
