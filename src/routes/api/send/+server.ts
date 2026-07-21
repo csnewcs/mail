@@ -4,7 +4,7 @@ import { parseComposerAttachments } from '$lib/mail-attachments'
 import { normalizeRecipientList, validateRecipientFields } from '$lib/recipients'
 import { getSmtpConfig, getSmtpConfigs, getUndoSendSeconds } from '$lib/server/config'
 import { isDemoModeEnabled, sendDemoMessage } from '$lib/server/demo'
-import { enqueueSmtpSendJob } from '$lib/server/smtp-queue'
+import { scheduleSmtpSend } from '$lib/server/smtp-operations'
 import type { OpenPgpSigningMethod } from '$lib/server/openpgp-message'
 import { getEncryptionKeysForAddresses, getOpenPgpKeyForAddress } from '$lib/server/openpgp-keys'
 import { outgoingSenderAddress } from '$lib/server/outgoing-message'
@@ -111,7 +111,7 @@ export const POST: RequestHandler = async ({ request }) => {
     return error(400, 'Invalid sendAt value')
   }
 
-  const jobId = await enqueueSmtpSendJob(
+  const jobId = await scheduleSmtpSend(
     {
       to: normalizedTo,
       cc: normalizedCc || null,
@@ -131,7 +131,7 @@ export const POST: RequestHandler = async ({ request }) => {
 
   return json({
     success: true,
-    queued: true,
+    accepted: true,
     jobId,
     sendAt: availableAt.toISOString(),
     undoable: undoSendSeconds > 0,

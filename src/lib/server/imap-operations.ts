@@ -2,7 +2,7 @@ import { db } from './db'
 import { imapJob } from './db/schema'
 import { seenJob } from '../imap-sync'
 
-async function enqueueSeenState(uid: number, mailbox: string, seen: boolean) {
+async function scheduleSeenState(uid: number, mailbox: string, seen: boolean) {
   const now = new Date()
   const job = seenJob(uid, mailbox, seen)
   await db
@@ -33,15 +33,15 @@ async function enqueueSeenState(uid: number, mailbox: string, seen: boolean) {
     })
 }
 
-export function enqueueMarkRead(uid: number, mailbox: string) {
-  return enqueueSeenState(uid, mailbox, true)
+export function scheduleMarkRead(uid: number, mailbox: string) {
+  return scheduleSeenState(uid, mailbox, true)
 }
 
-export function enqueueMarkUnread(uid: number, mailbox: string) {
-  return enqueueSeenState(uid, mailbox, false)
+export function scheduleMarkUnread(uid: number, mailbox: string) {
+  return scheduleSeenState(uid, mailbox, false)
 }
 
-export async function enqueueMoveMessage(
+export async function scheduleMoveMessage(
   uid: number,
   sourceMailbox: string,
   targetMailbox: string
@@ -75,7 +75,7 @@ export async function enqueueMoveMessage(
     })
 }
 
-export async function enqueueAddFlag(uid: number, mailbox: string, flag: string) {
+export async function scheduleAddFlag(uid: number, mailbox: string, flag: string) {
   const now = new Date()
   await db
     .insert(imapJob)

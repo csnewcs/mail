@@ -60,13 +60,13 @@ function demoHealth() {
       lastRunFinishedAt: new Date(now.getTime() - 180_000).toISOString(),
       lastError: null
     },
-    queues: {
+    operations: {
       imap: { pending: 2, running: 1, done: 148, failed: 0, other: 0, total: 151 },
       smtp: { pending: 1, running: 0, done: 24, failed: 1, other: 0, total: 26 }
     },
     recentErrors: [
       {
-        queue: 'smtp',
+        channel: 'smtp',
         id: 42,
         type: 'send',
         status: 'failed',
@@ -138,13 +138,13 @@ export const GET: RequestHandler = async () => {
       lastRunFinishedAt: iso(runtime?.lastRunFinishedAt),
       lastError: runtime?.lastError ?? null
     },
-    queues: {
+    operations: {
       imap: normalizeCounts(imapRows),
       smtp: normalizeCounts(smtpRows)
     },
     recentErrors: [
       ...failedImap.map((job) => ({
-        queue: 'imap' as const,
+        channel: 'imap' as const,
         id: job.id,
         type: job.type,
         status: job.status,
@@ -156,7 +156,7 @@ export const GET: RequestHandler = async () => {
         availableAt: iso(job.availableAt)
       })),
       ...failedSmtp.map((job) => ({
-        queue: 'smtp' as const,
+        channel: 'smtp' as const,
         id: job.id,
         type: 'send',
         status: job.status,

@@ -2,8 +2,13 @@ import 'dotenv/config'
 import { setTimeout as delay } from 'node:timers/promises'
 import { isDemoModeEnabled } from './lib/server/demo'
 import { maybeRunCleanupRulesFromWorker } from './lib/server/cleanup-rules'
+import { startBackgroundAction, waitForBackgroundActions } from './lib/server/background-actions'
 import { runMigrations } from './lib/server/db'
-import { drainImapQueue, recoverInterruptedImapJobs } from './lib/server/imap-worker'
+import {
+  dispatchReadyImapOperations,
+  recoverInterruptedImapJobs,
+  waitForImapOperations
+} from './lib/server/imap-worker'
 import { addDirtyMailbox, closeImapConnections, syncWatchers } from './lib/server/imap-connections'
 import { closePublicImapProxy, startPublicImapProxy } from './lib/server/imap-public-proxy'
 import { getImapConfigs } from './lib/server/config'
@@ -17,21 +22,28 @@ import {
   touchSyncWorkerHeartbeat
 } from './lib/server/mail'
 import {
-  drainSmtpQueue,
-  hasUnfinishedSmtpJobs,
-  recoverInterruptedSmtpJobs
+  dispatchReadySmtpOperations,
+  recoverInterruptedSmtpJobs,
+  waitForSmtpOperations
 } from './lib/server/smtp-worker'
 
 const WORKER_TICK_MS = 1_000
 const HEARTBEAT_MS = 30_000
 
-let tickInFlight = false
 let stopping = false
 let lastHeartbeatAt = 0
 let lastSyncAttemptAt = 0
 let lastBackfillAt = 0
 let syncRequested = false
 const dirtyMailboxes = new Map<string, Set<string>>()
+const workerActions = new Map<string, Promise<void>>()
+
+function startWorkerAction(name: string, action: () => Promise<unknown>) {
+  if (stopping) return
+  startBackgroundAction(workerActions, name, action, (error) => {
+    console.error(`[worker] ${name} failed:`, error)
+  })
+}
 
 function requestMailboxSync(configId: string, mailbox: string) {
   addDirtyMailbox(dirtyMailboxes, configId, mailbox)
@@ -50,47 +62,36 @@ async function maybeRunSync() {
   if (pollMs === null) return
   if (!syncRequested && Date.now() - lastSyncAttemptAt < pollMs) return
 
-  await drainImapQueue()
-  if (await hasUnfinishedSmtpJobs()) return
-
   lastSyncAttemptAt = Date.now()
   const requestedMailboxes = syncRequested
     ? new Map([...dirtyMailboxes].map(([id, mailboxes]) => [id, new Set(mailboxes)]))
     : undefined
   syncRequested = false
   dirtyMailboxes.clear()
-  await runMailboxSyncOnce({
-    mailboxes: requestedMailboxes,
-    beforeMailbox: async () => {
-      await drainImapQueue()
-    }
-  })
+  await runMailboxSyncOnce({ mailboxes: requestedMailboxes })
 }
 
-async function tick() {
-  if (tickInFlight || stopping) return
-  tickInFlight = true
+function maybeRunBackfills() {
+  if (Date.now() - lastBackfillAt < 60_000) return
+  lastBackfillAt = Date.now()
+  startWorkerAction('mail authentication backfill', backfillMailAuthenticationFromWorker)
+  startWorkerAction('OpenPGP backfill', backfillOpenPgpFromWorker)
+}
 
-  try {
-    await heartbeat()
-    await drainImapQueue()
-    await drainSmtpQueue()
-    await maybeRunCleanupRulesFromWorker()
+function tick() {
+  if (stopping) return
+  startWorkerAction('heartbeat', heartbeat)
+  startWorkerAction('IMAP operation dispatch', dispatchReadyImapOperations)
+  startWorkerAction('SMTP operation dispatch', dispatchReadySmtpOperations)
+  startWorkerAction('cleanup rules', maybeRunCleanupRulesFromWorker)
+  startWorkerAction('mailbox sync', maybeRunSync)
+  startWorkerAction('importance classification', maybeClassifyPendingMailFromWorker)
+  maybeRunBackfills()
+}
 
-    // The sync clock is paused while SMTP jobs are pending/running/retrying.
-    if (!(await hasUnfinishedSmtpJobs())) await maybeRunSync()
-
-    if (Date.now() - lastBackfillAt >= 60_000) {
-      lastBackfillAt = Date.now()
-      await backfillMailAuthenticationFromWorker()
-      await backfillOpenPgpFromWorker()
-    }
-    void maybeClassifyPendingMailFromWorker()
-  } catch (error) {
-    console.error('[worker] tick failed:', error)
-  } finally {
-    tickInFlight = false
-  }
+async function waitForWorkerActions() {
+  await waitForBackgroundActions(workerActions)
+  await Promise.all([waitForImapOperations(), waitForSmtpOperations()])
 }
 
 async function main() {
@@ -108,9 +109,10 @@ async function main() {
 
   console.log('[worker] started')
   while (!stopping) {
-    await tick()
+    tick()
     await delay(WORKER_TICK_MS)
   }
+  await waitForWorkerActions()
   await closePublicImapProxy()
   await closeImapConnections()
 }

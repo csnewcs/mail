@@ -1,7 +1,7 @@
 import { db } from './db'
 import { mailFilter, mailMessage, mailMessageMailbox } from './db/schema'
 import { desc, eq, inArray } from 'drizzle-orm'
-import { enqueueAddFlag, enqueueMarkRead, enqueueMoveMessage } from './imap-queue'
+import { scheduleAddFlag, scheduleMarkRead, scheduleMoveMessage } from './imap-operations'
 import {
   normalizeFilterConditions,
   type FilterCondition,
@@ -129,7 +129,7 @@ export async function runFiltersOnMessages(messageIds: string[]): Promise<void> 
               .update(mailMessageMailbox)
               .set({ flags: JSON.stringify([...flags, '\\Seen']) })
               .where(eq(mailMessageMailbox.id, entry.id))
-            await enqueueMarkRead(entry.uid, entry.mailbox)
+            await scheduleMarkRead(entry.uid, entry.mailbox)
           }
         }
       } else if (filter.action === 'star' || filter.action === 'label') {
@@ -149,7 +149,7 @@ export async function runFiltersOnMessages(messageIds: string[]): Promise<void> 
             .update(mailMessageMailbox)
             .set({ flags: JSON.stringify([...flags, flag]) })
             .where(eq(mailMessageMailbox.id, entry.id))
-          await enqueueAddFlag(entry.uid, entry.mailbox, flag)
+          await scheduleAddFlag(entry.uid, entry.mailbox, flag)
         }
       } else if (
         filter.action === 'trash' ||
@@ -184,7 +184,7 @@ export async function runFiltersOnMessages(messageIds: string[]): Promise<void> 
             touchedThreadKeysByMailbox.get(entry.mailbox) ?? new Set<string>()
           touchedThreadKeys.add(msg.threadKey)
           touchedThreadKeysByMailbox.set(entry.mailbox, touchedThreadKeys)
-          await enqueueMoveMessage(entry.uid, entry.mailbox, destination)
+          await scheduleMoveMessage(entry.uid, entry.mailbox, destination)
         }
       }
 

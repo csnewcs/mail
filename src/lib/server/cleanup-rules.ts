@@ -1,7 +1,7 @@
 import { and, desc, eq, lt } from 'drizzle-orm'
 import { db } from './db'
 import { mailCleanupRule, mailMessage, mailMessageMailbox } from './db/schema'
-import { enqueueMoveMessage } from './imap-queue'
+import { scheduleMoveMessage } from './imap-operations'
 import { getImapMailboxes, getMailboxRole, refreshThreadSummaries } from './mail'
 
 const MIN_AGE_DAYS = 7
@@ -151,7 +151,7 @@ export async function runCleanupRules(limitPerRule = DEFAULT_RUN_LIMIT): Promise
       const threadKeys = touchedThreadKeysByMailbox.get(candidate.mailbox) ?? new Set<string>()
       threadKeys.add(candidate.threadKey || candidate.messageId)
       touchedThreadKeysByMailbox.set(candidate.mailbox, threadKeys)
-      await enqueueMoveMessage(candidate.uid, candidate.mailbox, archiveMailbox)
+      await scheduleMoveMessage(candidate.uid, candidate.mailbox, archiveMailbox)
       archived += 1
       archivedForRule += 1
     }

@@ -12,7 +12,7 @@ import {
   searchMessages,
   type MailListRow
 } from './mail'
-import { enqueueSmtpSendJob } from './smtp-queue'
+import { scheduleSmtpSend } from './smtp-operations'
 
 const DEFAULT_LIMIT = 50
 const MAX_LIMIT = 100
@@ -146,7 +146,7 @@ export async function sendExternalMessage(input: unknown) {
   const sendAt = typeof body.sendAt === 'string' && body.sendAt ? new Date(body.sendAt) : new Date()
   if (Number.isNaN(sendAt.getTime())) throw new ExternalApiError(400, 'sendAt must be an ISO date')
 
-  const jobId = await enqueueSmtpSendJob(
+  const jobId = await scheduleSmtpSend(
     {
       to: normalizeRecipientList(to),
       cc: normalizeRecipientList(cc) || null,
@@ -167,7 +167,7 @@ export async function sendExternalMessage(input: unknown) {
     },
     sendAt
   )
-  if (jobId === null) throw new ExternalApiError(500, 'Failed to queue message')
+  if (jobId === null) throw new ExternalApiError(500, 'Failed to schedule message')
   return { jobId, status: 'pending', sendAt: sendAt.toISOString() }
 }
 

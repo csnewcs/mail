@@ -42,7 +42,7 @@ curl -X POST -H "Authorization: Bearer $MAIL_API_KEY" \\
         Mail API & MCP
       </h1>
       <p class="mt-3 max-w-3xl text-sm leading-6 text-zinc-400">
-        Read received mail, queue outgoing messages, and expose the same operations as MCP tools.
+        Read received mail, schedule outgoing messages, and expose the same operations as MCP tools.
         Create a key in <a href={resolve('/settings/api')} class="text-blue-300 hover:text-blue-200"
           >Settings → API Keys</a
         >. Send it as a Bearer token. API keys have full read and send access.
@@ -85,7 +85,7 @@ curl -X POST -H "Authorization: Bearer $MAIL_API_KEY" \\
     <section class="space-y-4">
       <h2 class="text-xl font-semibold text-white">REST endpoints</h2>
       <div class="overflow-hidden rounded-2xl border border-white/8 bg-white/3">
-        {#each [['GET', '/mailboxes', 'List selectable mailboxes and slugs.'], ['GET', '/messages', 'List received messages. Supports mailbox, q, unread, limit, offset.'], ['GET', '/messages/:id', 'Get message body and attachment metadata.'], ['POST', '/messages', 'Queue an outgoing message. Returns HTTP 202 and a job ID.'], ['GET', '/send-jobs/:id', 'Read queued send status.'], ['GET', '/attachments/:id', 'Download a message attachment.']] as endpoint (`${endpoint[0]} ${endpoint[1]}`)}
+        {#each [['GET', '/mailboxes', 'List selectable mailboxes and slugs.'], ['GET', '/messages', 'List received messages. Supports mailbox, q, unread, limit, offset.'], ['GET', '/messages/:id', 'Get message body and attachment metadata.'], ['POST', '/messages', 'Schedule an outgoing message. Returns HTTP 202 and an operation ID.'], ['GET', '/send-jobs/:id', 'Read send operation status.'], ['GET', '/attachments/:id', 'Download a message attachment.']] as endpoint (`${endpoint[0]} ${endpoint[1]}`)}
           <div
             class="grid gap-2 border-b border-white/8 p-4 last:border-0 sm:grid-cols-[5rem_15rem_1fr]"
           >
@@ -104,7 +104,7 @@ curl -X POST -H "Authorization: Bearer $MAIL_API_KEY" \\
     <section class="space-y-4">
       <h2 class="text-xl font-semibold text-white">MCP tools</h2>
       <div class="grid gap-4 md:grid-cols-3">
-        {#each [['list_messages', 'List or search received messages.'], ['get_message', 'Read one message and attachment metadata.'], ['send_message', 'Queue a new outgoing message.']] as tool (tool[0])}
+        {#each [['list_messages', 'List or search received messages.'], ['get_message', 'Read one message and attachment metadata.'], ['send_message', 'Schedule a new outgoing message.']] as tool (tool[0])}
           <div class="rounded-2xl border border-white/8 bg-white/3 p-5">
             <code class="text-sm text-blue-300">{tool[0]}</code>
             <p class="mt-2 text-sm text-zinc-500">{tool[1]}</p>

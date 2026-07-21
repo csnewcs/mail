@@ -50,7 +50,7 @@ const tools = [
   },
   {
     name: 'send_message',
-    description: 'Queue an email message for sending.',
+    description: 'Schedule an email message for background sending.',
     inputSchema: {
       type: 'object',
       properties: {

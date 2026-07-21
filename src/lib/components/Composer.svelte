@@ -1822,7 +1822,7 @@
   <div
     class="fixed right-4 bottom-4 z-[60] max-w-sm rounded-xl border border-blue-400/20 bg-zinc-950 p-4 shadow-2xl shadow-black/40"
   >
-    <p class="text-sm font-medium text-zinc-100">Message queued</p>
+    <p class="text-sm font-medium text-zinc-100">Message scheduled</p>
     <p class="mt-1 text-sm text-zinc-400">
       Sending starts after {pendingUndoSend.delaySeconds} seconds.
     </p>

@@ -1,4 +1,4 @@
-import { and, asc, count, eq, lte } from 'drizzle-orm'
+import { and, eq, lte } from 'drizzle-orm'
 import type { ImapFlow } from 'imapflow'
 import { getImapConfig, getImapConfigs, type ImapConfig } from './config'
 import { db } from './db'
@@ -12,6 +12,7 @@ import {
 } from './imap-connections'
 import { buildDraftMessage } from './draft-message'
 import { draftAppendMatches, draftDeleteJob, previousDraftUidToDelete } from '../imap-sync'
+import { startBackgroundAction, waitForBackgroundActions } from './background-actions'
 
 const MAX_JOB_ATTEMPTS = 8
 const PERMANENT_JOB_ERROR_RE =
@@ -22,7 +23,7 @@ type ImapJobRow = typeof imapJob.$inferSelect
 
 type ResolvedImapJob = { config: MailConfig; mailbox: string; targetMailbox: string | null }
 
-let drainInFlight = false
+const activeOperations = new Map<number, Promise<void>>()
 
 async function connectImap(config: MailConfig, label: string) {
   return withRetry(() => getWorkerConnection(config), {
@@ -222,7 +223,7 @@ async function runMove(
       await refreshThreadSummaries(job.mailbox, [entry.threadKey])
     }
   } catch (error) {
-    logServerError('imapQueue.move.localCleanup', error, {
+    logServerError('imapOperation.move.localCleanup', error, {
       mailbox: job.mailbox,
       uid: job.uid
     })
@@ -430,33 +431,43 @@ async function runJob(job: ImapJobRow) {
   throw new Error(`Unknown IMAP job type: ${job.type}`)
 }
 
-async function drainQueueOnce(): Promise<boolean> {
-  const [job] = await db
+async function runOperation(job: ImapJobRow) {
+  try {
+    await runJob(job)
+    await markJobDone(job)
+  } catch (error) {
+    logServerError(`imapOperation.${job.type}`, error, {
+      mailbox: job.mailbox,
+      uid: job.uid,
+      targetMailbox: job.targetMailbox ?? null,
+      attemptCount: job.attemptCount
+    })
+    await failJob(job, error)
+  }
+}
+
+function startOperation(job: ImapJobRow) {
+  startBackgroundAction(
+    activeOperations,
+    job.id,
+    () => runOperation(job),
+    (error) => {
+      logServerError('imapOperation.unhandled', error, { jobId: job.id })
+    }
+  )
+}
+
+export async function dispatchReadyImapOperations() {
+  const jobs = await db
     .select()
     .from(imapJob)
     .where(and(eq(imapJob.status, 'pending'), lte(imapJob.availableAt, new Date())))
-    .orderBy(asc(imapJob.availableAt), asc(imapJob.createdAt))
-    .limit(1)
 
-  if (!job) return false
-
-  const runningJob = await markJobRunning(job)
-  if (!runningJob) return true
-
-  try {
-    await runJob(runningJob)
-    await markJobDone(runningJob)
-  } catch (error) {
-    logServerError(`imapQueue.${runningJob.type}`, error, {
-      mailbox: runningJob.mailbox,
-      uid: runningJob.uid,
-      targetMailbox: runningJob.targetMailbox ?? null,
-      attemptCount: runningJob.attemptCount
-    })
-    await failJob(runningJob, error)
-  }
-
-  return true
+  const claimed = (await Promise.all(jobs.map(markJobRunning))).filter(
+    (job): job is ImapJobRow => job !== null
+  )
+  for (const job of claimed) startOperation(job)
+  return claimed.length
 }
 
 export async function recoverInterruptedImapJobs() {
@@ -466,26 +477,6 @@ export async function recoverInterruptedImapJobs() {
     .where(eq(imapJob.status, 'running'))
 }
 
-export async function hasReadyImapJobs() {
-  const [row] = await db
-    .select({ value: count() })
-    .from(imapJob)
-    .where(and(eq(imapJob.status, 'pending'), lte(imapJob.availableAt, new Date())))
-  return Number(row?.value ?? 0) > 0
-}
-
-export async function drainImapQueue() {
-  if (drainInFlight) return 0
-  drainInFlight = true
-
-  let processed = 0
-  try {
-    while (await drainQueueOnce()) {
-      processed += 1
-    }
-  } finally {
-    drainInFlight = false
-  }
-
-  return processed
+export async function waitForImapOperations() {
+  await waitForBackgroundActions(activeOperations)
 }

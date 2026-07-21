@@ -1,7 +1,7 @@
 import { desc, eq, inArray } from 'drizzle-orm'
 import { db } from './db'
 import { mailMessage, mailMessageMailbox, mailSenderRule } from './db/schema'
-import { enqueueMoveMessage } from './imap-queue'
+import { scheduleMoveMessage } from './imap-operations'
 
 export type SenderRuleType = 'block' | 'allow'
 
@@ -92,7 +92,7 @@ export async function applySenderRulesToMessages(messageIds: string[]): Promise<
     for (const entry of entries) {
       if (entry.mailbox === trashMailbox.path) continue
       await db.delete(mailMessageMailbox).where(eq(mailMessageMailbox.id, entry.id))
-      await enqueueMoveMessage(entry.uid, entry.mailbox, trashMailbox.path)
+      await scheduleMoveMessage(entry.uid, entry.mailbox, trashMailbox.path)
 
       const threadKeys = blockedThreadKeysByMailbox.get(entry.mailbox) ?? new Set<string>()
       threadKeys.add(message.threadKey)

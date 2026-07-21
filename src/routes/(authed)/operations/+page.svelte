@@ -16,7 +16,7 @@
   } from 'lucide-svelte'
   import { errorMessageFromUnknown, readErrorMessage } from '$lib/http'
 
-  type QueueCounts = {
+  type OperationCounts = {
     pending: number
     running: number
     done: number
@@ -25,8 +25,8 @@
     total: number
   }
 
-  type QueueError = {
-    queue: 'imap' | 'smtp'
+  type OperationError = {
+    channel: 'imap' | 'smtp'
     id: number
     type: string
     status: string
@@ -38,7 +38,7 @@
     availableAt: string | null
   }
 
-  type QueueHealth = {
+  type OperationHealth = {
     generatedAt: string
     worker: {
       status: 'online' | 'stale' | 'unknown'
@@ -52,11 +52,11 @@
       lastRunFinishedAt: string | null
       lastError: string | null
     }
-    queues: {
-      imap: QueueCounts
-      smtp: QueueCounts
+    operations: {
+      imap: OperationCounts
+      smtp: OperationCounts
     }
-    recentErrors: QueueError[]
+    recentErrors: OperationError[]
   }
 
   const REFRESH_MS = 10_000
@@ -68,27 +68,33 @@
     { key: 'other', label: 'Other', class: 'bg-zinc-500' }
   ] as const
 
-  let health = $state<QueueHealth | null>(null)
+  let health = $state<OperationHealth | null>(null)
   let loading = $state(true)
   let refreshing = $state(false)
   let errorMessage = $state<string | null>(null)
   let autoRefresh = $state(true)
-  let retryingJob = $state<string | null>(null)
-  let deletingJob = $state<string | null>(null)
+  let retryingOperation = $state<string | null>(null)
+  let deletingOperation = $state<string | null>(null)
   let resyncing = $state(false)
 
-  const totalJobs = $derived((health?.queues.imap.total ?? 0) + (health?.queues.smtp.total ?? 0))
-  const activeJobs = $derived(
-    (health?.queues.imap.pending ?? 0) +
-      (health?.queues.imap.running ?? 0) +
-      (health?.queues.smtp.pending ?? 0) +
-      (health?.queues.smtp.running ?? 0)
+  const totalOperations = $derived(
+    (health?.operations.imap.total ?? 0) + (health?.operations.smtp.total ?? 0)
   )
-  const failedJobs = $derived((health?.queues.imap.failed ?? 0) + (health?.queues.smtp.failed ?? 0))
+  const waitingOperations = $derived(
+    (health?.operations.imap.pending ?? 0) + (health?.operations.smtp.pending ?? 0)
+  )
+  const runningOperations = $derived(
+    (health?.operations.imap.running ?? 0) + (health?.operations.smtp.running ?? 0)
+  )
+  const failedOperations = $derived(
+    (health?.operations.imap.failed ?? 0) + (health?.operations.smtp.failed ?? 0)
+  )
   const completionRate = $derived(
-    totalJobs > 0
+    totalOperations > 0
       ? Math.round(
-          (((health?.queues.imap.done ?? 0) + (health?.queues.smtp.done ?? 0)) / totalJobs) * 100
+          (((health?.operations.imap.done ?? 0) + (health?.operations.smtp.done ?? 0)) /
+            totalOperations) *
+            100
         )
       : 100
   )
@@ -104,8 +110,8 @@
     let score = 100
     if (health.worker.status === 'stale') score -= 35
     if (health.worker.status === 'unknown') score -= 25
-    if (failedJobs > 0) score -= Math.min(35, failedJobs * 8)
-    if (activeJobs > 20) score -= 10
+    if (failedOperations > 0) score -= Math.min(35, failedOperations * 8)
+    if (waitingOperations > 20) score -= 10
     if (health.worker.lastError) score -= 15
     return Math.max(0, score)
   })
@@ -129,13 +135,13 @@
     return `${Math.round(ms / 3_600_000)}h ago`
   }
 
-  function statusTone(status: QueueHealth['worker']['status']) {
+  function statusTone(status: OperationHealth['worker']['status']) {
     if (status === 'online') return 'text-emerald-300 bg-emerald-400/10 border-emerald-400/20'
     if (status === 'stale') return 'text-amber-300 bg-amber-400/10 border-amber-400/20'
     return 'text-zinc-300 bg-zinc-400/10 border-zinc-400/20'
   }
 
-  function segmentWidth(counts: QueueCounts, key: keyof QueueCounts) {
+  function segmentWidth(counts: OperationCounts, key: keyof OperationCounts) {
     if (key === 'total') return 0
     if (counts.total === 0) return 0
     return Math.max(2, (counts[key] / counts.total) * 100)
@@ -146,54 +152,56 @@
     else refreshing = true
 
     try {
-      const response = await fetch('/api/queue-health')
+      const response = await fetch('/api/operation-health')
       if (!response.ok) {
-        throw new Error(await readErrorMessage(response, 'Failed to load queue health.'))
+        throw new Error(await readErrorMessage(response, 'Failed to load operation health.'))
       }
 
-      health = (await response.json()) as QueueHealth
+      health = (await response.json()) as OperationHealth
       errorMessage = null
     } catch (error) {
-      errorMessage = errorMessageFromUnknown(error, 'Failed to load queue health.')
+      errorMessage = errorMessageFromUnknown(error, 'Failed to load operation health.')
     } finally {
       loading = false
       refreshing = false
     }
   }
 
-  async function retryJob(job: QueueError) {
-    retryingJob = `${job.queue}-${job.id}`
+  async function retryOperation(operation: OperationError) {
+    retryingOperation = `${operation.channel}-${operation.id}`
     try {
-      const response = await fetch('/api/queue-health/retry', {
+      const response = await fetch('/api/operation-health/retry', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ queue: job.queue, id: job.id })
+        body: JSON.stringify({ channel: operation.channel, id: operation.id })
       })
-      if (!response.ok) throw new Error(await readErrorMessage(response, 'Failed to retry job.'))
+      if (!response.ok)
+        throw new Error(await readErrorMessage(response, 'Failed to retry operation.'))
       await loadHealth('manual')
-      toast('Job queued for retry')
+      toast('Operation scheduled for retry')
     } catch (error) {
-      errorMessage = errorMessageFromUnknown(error, 'Failed to retry job.')
+      errorMessage = errorMessageFromUnknown(error, 'Failed to retry operation.')
     } finally {
-      retryingJob = null
+      retryingOperation = null
     }
   }
 
-  async function deleteJob(job: QueueError) {
-    deletingJob = `${job.queue}-${job.id}`
+  async function deleteOperation(operation: OperationError) {
+    deletingOperation = `${operation.channel}-${operation.id}`
     try {
-      const response = await fetch('/api/queue-health/delete', {
+      const response = await fetch('/api/operation-health/delete', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ queue: job.queue, id: job.id })
+        body: JSON.stringify({ channel: operation.channel, id: operation.id })
       })
-      if (!response.ok) throw new Error(await readErrorMessage(response, 'Failed to delete job.'))
+      if (!response.ok)
+        throw new Error(await readErrorMessage(response, 'Failed to delete operation.'))
       await loadHealth('manual')
-      toast('Job deleted successfully')
+      toast('Operation deleted successfully')
     } catch (error) {
-      errorMessage = errorMessageFromUnknown(error, 'Failed to delete job.')
+      errorMessage = errorMessageFromUnknown(error, 'Failed to delete operation.')
     } finally {
-      deletingJob = null
+      deletingOperation = null
     }
   }
 
@@ -223,7 +231,7 @@
 </script>
 
 <svelte:head>
-  <title>Queue Status · Mail</title>
+  <title>Operations · Mail</title>
 </svelte:head>
 
 <div
@@ -238,10 +246,9 @@
           <ServerCog size={14} />
           Operations
         </div>
-        <h1 class="text-2xl font-semibold tracking-tight text-white sm:text-3xl">Queue status</h1>
+        <h1 class="text-2xl font-semibold tracking-tight text-white sm:text-3xl">Operations</h1>
         <p class="mt-2 max-w-2xl text-sm leading-6 text-zinc-400">
-          Live view of the background worker, IMAP action queue, SMTP send queue, and recent retry
-          failures.
+          Live view of concurrent IMAP actions, SMTP sends, mailbox sync, and recent retry failures.
         </p>
       </div>
 
@@ -292,7 +299,7 @@
       >
         <div class="flex items-center gap-3 text-zinc-300">
           <Loader2 class="animate-spin" size={20} />
-          Loading queue telemetry...
+          Loading operation telemetry...
         </div>
       </div>
     {:else if health}
@@ -343,14 +350,18 @@
         >
           <div class="flex items-start justify-between gap-3">
             <div>
-              <p class="text-xs font-medium tracking-widest text-zinc-500 uppercase">Active jobs</p>
-              <p class="mt-3 text-4xl font-semibold text-white">{numberFormat(activeJobs)}</p>
+              <p class="text-xs font-medium tracking-widest text-zinc-500 uppercase">Running now</p>
+              <p class="mt-3 text-4xl font-semibold text-white">
+                {numberFormat(runningOperations)}
+              </p>
             </div>
             <div class="rounded-2xl bg-blue-400/10 p-3 text-blue-300">
               <Clock3 size={22} />
             </div>
           </div>
-          <p class="mt-4 text-sm text-zinc-400">Pending and running jobs across both queues.</p>
+          <p class="mt-4 text-sm text-zinc-400">
+            Operations run concurrently; {numberFormat(waitingOperations)} waiting to start.
+          </p>
         </div>
 
         <div
@@ -358,14 +369,18 @@
         >
           <div class="flex items-start justify-between gap-3">
             <div>
-              <p class="text-xs font-medium tracking-widest text-zinc-500 uppercase">Failed jobs</p>
-              <p class="mt-3 text-4xl font-semibold text-white">{numberFormat(failedJobs)}</p>
+              <p class="text-xs font-medium tracking-widest text-zinc-500 uppercase">
+                Failed operations
+              </p>
+              <p class="mt-3 text-4xl font-semibold text-white">
+                {numberFormat(failedOperations)}
+              </p>
             </div>
             <div class="rounded-2xl bg-red-400/10 p-3 text-red-300">
               <AlertTriangle size={22} />
             </div>
           </div>
-          <p class="mt-4 text-sm text-zinc-400">Jobs with exhausted or permanent failures.</p>
+          <p class="mt-4 text-sm text-zinc-400">Operations with exhausted or permanent failures.</p>
         </div>
       </section>
 
@@ -375,8 +390,8 @@
         >
           <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h2 class="text-lg font-semibold text-white">Queue distribution</h2>
-              <p class="text-sm text-zinc-400">Current lifecycle totals for IMAP and SMTP jobs.</p>
+              <h2 class="text-lg font-semibold text-white">Operation activity</h2>
+              <p class="text-sm text-zinc-400">Lifecycle totals for parallel IMAP and SMTP work.</p>
             </div>
             <div
               class="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-zinc-300"
@@ -386,17 +401,17 @@
           </div>
 
           <div class="mt-6 grid gap-4 lg:grid-cols-2">
-            {#each [{ name: 'IMAP actions', icon: MailCheck, counts: health.queues.imap }, { name: 'SMTP sends', icon: Send, counts: health.queues.smtp }] as queue (queue.name)}
+            {#each [{ name: 'IMAP actions', icon: MailCheck, counts: health.operations.imap }, { name: 'SMTP sends', icon: Send, counts: health.operations.smtp }] as operation (operation.name)}
               <div class="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
                 <div class="flex items-center justify-between gap-3">
                   <div class="flex items-center gap-3">
                     <div class="rounded-xl bg-white/8 p-2 text-zinc-200">
-                      <queue.icon size={18} />
+                      <operation.icon size={18} />
                     </div>
                     <div>
-                      <h3 class="font-medium text-white">{queue.name}</h3>
+                      <h3 class="font-medium text-white">{operation.name}</h3>
                       <p class="text-xs text-zinc-500">
-                        {numberFormat(queue.counts.total)} total jobs
+                        {numberFormat(operation.counts.total)} total operations
                       </p>
                     </div>
                   </div>
@@ -404,7 +419,7 @@
 
                 <div class="mt-5 flex h-3 overflow-hidden rounded-full bg-white/8">
                   {#each statusSegments as segment (segment.key)}
-                    {@const width = segmentWidth(queue.counts, segment.key)}
+                    {@const width = segmentWidth(operation.counts, segment.key)}
                     {#if width > 0}
                       <div class={segment.class} style={`width: ${width}%`}></div>
                     {/if}
@@ -419,7 +434,7 @@
                         <span class="text-xs text-zinc-500">{segment.label}</span>
                       </div>
                       <p class="mt-1 text-lg font-semibold text-white">
-                        {numberFormat(queue.counts[segment.key])}
+                        {numberFormat(operation.counts[segment.key])}
                       </p>
                     </div>
                   {/each}
@@ -490,8 +505,10 @@
       >
         <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 class="text-lg font-semibold text-white">Recent queue errors</h2>
-            <p class="text-sm text-zinc-400">Latest jobs that reported retry or failure details.</p>
+            <h2 class="text-lg font-semibold text-white">Recent operation errors</h2>
+            <p class="text-sm text-zinc-400">
+              Latest operations that reported retry or failure details.
+            </p>
           </div>
           <div class="text-xs text-zinc-500">Updated {formatDate(health.generatedAt)}</div>
         </div>
@@ -513,11 +530,11 @@
             class="mt-6 rounded-2xl border border-emerald-400/20 bg-emerald-400/10 p-6 text-center text-emerald-100"
           >
             <CheckCircle2 class="mx-auto mb-3" size={26} />
-            No queue errors recorded.
+            No operation errors recorded.
           </div>
         {:else}
           <div class="mt-5 overflow-hidden rounded-2xl border border-white/8">
-            {#each health.recentErrors as job (job.queue + '-' + job.id)}
+            {#each health.recentErrors as operation (operation.channel + '-' + operation.id)}
               <article class="border-b border-white/6 bg-white/[0.02] p-4 last:border-b-0">
                 <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                   <div class="min-w-0">
@@ -525,45 +542,55 @@
                       <span
                         class={[
                           'rounded-full px-2 py-0.5 text-xs font-medium tracking-wide uppercase',
-                          job.queue === 'imap'
+                          operation.channel === 'imap'
                             ? 'bg-blue-400/10 text-blue-200'
                             : 'bg-purple-400/10 text-purple-200'
                         ]}
                       >
-                        {job.queue}
+                        {operation.channel}
                       </span>
-                      <span class="text-sm font-medium text-white">#{job.id} {job.type}</span>
-                      <span class="text-xs text-zinc-500">attempt {job.attemptCount}</span>
-                      <span class="text-xs text-zinc-500">{formatDate(job.updatedAt)}</span>
+                      <span class="text-sm font-medium text-white"
+                        >#{operation.id} {operation.type}</span
+                      >
+                      <span class="text-xs text-zinc-500">attempt {operation.attemptCount}</span>
+                      <span class="text-xs text-zinc-500">{formatDate(operation.updatedAt)}</span>
                     </div>
                     <p class="mt-2 text-sm leading-6 break-words text-zinc-300">
-                      {job.lastError ?? 'Unknown error'}
+                      {operation.lastError ?? 'Unknown error'}
                     </p>
                   </div>
-                  <div class="shrink-0 w-72 rounded-xl bg-white/[0.04] px-3 py-2 text-xs text-zinc-400">
-                    {#if job.mailbox}
-                      <div class="truncate" title={job.mailbox}>Mailbox: <span class="text-zinc-200">{job.mailbox}</span></div>
+                  <div
+                    class="w-72 shrink-0 rounded-xl bg-white/[0.04] px-3 py-2 text-xs text-zinc-400"
+                  >
+                    {#if operation.mailbox}
+                      <div class="truncate" title={operation.mailbox}>
+                        Mailbox: <span class="text-zinc-200">{operation.mailbox}</span>
+                      </div>
                     {/if}
-                    {#if job.uid}
-                      <div>UID: <span class="text-zinc-200">{job.uid}</span></div>
+                    {#if operation.uid}
+                      <div>UID: <span class="text-zinc-200">{operation.uid}</span></div>
                     {/if}
-                    <div>Status: <span class="text-zinc-200">{job.status}</span></div>
+                    <div>Status: <span class="text-zinc-200">{operation.status}</span></div>
                     <div class="mt-2 flex gap-1.5">
                       <button
                         type="button"
-                        onclick={() => void retryJob(job)}
-                        disabled={retryingJob === `${job.queue}-${job.id}`}
+                        onclick={() => void retryOperation(operation)}
+                        disabled={retryingOperation === `${operation.channel}-${operation.id}`}
                         class="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-zinc-200 hover:bg-white/10 disabled:opacity-50"
                       >
-                        {retryingJob === `${job.queue}-${job.id}` ? 'Retrying...' : 'Retry job'}
+                        {retryingOperation === `${operation.channel}-${operation.id}`
+                          ? 'Retrying...'
+                          : 'Retry operation'}
                       </button>
                       <button
                         type="button"
-                        onclick={() => void deleteJob(job)}
-                        disabled={deletingJob === `${job.queue}-${job.id}`}
+                        onclick={() => void deleteOperation(operation)}
+                        disabled={deletingOperation === `${operation.channel}-${operation.id}`}
                         class="rounded-lg border border-red-500/20 bg-red-500/10 px-2 py-1 text-xs text-red-200 hover:bg-red-500/20 disabled:opacity-50"
                       >
-                        {deletingJob === `${job.queue}-${job.id}` ? 'Deleting...' : 'Delete'}
+                        {deletingOperation === `${operation.channel}-${operation.id}`
+                          ? 'Deleting...'
+                          : 'Delete'}
                       </button>
                     </div>
                   </div>
@@ -577,25 +604,24 @@
       <section class="grid gap-4 md:grid-cols-3">
         <div class="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
           <DatabaseZap class="mb-3 text-blue-300" size={22} />
-          <h3 class="font-medium text-white">IMAP queue</h3>
+          <h3 class="font-medium text-white">Parallel IMAP actions</h3>
           <p class="mt-2 text-sm leading-6 text-zinc-400">
-            Handles read, unread, and move operations against the remote mailbox after local state
-            updates.
+            Read, unread, move, flag, and draft actions start independently after local updates.
           </p>
         </div>
         <div class="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
           <Send class="mb-3 text-purple-300" size={22} />
-          <h3 class="font-medium text-white">SMTP queue</h3>
+          <h3 class="font-medium text-white">Parallel SMTP sends</h3>
           <p class="mt-2 text-sm leading-6 text-zinc-400">
-            Sends composed messages asynchronously and retries transient delivery failures.
+            Every ready message sends independently while retaining undo-send and retry support.
           </p>
         </div>
         <div class="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
           <ServerCog class="mb-3 text-emerald-300" size={22} />
           <h3 class="font-medium text-white">Worker heartbeat</h3>
           <p class="mt-2 text-sm leading-6 text-zinc-400">
-            Shows whether the background worker is active. A stale heartbeat usually means the
-            worker process is stopped or blocked.
+            Heartbeats run independently from mail I/O, so slow operations cannot hide worker
+            availability.
           </p>
         </div>
       </section>

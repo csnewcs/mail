@@ -8,14 +8,14 @@ import { eq } from 'drizzle-orm'
 export const POST: RequestHandler = async ({ request }) => {
   const body = await request.json()
   const id = Number(body.id)
-  const queue = body.queue
-  if (!Number.isFinite(id) || (queue !== 'imap' && queue !== 'smtp')) {
-    return error(400, 'Expected queue and id')
+  const channel = body.channel
+  if (!Number.isFinite(id) || (channel !== 'imap' && channel !== 'smtp')) {
+    return error(400, 'Expected channel and id')
   }
 
   if (isDemoModeEnabled()) return json({ ok: true })
 
-  const table = queue === 'imap' ? imapJob : smtpJob
+  const table = channel === 'imap' ? imapJob : smtpJob
   await db.delete(table).where(eq(table.id, id))
 
   return json({ ok: true })

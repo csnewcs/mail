@@ -1,4 +1,4 @@
-import { and, asc, count, eq, inArray, lte } from 'drizzle-orm'
+import { and, eq, lte } from 'drizzle-orm'
 import nodemailer from 'nodemailer'
 import {
   getImapConfigs,
@@ -12,7 +12,7 @@ import { db } from './db'
 import { mailMessage, smtpJob } from './db/schema'
 import { logServerError } from './perf'
 import { isAuthError, withRetry } from './retry'
-import type { SmtpSendJobPayload } from './smtp-queue'
+import type { SmtpSendOperationPayload } from './smtp-operations'
 import {
   clearSignText,
   detachedSignText,
@@ -37,6 +37,7 @@ import {
   storeSentMessage,
   withoutBccHeader
 } from './sent-message'
+import { startBackgroundAction, waitForBackgroundActions } from './background-actions'
 
 const MAX_JOB_ATTEMPTS = 8
 const PERMANENT_SMTP_ERROR_RE =
@@ -44,7 +45,7 @@ const PERMANENT_SMTP_ERROR_RE =
 
 type SmtpJobRow = typeof smtpJob.$inferSelect
 
-let drainInFlight = false
+const activeOperations = new Map<number, Promise<void>>()
 
 function nextAttemptDelayMs(attemptCount: number) {
   return Math.min(5 * 60_000, 1_000 * 2 ** Math.min(attemptCount, 8))
@@ -61,8 +62,8 @@ function isPermanentSmtpError(error: unknown) {
   )
 }
 
-function parsePayload(job: SmtpJobRow): SmtpSendJobPayload {
-  const payload = JSON.parse(job.payload) as Partial<SmtpSendJobPayload>
+function parsePayload(job: SmtpJobRow): SmtpSendOperationPayload {
+  const payload = JSON.parse(job.payload) as Partial<SmtpSendOperationPayload>
   if (typeof payload.to !== 'string' || !payload.to.trim()) {
     throw new Error('Invalid SMTP payload: missing to')
   }
@@ -164,7 +165,7 @@ async function failJob(job: SmtpJobRow, error: unknown) {
 
 async function buildRawMessage(
   job: SmtpJobRow,
-  payload: SmtpSendJobPayload,
+  payload: SmtpSendOperationPayload,
   smtpConfig: SmtpConfig
 ) {
   const attachments: Array<{
@@ -277,7 +278,11 @@ async function buildRawMessage(
   return raw
 }
 
-async function deliverMessage(raw: Buffer, payload: SmtpSendJobPayload, smtpConfig: SmtpConfig) {
+async function deliverMessage(
+  raw: Buffer,
+  payload: SmtpSendOperationPayload,
+  smtpConfig: SmtpConfig
+) {
   const transporter = nodemailer.createTransport({
     host: smtpConfig.host,
     port: smtpConfig.port,
@@ -362,30 +367,42 @@ async function runJob(job: SmtpJobRow) {
   )
 }
 
-async function drainQueueOnce(): Promise<boolean> {
-  const [job] = await db
-    .select()
-    .from(smtpJob)
-    .where(and(eq(smtpJob.status, 'pending'), lte(smtpJob.availableAt, new Date())))
-    .orderBy(asc(smtpJob.availableAt), asc(smtpJob.createdAt))
-    .limit(1)
-
-  if (!job) return false
-
-  if (!(await markJobRunning(job))) return true
-
+async function runOperation(job: SmtpJobRow) {
   try {
     await runJob(job)
     await markJobDone(job)
   } catch (error) {
-    logServerError('smtpQueue.send', error, {
+    logServerError('smtpOperation.send', error, {
       jobId: job.id,
       attemptCount: job.attemptCount
     })
     await failJob(job, error)
   }
+}
 
-  return true
+function startOperation(job: SmtpJobRow) {
+  startBackgroundAction(
+    activeOperations,
+    job.id,
+    () => runOperation(job),
+    (error) => {
+      logServerError('smtpOperation.unhandled', error, { jobId: job.id })
+    }
+  )
+}
+
+export async function dispatchReadySmtpOperations() {
+  const jobs = await db
+    .select()
+    .from(smtpJob)
+    .where(and(eq(smtpJob.status, 'pending'), lte(smtpJob.availableAt, new Date())))
+
+  const claims = await Promise.all(
+    jobs.map(async (job) => ((await markJobRunning(job)) ? job : null))
+  )
+  const claimed = claims.filter((job): job is SmtpJobRow => job !== null)
+  for (const job of claimed) startOperation(job)
+  return claimed.length
 }
 
 export async function recoverInterruptedSmtpJobs() {
@@ -395,26 +412,6 @@ export async function recoverInterruptedSmtpJobs() {
     .where(eq(smtpJob.status, 'running'))
 }
 
-export async function hasUnfinishedSmtpJobs() {
-  const [row] = await db
-    .select({ value: count() })
-    .from(smtpJob)
-    .where(inArray(smtpJob.status, ['pending', 'running']))
-  return Number(row?.value ?? 0) > 0
-}
-
-export async function drainSmtpQueue() {
-  if (drainInFlight) return 0
-  drainInFlight = true
-
-  let processed = 0
-  try {
-    while (await drainQueueOnce()) {
-      processed += 1
-    }
-  } finally {
-    drainInFlight = false
-  }
-
-  return processed
+export async function waitForSmtpOperations() {
+  await waitForBackgroundActions(activeOperations)
 }

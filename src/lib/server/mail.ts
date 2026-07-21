@@ -54,7 +54,7 @@ import {
   imapJob,
   syncRuntime
 } from './db/schema'
-import { enqueueMoveMessage } from './imap-queue'
+import { scheduleMoveMessage } from './imap-operations'
 import { getImapConfig, getImapConfigs, type ImapConfig } from './config'
 import { logServerError, perfError, perfLog, perfMs, perfNow } from './perf'
 import { withRetry } from './retry'
@@ -3130,6 +3130,6 @@ export async function moveMessage(message: MailRow, action: MessageAction): Prom
   const targetMailbox = await findMailboxForAction(action)
   if (!targetMailbox || targetMailbox === message.mailbox) return null
 
-  await enqueueMoveMessage(message.uid, message.mailbox, targetMailbox)
+  await scheduleMoveMessage(message.uid, message.mailbox, targetMailbox)
   return targetMailbox
 }

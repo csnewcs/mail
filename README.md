@@ -147,7 +147,7 @@ password are all present. `SMTP_SERVERS` adds more senders after it.
 | `SMTP_USER`                      | Primary SMTP login.                                                                                             | empty       | `alice@example.com`         |
 | `SMTP_PASSWORD`                  | Primary SMTP password.                                                                                          | empty       | `smtp-password`             |
 | `SMTP_FROM`                      | Default From address. Falls back to `SMTP_USER` when empty.                                                     | `SMTP_USER` | `Alice <alice@example.com>` |
-| `SMTP_UNDO_SEND_SECONDS`         | Delay before queued mail is sent. Values are truncated to whole seconds and clamped from `0` to `30`.           | `0`         | `10`                        |
+| `SMTP_UNDO_SEND_SECONDS`         | Delay before scheduled mail starts sending. Values are truncated to whole seconds and clamped from `0` to `30`. | `0`         | `10`                        |
 | `SMTP_SERVERS`                   | JSON array of additional SMTP senders. Invalid JSON is ignored. Per-sender defaults match the primary defaults. | `[]`        | See below                   |
 
 ```env

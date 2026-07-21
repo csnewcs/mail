@@ -3,7 +3,7 @@ import type { OpenPgpSigningMethod } from './openpgp-message'
 import { db } from './db'
 import { smtpJob } from './db/schema'
 
-export type SmtpSendJobPayload = {
+export type SmtpSendOperationPayload = {
   to: string
   cc?: string | null
   bcc?: string | null
@@ -18,7 +18,10 @@ export type SmtpSendJobPayload = {
   attachPublicKey?: boolean
 }
 
-export async function enqueueSmtpSendJob(payload: SmtpSendJobPayload, availableAt = new Date()) {
+export async function scheduleSmtpSend(
+  payload: SmtpSendOperationPayload,
+  availableAt = new Date()
+) {
   const now = new Date()
   const [job] = await db
     .insert(smtpJob)

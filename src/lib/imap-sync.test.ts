@@ -87,7 +87,7 @@ test('keeps long local sync processing below the IMAP idle interval', () => {
   assert.equal(imapKeepaliveDue(1_000, 21_000, 20_000), true)
 })
 
-test('read and unread intents replace the same queued job', () => {
+test('read and unread intents replace the same pending operation', () => {
   assert.deepEqual(seenJob(7, 'Inbox', true), {
     type: 'mark_read',
     dedupeKey: 'seen:Inbox:7'
