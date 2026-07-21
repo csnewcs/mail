@@ -1,5 +1,6 @@
 import OpenAI from 'openai'
 import type { Response as OpenAIResponse } from 'openai/resources/responses/responses'
+import { normalizeOpenAIApiKey } from '$lib/openai-api-key'
 import { getOpenAIConfig } from './config'
 
 const MAX_INPUT_CHARS = 14_000
@@ -100,10 +101,11 @@ type OpenAITextParams = {
 
 export async function createOpenAIClientConfig() {
   const config = await getOpenAIConfig()
-  if (!config.apiKey) throw new Error('Missing OPENAI_API_KEY')
+  const apiKey = normalizeOpenAIApiKey(config.apiKey)
+  if (!apiKey) throw new Error('Missing OPENAI_API_KEY')
 
   return {
-    client: new OpenAI({ apiKey: config.apiKey }),
+    client: new OpenAI({ apiKey }),
     model: config.model
   }
 }
