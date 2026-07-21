@@ -1,6 +1,6 @@
 import { convert } from 'html-to-text'
 import { and, asc, eq, exists, inArray, isNull, lt, or } from 'drizzle-orm'
-import { isOpenAIConfigured, generateOpenAIText } from './openai'
+import { generateOpenAIText } from './openai'
 import { db } from './db'
 import { mailboxCatalog, mailMessage, mailMessageMailbox } from './db/schema'
 import { logServerError } from './perf'
@@ -10,8 +10,7 @@ import {
   normalizeImportanceAddress,
   parseImportanceResults
 } from '$lib/mail-importance'
-import { getImapConfigs, getSmtpConfigs } from './config'
-import { env } from '$env/dynamic/private'
+import { getImapConfigs, getOpenAIConfig, getSmtpConfigs } from './config'
 
 const CLASSIFY_INTERVAL_MS = 30_000
 const RETRY_INTERVAL_MS = 2 * 60_000
@@ -279,8 +278,14 @@ async function classifyPendingMail() {
 }
 
 export async function maybeClassifyPendingMailFromWorker(now = Date.now()) {
-  const enabled = env.OPENAI_IMPORTANCE_CLASSIFICATION?.trim().toLowerCase() !== 'false'
-  if (!enabled || activeClassification || now < nextAttemptAt || !isOpenAIConfigured()) return 0
+  const openai = await getOpenAIConfig()
+  if (
+    !openai.importanceClassification ||
+    !openai.apiKey ||
+    activeClassification ||
+    now < nextAttemptAt
+  )
+    return 0
   activeClassification = (async () => {
     try {
       const classified = await classifyPendingMail()

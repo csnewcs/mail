@@ -1365,7 +1365,7 @@
                 Contacts
               </a>
               <a
-                href={resolve('/settings/imap')}
+                href={resolve('/settings/ai-features')}
                 role="menuitem"
                 onclick={() => {
                   mobileNavOpen = false

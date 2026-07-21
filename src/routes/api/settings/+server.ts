@@ -15,6 +15,7 @@ import {
   passkey
 } from '$lib/server/db/schema'
 import { and, eq, ilike, inArray, not, or } from 'drizzle-orm'
+import type { AnyPgColumn } from 'drizzle-orm/pg-core'
 import {
   getAuthenticationConfig,
   getDisplayConfig,
@@ -139,6 +140,18 @@ export const POST: RequestHandler = async (event) => {
   const values: typeof mailConfig.$inferInsert = {
     id: 1,
     updatedAt: new Date()
+  }
+
+  if (body.openai) {
+    shouldPersistConfig = true
+    const openai = body.openai as Record<string, unknown>
+    const apiKey = typeof openai.apiKey === 'string' ? openai.apiKey.trim() : ''
+    if (openai.clearApiKey === true) values.openaiApiKey = null
+    else if (apiKey && apiKey !== '••••••••') values.openaiApiKey = encryptSecret(apiKey)
+    if (typeof openai.model === 'string') values.openaiModel = openai.model.trim() || null
+    if (typeof openai.importanceClassification === 'boolean') {
+      values.openaiImportanceClassification = openai.importanceClassification
+    }
   }
 
   // IMAP fields — only persist non-empty strings, keep null for "use env var"
@@ -461,13 +474,18 @@ export const POST: RequestHandler = async (event) => {
             .where(and(eq(account.userId, event.locals.user.id), eq(account.providerId, 'oidc')))
         }
         if (primaryImapChanged) {
-          const activeSecondaryNames = parseServerArray(values.imapServers || existingConfig?.imapServers)
+          const activeSecondaryNames = parseServerArray(
+            values.imapServers || existingConfig?.imapServers
+          )
             .map((s) => s.name as string)
             .filter(Boolean)
 
-          console.log('[DEBUG-CLEANUP] Primary IMAP changed. Cleaning legacy primary mailboxes. Active secondary names:', activeSecondaryNames)
+          console.log(
+            '[DEBUG-CLEANUP] Primary IMAP changed. Cleaning legacy primary mailboxes. Active secondary names:',
+            activeSecondaryNames
+          )
 
-          const buildPrimaryExcludeCondition = (field: any) => {
+          const buildPrimaryExcludeCondition = (field: AnyPgColumn) => {
             if (activeSecondaryNames.length === 0) return undefined
             return and(
               ...activeSecondaryNames.flatMap((name) => [
@@ -619,6 +637,7 @@ export const POST: RequestHandler = async (event) => {
             github: Boolean(body.github),
             discord: Boolean(body.discord),
             oidc: Boolean(body.oidc),
+            openai: Boolean(body.openai),
             signature: typeof body.signature === 'string'
           },
           secretsUpdated: {
@@ -626,7 +645,8 @@ export const POST: RequestHandler = async (event) => {
             smtpPassword: 'smtpPassword' in values,
             githubClientSecret: 'githubClientSecret' in values,
             discordClientSecret: 'discordClientSecret' in values,
-            oidcClientSecret: 'oidcClientSecret' in values
+            oidcClientSecret: 'oidcClientSecret' in values,
+            openaiApiKey: 'openaiApiKey' in values
           }
         },
         event
@@ -641,6 +661,7 @@ export const POST: RequestHandler = async (event) => {
       hasGithub: Boolean(body.github),
       hasDiscord: Boolean(body.discord),
       hasOidc: Boolean(body.oidc),
+      hasOpenAI: Boolean(body.openai),
       density: normalizeDensityPreference(body.density) ?? 'unchanged',
       compactMode: typeof body.compactMode === 'boolean' ? body.compactMode : 'unchanged',
       simplifiedView: typeof body.simplifiedView === 'boolean' ? body.simplifiedView : 'unchanged',

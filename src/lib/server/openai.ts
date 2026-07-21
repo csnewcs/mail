@@ -1,25 +1,12 @@
-import { env } from '$env/dynamic/private'
 import OpenAI from 'openai'
 import type { Response as OpenAIResponse } from 'openai/resources/responses/responses'
+import { getOpenAIConfig } from './config'
 
-const DEFAULT_MODEL = 'gpt-4.1-mini'
 const MAX_INPUT_CHARS = 14_000
 const encoder = new TextEncoder()
 
-type OpenAIConfig = { apiKey: string; model: string } | { missing: string[] }
-
-function getOpenAIConfig(): OpenAIConfig {
-  const apiKey = env.OPENAI_API_KEY?.trim()
-  if (!apiKey) return { missing: ['OPENAI_API_KEY'] }
-
-  return {
-    apiKey,
-    model: env.OPENAI_MODEL?.trim() || DEFAULT_MODEL
-  }
-}
-
-export function isOpenAIConfigured() {
-  return !('missing' in getOpenAIConfig())
+export async function isOpenAIConfigured() {
+  return Boolean((await getOpenAIConfig()).apiKey)
 }
 
 function truncateInputAt(value: string, maxInputChars = MAX_INPUT_CHARS) {
@@ -111,11 +98,9 @@ type OpenAITextParams = {
   timeoutMs?: number
 }
 
-export function createOpenAIClientConfig() {
-  const config = getOpenAIConfig()
-  if ('missing' in config) {
-    throw new Error(`Missing ${config.missing.join(', ')}`)
-  }
+export async function createOpenAIClientConfig() {
+  const config = await getOpenAIConfig()
+  if (!config.apiKey) throw new Error('Missing OPENAI_API_KEY')
 
   return {
     client: new OpenAI({ apiKey: config.apiKey }),
@@ -131,7 +116,7 @@ export async function generateOpenAIText({
   textConfig,
   timeoutMs
 }: OpenAITextParams) {
-  const { client, model } = createOpenAIClientConfig()
+  const { client, model } = await createOpenAIClientConfig()
 
   const response = await client.responses.create(
     {
@@ -164,7 +149,7 @@ export async function createOpenAITextStream({
   onComplete?: (text: string) => void
   onError?: (error: unknown) => void
 }) {
-  const { client, model } = createOpenAIClientConfig()
+  const { client, model } = await createOpenAIClientConfig()
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {

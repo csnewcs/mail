@@ -42,7 +42,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
     const messages = searchDemoMessages(query, 50, 0)
     return json({ messages: messages.map(serializeMessage), total: messages.length, patterns: [] })
   }
-  if (!isOpenAIConfigured()) error(503, 'OpenAI is not configured')
+  if (!(await isOpenAIConfigured())) error(503, 'OpenAI is not configured')
 
   const searchKey = locals.user?.id ?? 'authenticated-user'
   const now = Date.now()

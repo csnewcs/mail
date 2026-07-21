@@ -57,6 +57,10 @@ export const GET: RequestHandler = async () => {
         from: config.smtp.from
       },
       smtpServers: smtpServers.map(exportMailServer),
+      openai: {
+        model: config.openai.model,
+        importanceClassification: config.openai.importanceClassification
+      },
       signature: config.signature
     },
     preferences: { ...preferences, compactMode: preferences.density !== 'comfortable' },
@@ -128,6 +132,12 @@ export const POST: RequestHandler = async ({ request }) => {
 
     if (backup.settings.smtpServers) {
       values.smtpServers = backup.settings.smtpServers
+    }
+
+    if (backup.settings.openai) {
+      values.openaiModel = backup.settings.openai.model?.trim() || null
+      values.openaiImportanceClassification =
+        backup.settings.openai.importanceClassification ?? null
     }
 
     if (backup.settings.signature != null) values.signature = backup.settings.signature

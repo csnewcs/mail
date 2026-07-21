@@ -58,6 +58,10 @@ export type SettingsBackup = {
     }
     github?: { clientId?: string }
     discord?: { clientId?: string }
+    openai?: {
+      model?: string
+      importanceClassification?: boolean
+    }
     signature?: string
   }
   preferences?: {
@@ -235,6 +239,7 @@ export function validateSettingsBackup(value: unknown): {
     const oidcObject = optionalObject(settingsObject.oidc, 'settings.oidc', errors)
     const githubObject = optionalObject(settingsObject.github, 'settings.github', errors)
     const discordObject = optionalObject(settingsObject.discord, 'settings.discord', errors)
+    const openaiObject = optionalObject(settingsObject.openai, 'settings.openai', errors)
 
     if (imapObject) {
       settings.imap = {
@@ -333,6 +338,17 @@ export function validateSettingsBackup(value: unknown): {
       }
     }
 
+    if (openaiObject) {
+      settings.openai = {
+        model: optionalString(openaiObject.model, 'settings.openai.model', errors),
+        importanceClassification: optionalBoolean(
+          openaiObject.importanceClassification,
+          'settings.openai.importanceClassification',
+          errors
+        )
+      }
+    }
+
     settings.signature = optionalString(settingsObject.signature, 'settings.signature', errors)
     backup.settings = settings
   }
@@ -395,7 +411,11 @@ export function validateSettingsBackup(value: unknown): {
         errors
       ) as NonNullable<SettingsBackup['preferences']>['mailboxPreferences'],
       listRatio: optionalNumber(preferencesObject.listRatio, 'preferences.listRatio', errors),
-      sidebarWidth: optionalNumber(preferencesObject.sidebarWidth, 'preferences.sidebarWidth', errors)
+      sidebarWidth: optionalNumber(
+        preferencesObject.sidebarWidth,
+        'preferences.sidebarWidth',
+        errors
+      )
     }
   }
 

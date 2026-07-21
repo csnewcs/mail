@@ -83,6 +83,7 @@
     'Malay'
   ]
   const settingsSections = [
+    { id: 'ai-features', label: 'AI Features' },
     { id: 'imap', label: 'IMAP' },
     { id: 'smtp', label: 'SMTP' },
     { id: 'mailboxes', label: 'Mailboxes' },
@@ -172,6 +173,7 @@
         smtpServers: Array<ConfigSection & { from: string }>
         github: OAuthProviderForm
         discord: OAuthProviderForm
+        openai: OpenAIForm
         oidc: {
           issuer: string
           authorizationUrl: string
@@ -237,6 +239,13 @@
     clientSecret: string
     source: 'db' | 'env'
   }
+  type OpenAIForm = {
+    apiKey: string
+    apiKeySource: 'db' | 'env'
+    model: string
+    importanceClassification: boolean
+    source: 'db' | 'env'
+  }
   type SignatureProfile = {
     id?: number
     name: string
@@ -259,6 +268,7 @@
     github = $state({} as OAuthProviderForm)
     discord = $state({} as OAuthProviderForm)
     oidc = $state({} as OidcForm)
+    openai = $state({} as OpenAIForm)
     signature = $state('')
     signatureProfiles = $state<SignatureProfile[]>([])
     simplifiedView = $state(false)
@@ -307,6 +317,7 @@
       this.github = { ...config.github, clientSecret: '' }
       this.discord = { ...config.discord, clientSecret: '' }
       this.oidc = { ...config.oidc, clientSecret: '' }
+      this.openai = { ...config.openai, apiKey: '' }
       this.signature = config.signature
       this.signatureProfiles =
         config.signatureProfiles.length > 0
@@ -335,8 +346,8 @@
   }
   let { data }: Props = $props()
   const selectedSettingsSection = $derived.by(() => {
-    const section = page.params.section ?? 'imap'
-    return settingsSections.some((item) => item.id === section) ? section : 'imap'
+    const section = page.params.section ?? 'ai-features'
+    return settingsSections.some((item) => item.id === section) ? section : 'ai-features'
   })
 
   // Editable form state must not be derived from `data`: autosave can invalidate route data,
@@ -365,6 +376,7 @@
   let github = $derived(form.github)
   let discord = $derived(form.discord)
   let oidc = $derived(form.oidc)
+  let openai = $derived(form.openai)
   let simplifiedView = $derived(form.simplifiedView)
   let threadModeOnPageLoad = $derived(form.threadModeOnPageLoad)
   let compactMode = $derived(form.compactMode)
@@ -1574,6 +1586,8 @@
   }
 
   let saving = $state(false)
+  let openaiTouched = false
+  let clearOpenAIApiKey = false
   let autosaveStatus = $state<'idle' | 'saving' | 'saved' | 'error'>('idle')
   let testingImap = $state(false)
   let testingSmtp = $state(false)
@@ -1606,7 +1620,9 @@
       blockRemoteContent,
       remoteContentAllowedSenders,
       mailboxPreferences,
-      quietHours
+      quietHours,
+      openai,
+      clearOpenAIApiKey
     })
   }
 
@@ -1810,6 +1826,7 @@
           github: options.manual ? github : undefined,
           discord: options.manual ? discord : undefined,
           oidc: options.manual ? oidc : undefined,
+          openai: openaiTouched ? { ...openai, clearApiKey: clearOpenAIApiKey } : undefined,
           signature: defaultSignatureHtml(),
           signatureProfiles,
           simplifiedView,
@@ -1835,6 +1852,15 @@
       }
 
       lastSavedSettingsSnapshot = snapshot
+      if (openaiTouched) {
+        const submittedApiKey = Boolean(openai.apiKey)
+        openai.source = 'db'
+        if (clearOpenAIApiKey) openai.apiKeySource = 'env'
+        else if (submittedApiKey) openai.apiKeySource = 'db'
+        openai.apiKey = ''
+        clearOpenAIApiKey = false
+        lastSavedSettingsSnapshot = settingsSnapshot()
+      }
       invalidateSignatureCache()
       if (options.manual) saveSuccess = true
       else autosaveStatus = 'saved'
@@ -1847,6 +1873,7 @@
         github.clientSecret = ''
         discord.clientSecret = ''
         oidc.clientSecret = ''
+        openai.apiKey = ''
         lastSavedSettingsSnapshot = settingsSnapshot()
       }
       if (options.invalidate || selectedSettingsSection === 'mailboxes') await invalidateAll()
@@ -1910,6 +1937,22 @@
 
   function autosaveToggleChange() {
     setTimeout(() => scheduleAutosave(0), 0)
+  }
+
+  function markOpenAISettingsTouched() {
+    openaiTouched = true
+  }
+
+  function openAISettingsToggleChange() {
+    markOpenAISettingsTouched()
+    autosaveToggleChange()
+  }
+
+  function useEnvironmentOpenAIKey() {
+    clearOpenAIApiKey = true
+    openai.apiKey = ''
+    markOpenAISettingsTouched()
+    scheduleAutosave(0)
   }
 
   $effect(() => {
@@ -2104,6 +2147,176 @@
       </nav>
 
       <div class="max-w-3xl min-w-0 space-y-10 [&>div.border-t]:hidden">
+        <!-- AI Features -->
+        <section class={selectedSettingsSection === 'ai-features' ? 'space-y-4' : 'hidden'}>
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <h2 class="text-sm font-semibold tracking-widest text-zinc-500 uppercase">
+              AI Features
+            </h2>
+            {#if openai.source === 'db'}
+              <span
+                class="rounded-full bg-blue-600/20 px-2 py-0.5 text-xs font-medium text-blue-400"
+                >from DB</span
+              >
+            {:else if data.config.openai.apiKey}
+              <span
+                class="rounded-full bg-zinc-700/60 px-2 py-0.5 text-xs font-medium text-zinc-400"
+                >from env</span
+              >
+            {/if}
+          </div>
+
+          <div class="rounded-lg border border-white/8 bg-white/3 p-4">
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div class="sm:col-span-2">
+                <label class="mb-1 block text-xs text-zinc-400" for="openai-api-key">
+                  OpenAI API key
+                </label>
+                <input
+                  id="openai-api-key"
+                  type="password"
+                  autocomplete="off"
+                  placeholder={data.config.openai.apiKey ? '(unchanged)' : 'sk-...'}
+                  bind:value={openai.apiKey}
+                  oninput={markOpenAISettingsTouched}
+                  class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                />
+                <p class="mt-1 text-xs text-zinc-500">
+                  Stored encrypted when secret storage is configured. A database key takes priority
+                  over OPENAI_API_KEY.
+                </p>
+                {#if openai.apiKeySource === 'db'}
+                  <button
+                    type="button"
+                    onclick={useEnvironmentOpenAIKey}
+                    class="mt-2 text-xs font-medium text-blue-400 hover:text-blue-300"
+                  >
+                    Use environment key instead
+                  </button>
+                {/if}
+              </div>
+              <div class="sm:col-span-2">
+                <label class="mb-1 block text-xs text-zinc-400" for="openai-model">Model</label>
+                <input
+                  id="openai-model"
+                  type="text"
+                  placeholder="gpt-4.1-mini"
+                  bind:value={openai.model}
+                  oninput={markOpenAISettingsTouched}
+                  class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                />
+                <p class="mt-1 text-xs text-zinc-500">
+                  Used for compose, summaries, translation, natural-language search, and importance
+                  classification.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div class="rounded-lg border border-white/8 bg-white/3 p-4">
+            <label class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <p class="text-sm font-medium text-zinc-200">Classify important incoming mail</p>
+                <p class="mt-1 text-sm text-zinc-500">
+                  Let the worker use AI to identify messages that are likely to need attention.
+                </p>
+              </div>
+              <span class="relative inline-flex cursor-pointer items-center">
+                <input
+                  type="checkbox"
+                  bind:checked={openai.importanceClassification}
+                  onchange={openAISettingsToggleChange}
+                  class="peer sr-only"
+                />
+                <span
+                  class="h-5 w-9 rounded-full bg-zinc-700 transition peer-checked:bg-blue-600 after:absolute after:top-0.5 after:left-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-4"
+                ></span>
+              </span>
+            </label>
+          </div>
+
+          <div class="rounded-lg border border-white/8 bg-white/3 p-4">
+            <label class="block">
+              <p class="text-sm font-medium text-zinc-200">Mail translation target language</p>
+              <p class="mt-1 text-sm text-zinc-500">
+                Used by the Translate action on email detail pages.
+              </p>
+              <div class="relative mt-3">
+                <input
+                  type="text"
+                  placeholder="Korean"
+                  bind:value={translationTargetLanguage}
+                  onfocus={openTranslationLanguageSuggestions}
+                  oninput={onTranslationLanguageInput}
+                  onkeydown={onTranslationLanguageKeydown}
+                  onblur={onTranslationLanguageBlur}
+                  autocomplete="off"
+                  role="combobox"
+                  aria-autocomplete="list"
+                  aria-expanded={showTranslationLanguageSuggestions}
+                  aria-controls={translationLanguageListboxId}
+                  aria-haspopup="listbox"
+                  class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                />
+
+                {#if showTranslationLanguageSuggestions && (filteredTranslationLanguages.length > 0 || canUseCustomTranslationLanguage)}
+                  <div
+                    id={translationLanguageListboxId}
+                    role="listbox"
+                    class="absolute top-full left-0 z-20 mt-2 w-full overflow-hidden rounded-xl border border-white/10 bg-[#1a1b20] shadow-2xl"
+                  >
+                    {#each filteredTranslationLanguages as language, index (`${language}-${index}`)}
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={index === translationLanguageHighlightIndex}
+                        class={[
+                          'flex w-full items-center justify-between px-3 py-2 text-left text-sm transition',
+                          index === translationLanguageHighlightIndex
+                            ? 'bg-blue-600/20 text-white'
+                            : 'text-zinc-300 hover:bg-white/5'
+                        ].join(' ')}
+                        onmousedown={() => selectTranslationLanguage(language)}
+                      >
+                        <span>{language}</span>
+                        <span
+                          class="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] tracking-wide text-zinc-500 uppercase"
+                          >Suggested</span
+                        >
+                      </button>
+                    {/each}
+
+                    {#if canUseCustomTranslationLanguage}
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={translationLanguageHighlightIndex ===
+                          filteredTranslationLanguages.length}
+                        class={[
+                          'flex w-full items-center justify-between border-t border-white/8 px-3 py-2 text-left text-sm transition',
+                          translationLanguageHighlightIndex === filteredTranslationLanguages.length
+                            ? 'bg-blue-600/20 text-white'
+                            : 'text-zinc-300 hover:bg-white/5'
+                        ].join(' ')}
+                        onmousedown={() =>
+                          selectTranslationLanguage(form.translationTargetLanguage.trim())}
+                      >
+                        <span class="truncate">
+                          Use custom value: {form.translationTargetLanguage.trim()}
+                        </span>
+                        <span
+                          class="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[10px] tracking-wide text-emerald-300 uppercase"
+                          >Custom</span
+                        >
+                      </button>
+                    {/if}
+                  </div>
+                {/if}
+              </div>
+            </label>
+          </div>
+        </section>
+
         <!-- IMAP -->
         <section class={selectedSettingsSection === 'imap' ? 'space-y-4' : 'hidden'}>
           <div class="flex flex-wrap items-center justify-between gap-2">
@@ -3546,88 +3759,6 @@
                   class="h-5 w-9 rounded-full bg-zinc-700 transition peer-checked:bg-blue-600 after:absolute after:top-0.5 after:left-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-4"
                 ></span>
               </span>
-            </label>
-          </div>
-          <div class="rounded-lg border border-white/8 bg-white/3 p-4">
-            <label class="block">
-              <p class="text-sm font-medium text-zinc-200">Mail translation target language</p>
-              <p class="mt-1 text-sm text-zinc-500">
-                Used by the Translate action on email detail pages.
-              </p>
-              <div class="relative mt-3">
-                <input
-                  type="text"
-                  placeholder="Korean"
-                  bind:value={translationTargetLanguage}
-                  onfocus={openTranslationLanguageSuggestions}
-                  oninput={onTranslationLanguageInput}
-                  onkeydown={onTranslationLanguageKeydown}
-                  onblur={onTranslationLanguageBlur}
-                  autocomplete="off"
-                  role="combobox"
-                  aria-autocomplete="list"
-                  aria-expanded={showTranslationLanguageSuggestions}
-                  aria-controls={translationLanguageListboxId}
-                  aria-haspopup="listbox"
-                  class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
-                />
-
-                {#if showTranslationLanguageSuggestions && (filteredTranslationLanguages.length > 0 || canUseCustomTranslationLanguage)}
-                  <div
-                    id={translationLanguageListboxId}
-                    role="listbox"
-                    class="absolute top-full left-0 z-20 mt-2 w-full overflow-hidden rounded-xl border border-white/10 bg-[#1a1b20] shadow-2xl"
-                  >
-                    {#each filteredTranslationLanguages as language, index (`${language}-${index}`)}
-                      <button
-                        type="button"
-                        role="option"
-                        aria-selected={index === translationLanguageHighlightIndex}
-                        class={[
-                          'flex w-full items-center justify-between px-3 py-2 text-left text-sm transition',
-                          index === translationLanguageHighlightIndex
-                            ? 'bg-blue-600/20 text-white'
-                            : 'text-zinc-300 hover:bg-white/5'
-                        ].join(' ')}
-                        onmousedown={() => selectTranslationLanguage(language)}
-                      >
-                        <span>{language}</span>
-                        <span
-                          class="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] tracking-wide text-zinc-500 uppercase"
-                        >
-                          Suggested
-                        </span>
-                      </button>
-                    {/each}
-
-                    {#if canUseCustomTranslationLanguage}
-                      <button
-                        type="button"
-                        role="option"
-                        aria-selected={translationLanguageHighlightIndex ===
-                          filteredTranslationLanguages.length}
-                        class={[
-                          'flex w-full items-center justify-between border-t border-white/8 px-3 py-2 text-left text-sm transition',
-                          translationLanguageHighlightIndex === filteredTranslationLanguages.length
-                            ? 'bg-blue-600/20 text-white'
-                            : 'text-zinc-300 hover:bg-white/5'
-                        ].join(' ')}
-                        onmousedown={() =>
-                          selectTranslationLanguage(form.translationTargetLanguage.trim())}
-                      >
-                        <span class="truncate"
-                          >Use custom value: {form.translationTargetLanguage.trim()}</span
-                        >
-                        <span
-                          class="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[10px] tracking-wide text-emerald-300 uppercase"
-                        >
-                          Custom
-                        </span>
-                      </button>
-                    {/if}
-                  </div>
-                {/if}
-              </div>
             </label>
           </div>
           <div class="rounded-lg border border-white/8 bg-white/3 p-4">

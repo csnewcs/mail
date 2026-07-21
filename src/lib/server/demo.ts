@@ -67,6 +67,13 @@ type DemoDisplayConfig = {
     clientSecret: string
     source: string
   }
+  openai: {
+    apiKey: string
+    apiKeySource: string
+    model: string
+    importanceClassification: boolean
+    source: string
+  }
   quietHours: QuietHoursConfig
 }
 
@@ -259,6 +266,13 @@ const demoConfig: DemoDisplayConfig = {
     legacyDiscoveryUrl: '',
     clientId: 'demo-client',
     clientSecret: 'demo-secret',
+    source: 'demo'
+  },
+  openai: {
+    apiKey: '',
+    apiKeySource: 'demo',
+    model: 'gpt-4.1-mini',
+    importanceClassification: true,
     source: 'demo'
   },
   quietHours: { ...DEFAULT_QUIET_HOURS }
@@ -829,6 +843,7 @@ export function getDemoDisplayConfig() {
     github: { ...demoConfig.github },
     discord: { ...demoConfig.discord },
     oidc: { ...demoConfig.oidc, clientSecret: '••••••••' },
+    openai: { ...demoConfig.openai, apiKey: demoConfig.openai.apiKey ? '••••••••' : '' },
     secretStorage: { configured: false, text: 'Demo mode' },
     quietHours: { ...demoConfig.quietHours }
   }
@@ -915,6 +930,20 @@ export function saveDemoSettings(body: Record<string, unknown>) {
       demoConfig.smtp.from = smtp.from.trim() || demoConfig.smtp.from
     if (typeof smtp.undoSendSeconds === 'number') {
       demoConfig.smtp.undoSendSeconds = Math.min(30, Math.max(0, Math.floor(smtp.undoSendSeconds)))
+    }
+  }
+
+  if (body.openai && typeof body.openai === 'object') {
+    const openai = body.openai as Record<string, unknown>
+    if (openai.clearApiKey === true) demoConfig.openai.apiKey = ''
+    if (typeof openai.apiKey === 'string' && openai.apiKey.trim() && openai.apiKey !== '••••••••') {
+      demoConfig.openai.apiKey = openai.apiKey.trim()
+    }
+    if (typeof openai.model === 'string' && openai.model.trim()) {
+      demoConfig.openai.model = openai.model.trim()
+    }
+    if (typeof openai.importanceClassification === 'boolean') {
+      demoConfig.openai.importanceClassification = openai.importanceClassification
     }
   }
 

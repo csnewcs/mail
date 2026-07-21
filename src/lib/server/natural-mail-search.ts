@@ -53,7 +53,7 @@ function parsePattern(call: ResponseFunctionToolCall) {
 }
 
 export async function runNaturalMailSearch(query: string, signal?: AbortSignal) {
-  const { client, model } = createOpenAIClientConfig()
+  const { client, model } = await createOpenAIClientConfig()
   const input: ResponseInputItem[] = [{ role: 'user', content: query }]
   const available = new Map<number, MailListRow>()
   const patterns: string[] = []

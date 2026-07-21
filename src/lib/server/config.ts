@@ -72,6 +72,14 @@ export type AuthenticationConfig = {
   oidc: OidcConfig
 }
 
+export type OpenAIConfig = {
+  apiKey: string
+  model: string
+  importanceClassification: boolean
+}
+
+export const DEFAULT_OPENAI_MODEL = 'gpt-4.1-mini'
+
 export type MailConfigRow = typeof mailConfig.$inferSelect
 export type MailSignatureRow = typeof mailSignature.$inferSelect
 
@@ -258,6 +266,9 @@ async function loadConfigRow(): Promise<MailConfigRow | null> {
     if (row.oidcClientSecret && !isEncryptedSecret(row.oidcClientSecret)) {
       updates.oidcClientSecret = encryptSecret(row.oidcClientSecret)
     }
+    if (row.openaiApiKey && !isEncryptedSecret(row.openaiApiKey)) {
+      updates.openaiApiKey = encryptSecret(row.openaiApiKey)
+    }
 
     if (Object.keys(updates).length > 0) {
       await db.update(mailConfig).set(updates).where(eq(mailConfig.id, 1))
@@ -414,6 +425,17 @@ export async function getAuthenticationConfig(): Promise<AuthenticationConfig> {
   }
 }
 
+export async function getOpenAIConfig(): Promise<OpenAIConfig> {
+  const row = await getRow()
+  return {
+    apiKey: row?.openaiApiKey ? decryptSecret(row.openaiApiKey) : env.OPENAI_API_KEY?.trim() || '',
+    model: row?.openaiModel?.trim() || env.OPENAI_MODEL?.trim() || DEFAULT_OPENAI_MODEL,
+    importanceClassification:
+      row?.openaiImportanceClassification ??
+      parseBoolean(env.OPENAI_IMPORTANCE_CLASSIFICATION, true)
+  }
+}
+
 export function isOAuthClientConfigured(config: OAuthClientConfig): boolean {
   return Boolean(config.clientId && config.clientSecret)
 }
@@ -476,6 +498,7 @@ export async function getDisplayConfig() {
   const row = await getRow()
   const signatureProfiles = await getSignatureProfiles()
   const quietHours = await getQuietHoursConfig()
+  const openai = await getOpenAIConfig()
   const imapServers = normalizeImapServers(row)
   const smtpServers = normalizeSmtpServers(row)
   const imapDisplay = imapServers[0]
@@ -559,6 +582,16 @@ export async function getDisplayConfig() {
           ? '••••••••'
           : '',
       source: row?.discordClientId ? ('db' as const) : ('env' as const)
+    },
+    openai: {
+      apiKey: openai.apiKey ? '••••••••' : '',
+      apiKeySource: row?.openaiApiKey ? ('db' as const) : ('env' as const),
+      model: openai.model,
+      importanceClassification: openai.importanceClassification,
+      source:
+        row?.openaiApiKey || row?.openaiModel || row?.openaiImportanceClassification != null
+          ? ('db' as const)
+          : ('env' as const)
     },
     secretStorage: getSecretStorageStatus(),
     quietHours
