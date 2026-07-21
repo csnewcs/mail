@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   addDirtyMailbox,
+  canReuseWorkerConnection,
   MAX_CONNECTIONS_PER_ACCOUNT,
   reconnectDelayMs
 } from './imap-connections.ts'
@@ -17,4 +18,11 @@ test('coalesces repeated mailbox events and caps account connection roles', () =
   for (let index = 0; index < 100; index += 1) addDirtyMailbox(dirty, 'primary', 'INBOX')
   assert.deepEqual([...dirty.get('primary')!], ['INBOX'])
   assert.equal(MAX_CONNECTIONS_PER_ACCOUNT, 2)
+})
+
+test('does not reuse an authenticated connection after it becomes unusable', () => {
+  const disconnected = { usable: false, authenticated: 'user@example.com' }
+  assert.equal(canReuseWorkerConnection({ usable: true }), true)
+  assert.equal(canReuseWorkerConnection(disconnected), false)
+  assert.equal(canReuseWorkerConnection(null), false)
 })

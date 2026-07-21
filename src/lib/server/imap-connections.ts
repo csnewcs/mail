@@ -38,6 +38,10 @@ export function reconnectDelayMs(attempt: number) {
   return Math.min(MAX_RECONNECT_MS, 1_000 * 2 ** Math.min(attempt, 8))
 }
 
+export function canReuseWorkerConnection(client: Pick<ImapFlow, 'usable'> | null) {
+  return Boolean(client?.usable)
+}
+
 function formatCooldownTime(timestamp: number) {
   const timeZone = process.env.TZ || 'Asia/Seoul'
   try {
@@ -119,11 +123,11 @@ function entryFor(config: ImapConfig) {
 
 export async function getWorkerConnection(config: ImapConfig) {
   const entry = entryFor(config)
-  if (entry.worker && (entry.worker.usable || Boolean(entry.worker.authenticated))) {
-    return entry.worker
-  }
+  if (entry.worker && canReuseWorkerConnection(entry.worker)) return entry.worker
   if (Date.now() < entry.rateLimitedUntil) {
-    throw new Error(`IMAP connection cooldown active until ${formatCooldownTime(entry.rateLimitedUntil)} due to provider rate limit`)
+    throw new Error(
+      `IMAP connection cooldown active until ${formatCooldownTime(entry.rateLimitedUntil)} due to provider rate limit`
+    )
   }
   if (entry.workerConnecting) return entry.workerConnecting
   if (entry.worker) {
@@ -145,10 +149,18 @@ export async function getWorkerConnection(config: ImapConfig) {
     } catch (error) {
       closeClient(client)
       const msg = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase()
-      const resp = (error as any)?.responseText?.toLowerCase() ?? ''
-      if (msg.includes('too many simultaneous connections') || resp.includes('too many simultaneous connections') || resp.includes('[alert]')) {
+      const responseText =
+        error && typeof error === 'object' && 'responseText' in error ? error.responseText : null
+      const resp = typeof responseText === 'string' ? responseText.toLowerCase() : ''
+      if (
+        msg.includes('too many simultaneous connections') ||
+        resp.includes('too many simultaneous connections') ||
+        resp.includes('[alert]')
+      ) {
         entry.rateLimitedUntil = Date.now() + 1 * 60_000 // 1 minute cooldown
-        console.warn(`[imap] ${config.name} hit provider connection limit. Pausing reconnects until ${formatCooldownTime(entry.rateLimitedUntil)}.`)
+        console.warn(
+          `[imap] ${config.name} hit provider connection limit. Pausing reconnects until ${formatCooldownTime(entry.rateLimitedUntil)}.`
+        )
       }
       throw error
     } finally {
