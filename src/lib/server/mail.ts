@@ -18,6 +18,7 @@ import {
 } from 'drizzle-orm'
 import { ImapFlow } from 'imapflow'
 import { simpleParser } from 'mailparser'
+import { readKey, type PublicKey } from 'openpgp'
 import {
   ensureSeenFlag,
   isAlwaysReadMailbox,
@@ -83,6 +84,8 @@ import {
   snoozeDemoMessages
 } from './demo'
 import { assignThreadKeys, orderThread, referenceCandidates } from './threading'
+import { processInboundOpenPgp, type OpenPgpSecurityResult } from './openpgp-message'
+import { getOpenPgpPrivateKeys, getOpenPgpPublicKeys } from './openpgp-keys'
 
 const INITIAL_SYNC_FAILURE_RETRY_MS = 10 * 60 * 1000
 const FULL_RECONCILE_INTERVAL_MS = 5 * 60 * 1000
@@ -90,6 +93,99 @@ const IMAP_KEEPALIVE_INTERVAL_MS = 20 * 1000
 const EMPTY_MAILBOX_ERROR_RE = /\bno such message\b/i
 const MAX_RAW_SOURCE_BYTES = 25 * 1024 * 1024
 const condstoreRejected = new WeakSet<ImapFlow>()
+
+async function attachedPublicKeys(
+  attachments: Awaited<ReturnType<typeof simpleParser>>['attachments']
+): Promise<PublicKey[]> {
+  const candidates = (attachments ?? [])
+    .filter((attachment) => attachment.content.length <= 2_000_000)
+    .flatMap((attachment) => {
+      const text = attachment.content.toString('utf8')
+      return attachment.contentType === 'application/pgp-keys' ||
+        text.includes('BEGIN PGP PUBLIC KEY BLOCK')
+        ? [text]
+        : []
+    })
+    .slice(0, 5)
+  const keys = await Promise.all(
+    candidates.map(async (armoredKey) => {
+      try {
+        return await readKey({ armoredKey })
+      } catch {
+        return null
+      }
+    })
+  )
+  return keys.filter((key): key is PublicKey => key !== null)
+}
+
+async function parseIncomingSource(source: Buffer) {
+  const initial = await simpleParser(source)
+  const openPgpHint =
+    source
+      .subarray(0, Math.min(source.length, 256_000))
+      .toString('utf8')
+      .match(/pgp-|BEGIN PGP /i) ||
+    initial.attachments?.some((attachment) => /pgp/i.test(attachment.contentType))
+  if (!openPgpHint) {
+    return {
+      parsed: initial,
+      openPgp: {
+        signed: false,
+        signatureStatus: null,
+        signer: null,
+        fingerprint: null,
+        encrypted: false,
+        decrypted: false,
+        error: null,
+        rawMessage: source
+      },
+      replaceContent: false
+    }
+  }
+  const [privateKeys, storedVerificationKeys, messageVerificationKeys] = await Promise.all([
+    getOpenPgpPrivateKeys(),
+    getOpenPgpPublicKeys(),
+    attachedPublicKeys(initial.attachments)
+  ])
+  const verificationKeys = [...storedVerificationKeys, ...messageVerificationKeys]
+  const trustedFingerprints = new Set(
+    storedVerificationKeys.map((key) => key.getFingerprint().toLowerCase())
+  )
+  const detachedSignatures = (initial.attachments ?? [])
+    .filter(
+      (attachment) =>
+        attachment.contentType === 'application/pgp-signature' &&
+        /^(signature\.asc|message\.(?:asc|sig))$/i.test(attachment.filename ?? '')
+    )
+    .map((attachment) => attachment.content)
+  const senderAddress = parseAddressFields([summarizeAddresses(initial.from)])[0]?.email
+  const openPgp = await processInboundOpenPgp({
+    raw: source,
+    text: initial.text,
+    detachedSignatures,
+    privateKeys,
+    verificationKeys,
+    trustedFingerprints,
+    senderAddress
+  })
+  const transformed = !openPgp.rawMessage.equals(source)
+  if (!openPgp.decrypted && !transformed) return { parsed: initial, openPgp, replaceContent: false }
+  const parsed = await simpleParser(openPgp.rawMessage)
+  if (!openPgp.decrypted) return { parsed, openPgp, replaceContent: true }
+  const decryptedPublicKeys = await attachedPublicKeys(parsed.attachments)
+  if (decryptedPublicKeys.length === 0) return { parsed, openPgp, replaceContent: true }
+  const verified = await processInboundOpenPgp({
+    raw: source,
+    text: initial.text,
+    detachedSignatures,
+    privateKeys,
+    verificationKeys: [...storedVerificationKeys, ...decryptedPublicKeys],
+    trustedFingerprints,
+    senderAddress
+  })
+  return { parsed, openPgp: verified, replaceContent: true }
+}
 
 async function connectImap(config: ImapConfig, label: string): Promise<ImapFlow> {
   return withRetry(() => getWorkerConnection(config), { label, maxAttempts: 3, baseDelayMs: 2000 })
@@ -128,6 +224,13 @@ export type MailRow = MailListRow & {
   authservId?: string | null
   authenticationTrusted?: boolean
   rawSourceAvailable?: boolean
+  openPgpSigned?: boolean
+  openPgpSignatureStatus?: string | null
+  openPgpSigner?: string | null
+  openPgpFingerprint?: string | null
+  openPgpEncrypted?: boolean
+  openPgpDecrypted?: boolean
+  openPgpError?: string | null
   threadDepth?: number
 }
 
@@ -413,6 +516,69 @@ async function recordRawBackfillFailure(rows: Array<{ id: number; attempts: numb
   }
 }
 
+async function canReplaceMessageContent(messageId: string, source: Buffer) {
+  const copies = await db
+    .select({ rawSource: mailMessageMailbox.rawSource })
+    .from(mailMessageMailbox)
+    .where(eq(mailMessageMailbox.messageId, messageId))
+  if (copies.length <= 1) return true
+  return copies.every(
+    (copy) => copy.rawSource !== null && Buffer.from(copy.rawSource).equals(source)
+  )
+}
+
+export async function backfillOpenPgpFromWorker() {
+  if (isDemoModeEnabled()) return 0
+  const rows = await db
+    .select({
+      id: mailMessageMailbox.id,
+      messageId: mailMessageMailbox.messageId,
+      rawSource: mailMessageMailbox.rawSource
+    })
+    .from(mailMessageMailbox)
+    .where(
+      and(isNotNull(mailMessageMailbox.rawSource), isNull(mailMessageMailbox.openPgpProcessedAt))
+    )
+    .orderBy(desc(mailMessageMailbox.id))
+    .limit(10)
+
+  let processed = 0
+  for (const row of rows) {
+    if (!row.rawSource) continue
+    try {
+      const source = Buffer.from(row.rawSource)
+      const { parsed, openPgp, replaceContent } = await parseIncomingSource(source)
+      if (replaceContent && (await canReplaceMessageContent(row.messageId, source))) {
+        await storeMessageContent(row.messageId, parsed, undefined, true)
+      }
+      await db
+        .update(mailMessageMailbox)
+        .set({
+          openPgpSigned: openPgp.signed,
+          openPgpSignatureStatus: openPgp.signatureStatus,
+          openPgpSigner: openPgp.signer,
+          openPgpFingerprint: openPgp.fingerprint,
+          openPgpEncrypted: openPgp.encrypted,
+          openPgpDecrypted: openPgp.decrypted,
+          openPgpError: openPgp.error,
+          openPgpProcessedAt: new Date()
+        })
+        .where(eq(mailMessageMailbox.id, row.id))
+      processed += 1
+    } catch (error) {
+      logServerError('mail.openpgp.backfill', error, { mailboxEntryId: row.id })
+      await db
+        .update(mailMessageMailbox)
+        .set({
+          openPgpError: error instanceof Error ? error.message : String(error),
+          openPgpProcessedAt: new Date()
+        })
+        .where(eq(mailMessageMailbox.id, row.id))
+    }
+  }
+  return processed
+}
+
 export async function backfillMailAuthenticationFromWorker() {
   if (isDemoModeEnabled()) return 0
   const [configs, pending] = await Promise.all([
@@ -420,6 +586,7 @@ export async function backfillMailAuthenticationFromWorker() {
     db
       .select({
         id: mailMessageMailbox.id,
+        messageId: mailMessageMailbox.messageId,
         mailbox: mailMessageMailbox.mailbox,
         uid: mailMessageMailbox.uid,
         uidValidity: mailMessageMailbox.uidValidity,
@@ -505,8 +672,24 @@ export async function backfillMailAuthenticationFromWorker() {
 
         let authentication = parseMailAuthentication([])
         try {
-          const parsed = await simpleParser(item.source)
+          const { parsed, openPgp, replaceContent } = await parseIncomingSource(item.source)
           authentication = parseMailAuthentication(parsed.headerLines ?? [])
+          if (replaceContent && (await canReplaceMessageContent(row.messageId, item.source))) {
+            await storeMessageContent(row.messageId, parsed, undefined, true)
+          }
+          await db
+            .update(mailMessageMailbox)
+            .set({
+              openPgpSigned: openPgp.signed,
+              openPgpSignatureStatus: openPgp.signatureStatus,
+              openPgpSigner: openPgp.signer,
+              openPgpFingerprint: openPgp.fingerprint,
+              openPgpEncrypted: openPgp.encrypted,
+              openPgpDecrypted: openPgp.decrypted,
+              openPgpError: openPgp.error,
+              openPgpProcessedAt: new Date()
+            })
+            .where(eq(mailMessageMailbox.id, row.id))
         } catch (error) {
           logServerError('mail.raw-source.parse-authentication', error, {
             mailbox: row.mailbox,
@@ -708,7 +891,8 @@ async function resolveThreadKey(
 async function storeMessageContent(
   effectiveMessageId: string,
   message: Awaited<ReturnType<typeof simpleParser>>,
-  internalDate?: Date
+  internalDate?: Date,
+  replaceContent = false
 ): Promise<{ isNew: boolean; threadKey: string }> {
   const startedAt = Date.now()
   const sanitizedMessageId = sanitizePgText(effectiveMessageId)
@@ -758,6 +942,26 @@ async function storeMessageContent(
     .returning({ id: mailMessage.id })
 
   const isNew = result.length > 0
+
+  if (!isNew && replaceContent) {
+    await db.transaction(async (tx) => {
+      await tx
+        .update(mailMessage)
+        .set({ preview: createPreview(textContent), textContent, htmlContent })
+        .where(eq(mailMessage.messageId, sanitizedMessageId))
+      await tx.delete(mailAttachment).where(eq(mailAttachment.messageId, sanitizedMessageId))
+      for (const attachment of message.attachments ?? []) {
+        if (attachment.contentDisposition === 'inline' || !attachment.content) continue
+        await tx.insert(mailAttachment).values({
+          messageId: sanitizedMessageId,
+          filename: sanitizePgText(attachment.filename ?? 'attachment'),
+          contentType: sanitizePgText(attachment.contentType ?? 'application/octet-stream'),
+          size: attachment.size ?? attachment.content.length,
+          content: attachment.content
+        })
+      }
+    })
+  }
 
   if (isNew) {
     await upsertContacts(
@@ -814,12 +1018,30 @@ async function storeMailboxEntry(
     dkimStatus: string | null
     dmarcStatus: string | null
     authservId: string | null
+    openPgp?: OpenPgpSecurityResult
   }
 ) {
   const startedAt = Date.now()
   const sanitizedMessageId = sanitizePgText(effectiveMessageId)
   const sanitizedMailbox = sanitizePgText(mailbox)
-  const securityValues = security ? { ...security, rawSourceCheckedAt: new Date() } : {}
+  const securityValues = security
+    ? {
+        rawSource: security.rawSource,
+        spfStatus: security.spfStatus,
+        dkimStatus: security.dkimStatus,
+        dmarcStatus: security.dmarcStatus,
+        authservId: security.authservId,
+        openPgpSigned: security.openPgp?.signed ?? false,
+        openPgpSignatureStatus: security.openPgp?.signatureStatus ?? null,
+        openPgpSigner: security.openPgp?.signer ?? null,
+        openPgpFingerprint: security.openPgp?.fingerprint ?? null,
+        openPgpEncrypted: security.openPgp?.encrypted ?? false,
+        openPgpDecrypted: security.openPgp?.decrypted ?? false,
+        openPgpError: security.openPgp?.error ?? null,
+        openPgpProcessedAt: new Date(),
+        rawSourceCheckedAt: new Date()
+      }
+    : {}
   await db
     .insert(mailMessageMailbox)
     .values({
@@ -1264,7 +1486,7 @@ async function syncOneMailbox(
               if (!fetchItem.uid || !fetchItem.source) continue
               const item = itemByUid.get(fetchItem.uid)
               if (!item) continue
-              const parsed = await simpleParser(fetchItem.source)
+              const { parsed, openPgp } = await parseIncomingSource(fetchItem.source)
               const authentication = parseMailAuthentication(parsed.headerLines ?? [])
               const storedMessage = await storeMessageContent(
                 item.effectiveMessageId,
@@ -1289,7 +1511,8 @@ async function syncOneMailbox(
                   spfStatus: authentication.spfStatus,
                   dkimStatus: authentication.dkimStatus,
                   dmarcStatus: authentication.dmarcStatus,
-                  authservId: authentication.authservId
+                  authservId: authentication.authservId,
+                  openPgp
                 }
               )
               storedCount += 1
@@ -1907,6 +2130,13 @@ const detailSelect = {
   dkimStatus: mailMessageMailbox.dkimStatus,
   dmarcStatus: mailMessageMailbox.dmarcStatus,
   authservId: mailMessageMailbox.authservId,
+  openPgpSigned: mailMessageMailbox.openPgpSigned,
+  openPgpSignatureStatus: mailMessageMailbox.openPgpSignatureStatus,
+  openPgpSigner: mailMessageMailbox.openPgpSigner,
+  openPgpFingerprint: mailMessageMailbox.openPgpFingerprint,
+  openPgpEncrypted: mailMessageMailbox.openPgpEncrypted,
+  openPgpDecrypted: mailMessageMailbox.openPgpDecrypted,
+  openPgpError: mailMessageMailbox.openPgpError,
   rawSourceAvailable: sql<boolean>`${mailMessageMailbox.rawSource} is not null`
 }
 

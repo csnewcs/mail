@@ -29,6 +29,7 @@
   import ErrorDialog from '$lib/components/ErrorDialog.svelte'
   import AttachmentSummary from '$lib/components/AttachmentSummary.svelte'
   import MailAuthenticationIndicators from '$lib/components/MailAuthenticationIndicators.svelte'
+  import OpenPgpIndicator from '$lib/components/OpenPgpIndicator.svelte'
   import RawMessageDialog from '$lib/components/RawMessageDialog.svelte'
   import { errorMessageFromUnknown, readErrorMessage } from '$lib/http'
   import { trackAppLoading } from '$lib/loading.svelte'
@@ -64,6 +65,13 @@
     dkimStatus: string | null
     dmarcStatus: string | null
     authenticationTrusted: boolean
+    openPgpSigned: boolean
+    openPgpSignatureStatus: string | null
+    openPgpSigner: string | null
+    openPgpFingerprint: string | null
+    openPgpEncrypted: boolean
+    openPgpDecrypted: boolean
+    openPgpError: string | null
     rawSourceAvailable: boolean
     flags: string[]
     receivedAt: string | null
@@ -1276,13 +1284,25 @@
           {#if isExpanded}
             <div class="px-4 pb-4 sm:px-5">
               <div class="mb-3">
-                <MailAuthenticationIndicators
-                  spfStatus={msg.spfStatus}
-                  dkimStatus={msg.dkimStatus}
-                  dmarcStatus={msg.dmarcStatus}
-                  authenticationTrusted={msg.authenticationTrusted}
-                  compact
-                />
+                <div class="flex flex-wrap gap-2">
+                  <MailAuthenticationIndicators
+                    spfStatus={msg.spfStatus}
+                    dkimStatus={msg.dkimStatus}
+                    dmarcStatus={msg.dmarcStatus}
+                    authenticationTrusted={msg.authenticationTrusted}
+                    compact
+                  />
+                  <OpenPgpIndicator
+                    signed={msg.openPgpSigned}
+                    signatureStatus={msg.openPgpSignatureStatus}
+                    signer={msg.openPgpSigner}
+                    fingerprint={msg.openPgpFingerprint}
+                    encrypted={msg.openPgpEncrypted}
+                    decrypted={msg.openPgpDecrypted}
+                    error={msg.openPgpError}
+                    compact
+                  />
+                </div>
               </div>
               {#if remoteContentBody.blockedCount > 0}
                 <div

@@ -1,6 +1,7 @@
 import type { ComposerAttachment } from '$lib/mail-attachments'
 
 export type ComposerMode = 'compose' | 'reply' | 'reply-all' | 'forward'
+export type OpenPgpSigningMethod = 'none' | 'cleartext' | 'detached' | 'pgp-mime'
 
 export type ComposerMessage = {
   id: number
@@ -22,6 +23,11 @@ export type DraftRow = {
   html: string
   attachments: ComposerAttachment[]
   inReplyTo: string | null
+  smtpServerId?: string | null
+  fromName?: string | null
+  openPgpSigning?: OpenPgpSigningMethod
+  openPgpEncrypt?: boolean
+  attachPublicKey?: boolean
   updatedAt: string
 }
 
@@ -58,6 +64,10 @@ type ComposerState = {
   smtpServers: ComposerSmtpServer[]
   selectedSmtpServerId: string
   fromName: string
+  openPgpSigning: OpenPgpSigningMethod
+  openPgpEncrypt: boolean
+  attachPublicKey: boolean
+  openPgpAvailable: boolean
 }
 
 export const composer = $state<ComposerState>({
@@ -79,7 +89,11 @@ export const composer = $state<ComposerState>({
   currentSignatureHtml: '',
   smtpServers: [],
   selectedSmtpServerId: '',
-  fromName: ''
+  fromName: '',
+  openPgpSigning: 'none',
+  openPgpEncrypt: false,
+  attachPublicKey: false,
+  openPgpAvailable: false
 })
 
 type ComposerSettings = {
@@ -208,6 +222,9 @@ export async function openCompose() {
   composer.smtpServers = smtpServers
   composer.selectedSmtpServerId = smtpServers[0]?.id ?? ''
   composer.fromName = ''
+  composer.openPgpSigning = 'none'
+  composer.openPgpEncrypt = false
+  composer.attachPublicKey = false
   composer.minimized = false
   composer.fullscreen = false
   composer.open = true
@@ -228,6 +245,9 @@ export function openReply(msg: ComposerMessage, draftHtml?: string) {
   composer.selectedSignatureId = null
   composer.currentSignatureHtml = ''
   composer.fromName = ''
+  composer.openPgpSigning = 'none'
+  composer.openPgpEncrypt = false
+  composer.attachPublicKey = false
   composer.minimized = false
   composer.fullscreen = false
   composer.open = true
@@ -253,6 +273,9 @@ export function openReplyAll(msg: ComposerMessage, draftHtml?: string) {
   composer.selectedSignatureId = null
   composer.currentSignatureHtml = ''
   composer.fromName = ''
+  composer.openPgpSigning = 'none'
+  composer.openPgpEncrypt = false
+  composer.attachPublicKey = false
   composer.minimized = false
   composer.fullscreen = false
   composer.open = true
@@ -273,6 +296,9 @@ export function openForward(msg: ComposerMessage) {
   composer.selectedSignatureId = null
   composer.currentSignatureHtml = ''
   composer.fromName = ''
+  composer.openPgpSigning = 'none'
+  composer.openPgpEncrypt = false
+  composer.attachPublicKey = false
   composer.minimized = false
   composer.fullscreen = false
   composer.open = true
@@ -292,7 +318,11 @@ export function openDraft(draft: DraftRow) {
   composer.signatureProfiles = []
   composer.selectedSignatureId = null
   composer.currentSignatureHtml = ''
-  composer.fromName = ''
+  composer.selectedSmtpServerId = draft.smtpServerId ?? composer.smtpServers[0]?.id ?? ''
+  composer.fromName = draft.fromName ?? ''
+  composer.openPgpSigning = draft.openPgpSigning ?? 'none'
+  composer.openPgpEncrypt = draft.openPgpEncrypt ?? false
+  composer.attachPublicKey = draft.attachPublicKey ?? false
   composer.minimized = false
   composer.fullscreen = false
   composer.open = true

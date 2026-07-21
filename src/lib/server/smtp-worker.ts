@@ -8,6 +8,14 @@ import { logServerError } from './perf'
 import { isAuthError, withRetry } from './retry'
 import type { SmtpSendJobPayload } from './smtp-queue'
 import {
+  clearSignText,
+  detachedSignText,
+  encryptPgpMime,
+  signPgpMime,
+  type OpenPgpSigningMethod
+} from './openpgp-message'
+import { getEncryptionKeysForAddresses, getOpenPgpKeyForAddress } from './openpgp-keys'
+import {
   outgoingListHeaders,
   outgoingMessageBody,
   outgoingSenderAddress
@@ -57,7 +65,14 @@ function parsePayload(job: SmtpJobRow): SmtpSendJobPayload {
     inReplyTo: payload.inReplyTo ?? null,
     smtpServerId: payload.smtpServerId ?? null,
     fromName: payload.fromName ?? null,
-    attachments: payload.attachments
+    attachments: payload.attachments,
+    openPgpSigning: (['none', 'cleartext', 'detached', 'pgp-mime'].includes(
+      payload.openPgpSigning ?? ''
+    )
+      ? payload.openPgpSigning
+      : 'none') as OpenPgpSigningMethod,
+    openPgpEncrypt: payload.openPgpEncrypt === true,
+    attachPublicKey: payload.attachPublicKey === true
   }
 }
 
@@ -132,7 +147,12 @@ async function failJob(job: SmtpJobRow, error: unknown) {
 async function runJob(job: SmtpJobRow) {
   const payload = parsePayload(job)
   const smtpConfig = await resolveSmtpConfig(payload.smtpServerId)
-  const attachments = payload.attachments.map((attachment) => {
+  const attachments: Array<{
+    filename: string
+    contentType: string
+    content: Buffer | string
+    size?: number
+  }> = payload.attachments.map((attachment) => {
     const content = Buffer.from(attachment.contentBase64, 'base64')
     if (content.byteLength !== attachment.size) {
       throw new Error(`Attachment size mismatch for ${attachment.name}`)
@@ -168,22 +188,98 @@ async function runJob(job: SmtpJobRow) {
     ? [...(parent?.references?.split(/\s+/).filter(Boolean) ?? []), payload.inReplyTo]
     : undefined
 
+  const openPgpKey =
+    payload.openPgpSigning !== 'none' || payload.openPgpEncrypt || payload.attachPublicKey
+      ? await getOpenPgpKeyForAddress(outgoingSenderAddress(smtpConfig.from))
+      : null
+  if ((payload.openPgpSigning !== 'none' || payload.openPgpEncrypt) && !openPgpKey) {
+    throw new Error('Invalid SMTP payload: no OpenPGP private key matches the sender address')
+  }
+  if (payload.attachPublicKey && openPgpKey) {
+    attachments.push({
+      filename: `public-key-${openPgpKey.publicKey.getFingerprint().slice(-16)}.asc`,
+      contentType: 'application/pgp-keys',
+      content: openPgpKey.armoredPublicKey
+    })
+  }
+
+  const body = outgoingMessageBody(payload.html)
+  if (!payload.openPgpEncrypt && payload.openPgpSigning === 'cleartext' && openPgpKey) {
+    body.text = await clearSignText(body.text ?? '', openPgpKey.privateKey)
+    delete body.html
+  } else if (!payload.openPgpEncrypt && payload.openPgpSigning === 'detached' && openPgpKey) {
+    attachments.push({
+      filename: 'signature.asc',
+      contentType: 'application/pgp-signature',
+      content: await detachedSignText(body.text ?? '', openPgpKey.privateKey)
+    })
+  }
+
+  const mailOptions = {
+    from: payload.fromName
+      ? { name: payload.fromName, address: outgoingSenderAddress(smtpConfig.from) }
+      : smtpConfig.from,
+    to: payload.to,
+    cc: payload.cc || undefined,
+    bcc: payload.bcc || undefined,
+    subject: payload.subject,
+    ...body,
+    inReplyTo: payload.inReplyTo || undefined,
+    references,
+    headers: outgoingListHeaders(smtpConfig.from),
+    attachments: attachments.length > 0 ? attachments : undefined
+  }
+
+  let raw: Buffer | null = null
+  if (payload.openPgpSigning === 'pgp-mime' || payload.openPgpEncrypt) {
+    const builder = nodemailer.createTransport({
+      streamTransport: true,
+      buffer: true,
+      newline: 'windows'
+    })
+    const built = await builder.sendMail(mailOptions)
+    raw = Buffer.isBuffer(built.message)
+      ? built.message
+      : Buffer.from(built.message as unknown as Uint8Array)
+    if (payload.openPgpEncrypt) {
+      const recipientEmails = parseAddressFields([payload.to, payload.cc, payload.bcc]).map(
+        (recipient) => recipient.email
+      )
+      const encryption = await getEncryptionKeysForAddresses(recipientEmails)
+      if (encryption.missing.length > 0) {
+        throw new Error(
+          `Invalid SMTP payload: missing OpenPGP keys for ${encryption.missing.join(', ')}`
+        )
+      }
+      raw = await encryptPgpMime(
+        raw,
+        Array.from(
+          new Map(
+            [...encryption.keys, openPgpKey!.publicKey].map((key) => [key.getFingerprint(), key])
+          ).values()
+        ),
+        payload.openPgpSigning !== 'none' ? openPgpKey?.privateKey : undefined
+      )
+    } else if (openPgpKey) {
+      raw = await signPgpMime(raw, openPgpKey.privateKey)
+    }
+  }
+
   await withRetry(
     () =>
-      transporter.sendMail({
-        from: payload.fromName
-          ? { name: payload.fromName, address: outgoingSenderAddress(smtpConfig.from) }
-          : smtpConfig.from,
-        to: payload.to,
-        cc: payload.cc || undefined,
-        bcc: payload.bcc || undefined,
-        subject: payload.subject,
-        ...outgoingMessageBody(payload.html),
-        inReplyTo: payload.inReplyTo || undefined,
-        references,
-        headers: outgoingListHeaders(smtpConfig.from),
-        attachments: attachments.length > 0 ? attachments : undefined
-      }),
+      transporter.sendMail(
+        raw
+          ? {
+              raw,
+              envelope: {
+                from: outgoingSenderAddress(smtpConfig.from),
+                to: parseAddressFields([payload.to, payload.cc, payload.bcc]).map(
+                  (recipient) => recipient.email
+                )
+              }
+            }
+          : mailOptions
+      ),
     { label: 'smtp sendMail', maxAttempts: 3, baseDelayMs: 1000 }
   )
 

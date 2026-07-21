@@ -7,6 +7,7 @@
   import CustomSelect, { type SelectOption } from '$lib/components/CustomSelect.svelte'
   import ErrorDialog from '$lib/components/ErrorDialog.svelte'
   import ApiKeysSettings from '$lib/components/ApiKeysSettings.svelte'
+  import OpenPgpSettings from '$lib/components/OpenPgpSettings.svelte'
   import { normalizeFilterConditions, type FilterCondition } from '$lib/filter-conditions'
   import { invalidateSignatureCache } from '$lib/composer.svelte'
   import { errorMessageFromUnknown, readErrorMessage } from '$lib/http'
@@ -93,6 +94,7 @@
     { id: 'interface', label: 'Interface' },
     { id: 'privacy', label: 'Privacy' },
     { id: 'signatures', label: 'Signatures' },
+    { id: 'openpgp', label: 'OpenPGP' },
     { id: 'templates', label: 'Templates' },
     { id: 'notifications', label: 'Notifications' },
     { id: 'cleanup', label: 'Cleanup' },
@@ -3952,6 +3954,12 @@
               setting for compatibility.
             </p>
           {/if}
+        </section>
+
+        <div class="border-t border-white/8"></div>
+
+        <section class={selectedSettingsSection === 'openpgp' ? 'space-y-4' : 'hidden'}>
+          <OpenPgpSettings />
         </section>
 
         <div class="border-t border-white/8"></div>

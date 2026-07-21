@@ -2,9 +2,20 @@ import { json, error } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
 import { parseComposerAttachments } from '$lib/mail-attachments'
 import { normalizeRecipientList, validateRecipientFields } from '$lib/recipients'
-import { getUndoSendSeconds } from '$lib/server/config'
+import { getSmtpConfig, getSmtpConfigs, getUndoSendSeconds } from '$lib/server/config'
 import { isDemoModeEnabled, sendDemoMessage } from '$lib/server/demo'
 import { enqueueSmtpSendJob } from '$lib/server/smtp-queue'
+import type { OpenPgpSigningMethod } from '$lib/server/openpgp-message'
+import { getEncryptionKeysForAddresses, getOpenPgpKeyForAddress } from '$lib/server/openpgp-keys'
+import { outgoingSenderAddress } from '$lib/server/outgoing-message'
+import { parseAddressFields } from '$lib/server/contacts'
+
+const OPENPGP_SIGNING_METHODS = new Set<OpenPgpSigningMethod>([
+  'none',
+  'cleartext',
+  'detached',
+  'pgp-mime'
+])
 
 function sendValidationError(message: string, details?: unknown) {
   return json({ error: { code: 'SEND_VALIDATION_ERROR', message, details } }, { status: 400 })
@@ -21,7 +32,10 @@ export const POST: RequestHandler = async ({ request }) => {
     smtpServerId,
     fromName,
     sendAt,
-    attachments: rawAttachments
+    attachments: rawAttachments,
+    openPgpSigning,
+    openPgpEncrypt,
+    attachPublicKey
   } = await request.json()
   if (!subject) {
     return sendValidationError('Missing required fields: subject')
@@ -43,8 +57,13 @@ export const POST: RequestHandler = async ({ request }) => {
   if (!parsedAttachments.ok) {
     return error(400, parsedAttachments.error)
   }
+  const signingMethod: OpenPgpSigningMethod = OPENPGP_SIGNING_METHODS.has(openPgpSigning)
+    ? openPgpSigning
+    : 'none'
+  const useOpenPgp = signingMethod !== 'none' || openPgpEncrypt === true || attachPublicKey === true
 
   if (isDemoModeEnabled()) {
+    if (useOpenPgp) return error(400, 'OpenPGP is unavailable in demo mode')
     await sendDemoMessage({
       to: normalizedTo,
       cc: normalizedCc,
@@ -56,6 +75,31 @@ export const POST: RequestHandler = async ({ request }) => {
       attachments: parsedAttachments.attachments
     })
     return json({ success: true, demo: true })
+  }
+
+  const selectedSmtpServerId = typeof smtpServerId === 'string' ? smtpServerId.trim() || null : null
+  if (useOpenPgp) {
+    const smtpConfig = selectedSmtpServerId
+      ? (await getSmtpConfigs()).find((config) => config.id === selectedSmtpServerId)
+      : await getSmtpConfig()
+    if (!smtpConfig || 'missing' in smtpConfig) {
+      return sendValidationError('The selected SMTP sender is unavailable')
+    }
+    const senderAddress = outgoingSenderAddress(smtpConfig.from)
+    if (!(await getOpenPgpKeyForAddress(senderAddress))) {
+      return sendValidationError(`No OpenPGP private key matches ${senderAddress}`)
+    }
+    if (openPgpEncrypt === true) {
+      const recipientEmails = parseAddressFields([normalizedTo, normalizedCc, normalizedBcc]).map(
+        (recipient) => recipient.email
+      )
+      const encryption = await getEncryptionKeysForAddresses(recipientEmails)
+      if (encryption.missing.length > 0) {
+        return sendValidationError(
+          `Missing OpenPGP public keys for ${encryption.missing.join(', ')}`
+        )
+      }
+    }
   }
 
   const hasExplicitSendAt = typeof sendAt === 'string' && sendAt.length > 0
@@ -75,9 +119,12 @@ export const POST: RequestHandler = async ({ request }) => {
       subject,
       html: html ?? null,
       inReplyTo: inReplyTo || null,
-      smtpServerId: typeof smtpServerId === 'string' ? smtpServerId.trim() || null : null,
+      smtpServerId: selectedSmtpServerId,
       fromName: typeof fromName === 'string' ? fromName.trim() || null : null,
-      attachments: parsedAttachments.attachments
+      attachments: parsedAttachments.attachments,
+      openPgpSigning: signingMethod,
+      openPgpEncrypt: openPgpEncrypt === true,
+      attachPublicKey: attachPublicKey === true
     },
     availableAt
   )

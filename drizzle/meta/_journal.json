@@ -225,6 +225,13 @@
       "when": 1784649600000,
       "tag": "0018_openai_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1784653200000,
+      "tag": "0019_openpgp",
+      "breakpoints": true
     }
   ]
 }

@@ -9,6 +9,21 @@ import { payloadBytes, perfLog, perfMs, perfNow } from '$lib/server/perf'
 import { isDemoModeEnabled, listDemoDrafts, saveDemoDraft } from '$lib/server/demo'
 import { draftJobDedupeKey } from '$lib/imap-sync'
 
+const OPENPGP_SIGNING_METHODS = new Set(['none', 'cleartext', 'detached', 'pgp-mime'])
+
+function draftSecurity(body: Record<string, unknown>) {
+  return {
+    smtpServerId: typeof body.smtpServerId === 'string' ? body.smtpServerId.trim() || null : null,
+    fromName: typeof body.fromName === 'string' ? body.fromName.trim() || null : null,
+    openPgpSigning:
+      typeof body.openPgpSigning === 'string' && OPENPGP_SIGNING_METHODS.has(body.openPgpSigning)
+        ? body.openPgpSigning
+        : 'none',
+    openPgpEncrypt: body.openPgpEncrypt === true,
+    attachPublicKey: body.attachPublicKey === true
+  }
+}
+
 export const GET: RequestHandler = async () => {
   const startedAt = perfNow()
   if (isDemoModeEnabled()) {
@@ -60,6 +75,7 @@ export const GET: RequestHandler = async () => {
 
 export const POST: RequestHandler = async ({ request }) => {
   const body = await request.json()
+  const security = draftSecurity(body as Record<string, unknown>)
   const now = new Date()
   const parsedAttachments = parseComposerAttachments(body.attachments)
 
@@ -90,6 +106,7 @@ export const POST: RequestHandler = async ({ request }) => {
             html: body.html ?? '',
             attachments: JSON.stringify(parsedAttachments.attachments),
             inReplyTo: body.inReplyTo ?? null,
+            ...security,
             imapSyncError: null,
             updatedAt: now
           })
@@ -136,6 +153,7 @@ export const POST: RequestHandler = async ({ request }) => {
         html: body.html ?? '',
         attachments: JSON.stringify(parsedAttachments.attachments),
         inReplyTo: body.inReplyTo ?? null,
+        ...security,
         createdAt: now,
         updatedAt: now
       })

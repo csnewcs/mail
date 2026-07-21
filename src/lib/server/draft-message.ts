@@ -11,6 +11,9 @@ type DraftMessage = {
   subject: string
   html: string
   inReplyTo: string | null
+  openPgpSigning?: string
+  openPgpEncrypt?: boolean
+  attachPublicKey?: boolean
 }
 
 function draftIdentityHeaders(id: number, updatedAt: Date) {
@@ -38,7 +41,12 @@ export async function buildDraftMessage(
     subject: draft.subject,
     ...outgoingMessageBody(draft.html),
     inReplyTo: draft.inReplyTo || undefined,
-    headers: draftIdentityHeaders(draft.id, draft.updatedAt),
+    headers: {
+      ...draftIdentityHeaders(draft.id, draft.updatedAt),
+      'X-Pmail-OpenPGP-Signing': draft.openPgpSigning ?? 'none',
+      'X-Pmail-OpenPGP-Encrypt': draft.openPgpEncrypt ? 'yes' : 'no',
+      'X-Pmail-Attach-Public-Key': draft.attachPublicKey ? 'yes' : 'no'
+    },
     attachments: attachments.map((attachment) => ({
       filename: attachment.name,
       contentType: attachment.contentType,

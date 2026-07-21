@@ -27,6 +27,7 @@ The demo runs with preloaded data and resets automatically, so you can explore t
 
 - Single user only
 - Password, passkey, GitHub, Discord, and OpenID Connect authentication
+- OpenPGP cleartext, detached, and PGP/MIME signing, encryption, verification, and decryption
 - Simple and Modern design
 - Fast, SSR-first
 
@@ -61,15 +62,15 @@ by any non-empty value except `false`.
 
 ### Core and database
 
-| Variable                     | Description                                                                                                                                                                     | Default | Example                                  |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ---------------------------------------- |
-| `DATABASE_URL`               | PostgreSQL connection URL shared by the web and worker processes. Required unless `DEMO_MODE` is enabled.                                                                       | none    | `postgresql://mail:secret@db:5432/mail`  |
-| `PG_POOL_MAX`                | Maximum PostgreSQL connections per process.                                                                                                                                     | `10`    | `20`                                     |
-| `PG_TLS_REJECT_UNAUTHORIZED` | Set to `false` only to accept a private or self-signed PostgreSQL certificate. It does not affect OAuth or mail-server TLS.                                                     | `true`  | `false`                                  |
-| `ORIGIN`                     | Public, scheme-qualified web origin used by authentication, callbacks, and passkeys. Required outside demo mode and must match the browser's Origin header.                     | none    | `https://mail.example.com`               |
-| `BETTER_AUTH_SECRET`         | High-entropy Better Auth signing secret. Use at least 32 characters in production.                                                                                              | none    | `replace-with-a-long-random-value`       |
-| `MAIL_SECRET_KEY`            | High-entropy key used to encrypt mail passwords, provider secrets, and the OpenAI key stored in PostgreSQL. It must be identical in web and worker processes and remain stable. | empty   | `replace-with-another-long-random-value` |
-| `DEMO_MODE`                  | Runs with in-memory sample data and disables live database, mail, authentication, and worker requirements. Accepted true values are `1`, `true`, `yes`, and `on`.               | `false` | `true`                                   |
+| Variable                     | Description                                                                                                                                                                                                                                                        | Default | Example                                  |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- | ---------------------------------------- |
+| `DATABASE_URL`               | PostgreSQL connection URL shared by the web and worker processes. Required unless `DEMO_MODE` is enabled.                                                                                                                                                          | none    | `postgresql://mail:secret@db:5432/mail`  |
+| `PG_POOL_MAX`                | Maximum PostgreSQL connections per process.                                                                                                                                                                                                                        | `10`    | `20`                                     |
+| `PG_TLS_REJECT_UNAUTHORIZED` | Set to `false` only to accept a private or self-signed PostgreSQL certificate. It does not affect OAuth or mail-server TLS.                                                                                                                                        | `true`  | `false`                                  |
+| `ORIGIN`                     | Public, scheme-qualified web origin used by authentication, callbacks, and passkeys. Required outside demo mode and must match the browser's Origin header.                                                                                                        | none    | `https://mail.example.com`               |
+| `BETTER_AUTH_SECRET`         | High-entropy Better Auth signing secret. Use at least 32 characters in production.                                                                                                                                                                                 | none    | `replace-with-a-long-random-value`       |
+| `MAIL_SECRET_KEY`            | High-entropy key used to encrypt OpenPGP private keys, mail passwords, provider secrets, and the OpenAI key stored in PostgreSQL. It is required for OpenPGP private-key import/generation, must be identical in web and worker processes, and must remain stable. | empty   | `replace-with-another-long-random-value` |
+| `DEMO_MODE`                  | Runs with in-memory sample data and disables live database, mail, authentication, and worker requirements. Accepted true values are `1`, `true`, `yes`, and `on`.                                                                                                  | `false` | `true`                                   |
 
 ### Web runtime
 

@@ -31,6 +31,7 @@
   import ErrorDialog from '$lib/components/ErrorDialog.svelte'
   import AttachmentSummary from '$lib/components/AttachmentSummary.svelte'
   import MailAuthenticationIndicators from '$lib/components/MailAuthenticationIndicators.svelte'
+  import OpenPgpIndicator from '$lib/components/OpenPgpIndicator.svelte'
   import RawMessageDialog from '$lib/components/RawMessageDialog.svelte'
   import { errorMessageFromUnknown, readErrorMessage } from '$lib/http'
   import { trackAppLoading } from '$lib/loading.svelte'
@@ -70,6 +71,13 @@
     dkimStatus: string | null
     dmarcStatus: string | null
     authenticationTrusted: boolean
+    openPgpSigned: boolean
+    openPgpSignatureStatus: string | null
+    openPgpSigner: string | null
+    openPgpFingerprint: string | null
+    openPgpEncrypted: boolean
+    openPgpDecrypted: boolean
+    openPgpError: string | null
     rawSourceAvailable: boolean
     flags: string[]
     receivedAt: string | null
@@ -1302,12 +1310,23 @@
             {/if}
           </div>
           <div class="mt-2">
-            <MailAuthenticationIndicators
-              spfStatus={message.spfStatus}
-              dkimStatus={message.dkimStatus}
-              dmarcStatus={message.dmarcStatus}
-              authenticationTrusted={message.authenticationTrusted}
-            />
+            <div class="flex flex-wrap gap-2">
+              <MailAuthenticationIndicators
+                spfStatus={message.spfStatus}
+                dkimStatus={message.dkimStatus}
+                dmarcStatus={message.dmarcStatus}
+                authenticationTrusted={message.authenticationTrusted}
+              />
+              <OpenPgpIndicator
+                signed={message.openPgpSigned}
+                signatureStatus={message.openPgpSignatureStatus}
+                signer={message.openPgpSigner}
+                fingerprint={message.openPgpFingerprint}
+                encrypted={message.openPgpEncrypted}
+                decrypted={message.openPgpDecrypted}
+                error={message.openPgpError}
+              />
+            </div>
           </div>
         </div>
       </div>

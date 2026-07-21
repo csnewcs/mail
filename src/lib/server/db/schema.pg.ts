@@ -81,6 +81,31 @@ export const mailSignature = pgTable('mail_signature', {
     .notNull()
 })
 
+export const openPgpKey = pgTable(
+  'openpgp_key',
+  {
+    id: serial('id').primaryKey(),
+    fingerprint: text('fingerprint').notNull(),
+    name: text('name').notNull().default(''),
+    email: text('email').notNull().default(''),
+    publicKey: text('public_key').notNull(),
+    privateKey: text('private_key'),
+    passphrase: text('passphrase'),
+    isOwn: boolean('is_own').notNull().default(false),
+    isDefault: boolean('is_default').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' })
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull()
+  },
+  (table) => [
+    uniqueIndex('openpgp_key_fingerprint_idx').on(table.fingerprint),
+    index('openpgp_key_email_idx').on(table.email),
+    index('openpgp_key_own_default_idx').on(table.isOwn, table.isDefault)
+  ]
+)
+
 export const mailboxSync = pgTable('mailbox_sync', {
   mailbox: text('mailbox').primaryKey(),
   lastUid: bigint('last_uid', { mode: 'number' }).notNull().default(0),
@@ -216,6 +241,14 @@ export const mailMessageMailbox = pgTable(
     dkimStatus: text('dkim_status'),
     dmarcStatus: text('dmarc_status'),
     authservId: text('authserv_id'),
+    openPgpSigned: boolean('openpgp_signed').notNull().default(false),
+    openPgpSignatureStatus: text('openpgp_signature_status'),
+    openPgpSigner: text('openpgp_signer'),
+    openPgpFingerprint: text('openpgp_fingerprint'),
+    openPgpEncrypted: boolean('openpgp_encrypted').notNull().default(false),
+    openPgpDecrypted: boolean('openpgp_decrypted').notNull().default(false),
+    openPgpError: text('openpgp_error'),
+    openPgpProcessedAt: timestamp('openpgp_processed_at', { withTimezone: true, mode: 'date' }),
     receivedAt: timestamp('received_at', { withTimezone: true, mode: 'date' }),
     snoozedUntil: timestamp('snoozed_until', { withTimezone: true, mode: 'date' }),
     syncedAt: timestamp('synced_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull()
@@ -228,7 +261,8 @@ export const mailMessageMailbox = pgTable(
       table.receivedAt,
       table.uid
     ),
-    index('mail_message_mailbox_mailbox_snoozed_until_idx').on(table.mailbox, table.snoozedUntil)
+    index('mail_message_mailbox_mailbox_snoozed_until_idx').on(table.mailbox, table.snoozedUntil),
+    index('mail_message_mailbox_openpgp_processed_at_idx').on(table.openPgpProcessedAt)
   ]
 )
 
@@ -331,6 +365,11 @@ export const mailDraft = pgTable('mail_draft', {
   html: text('html').notNull().default(''),
   attachments: text('attachments').notNull().default('[]'),
   inReplyTo: text('in_reply_to'),
+  smtpServerId: text('smtp_server_id'),
+  fromName: text('from_name'),
+  openPgpSigning: text('openpgp_signing').notNull().default('none'),
+  openPgpEncrypt: boolean('openpgp_encrypt').notNull().default(false),
+  attachPublicKey: boolean('attach_public_key').notNull().default(false),
   imapMailbox: text('imap_mailbox'),
   imapUid: bigint('imap_uid', { mode: 'number' }),
   imapUidValidity: bigint('imap_uid_validity', { mode: 'number' }),

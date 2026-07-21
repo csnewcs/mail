@@ -10,6 +10,7 @@ import { getImapConfigs } from './lib/server/config'
 import { maybeClassifyPendingMailFromWorker } from './lib/server/mail-importance'
 import {
   backfillMailAuthenticationFromWorker,
+  backfillOpenPgpFromWorker,
   getMailboxSyncPollMs,
   repairThreadKeys,
   runMailboxSyncOnce,
@@ -78,6 +79,7 @@ async function tick() {
     // The sync clock is paused while SMTP jobs are pending/running/retrying.
     if (!(await hasUnfinishedSmtpJobs())) await maybeRunSync()
     await backfillMailAuthenticationFromWorker()
+    await backfillOpenPgpFromWorker()
     void maybeClassifyPendingMailFromWorker()
   } catch (error) {
     console.error('[worker] tick failed:', error)

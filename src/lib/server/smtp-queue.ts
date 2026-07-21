@@ -1,4 +1,5 @@
 import type { ComposerAttachment } from '$lib/mail-attachments'
+import type { OpenPgpSigningMethod } from './openpgp-message'
 import { db } from './db'
 import { smtpJob } from './db/schema'
 
@@ -12,6 +13,9 @@ export type SmtpSendJobPayload = {
   smtpServerId?: string | null
   fromName?: string | null
   attachments: ComposerAttachment[]
+  openPgpSigning?: OpenPgpSigningMethod
+  openPgpEncrypt?: boolean
+  attachPublicKey?: boolean
 }
 
 export async function enqueueSmtpSendJob(payload: SmtpSendJobPayload, availableAt = new Date()) {

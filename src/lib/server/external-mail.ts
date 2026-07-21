@@ -109,6 +109,15 @@ export async function getExternalMessage(id: string | number) {
     htmlContent: message.htmlContent,
     inReplyTo: message.inReplyTo,
     references: message.references,
+    openPgp: {
+      signed: message.openPgpSigned ?? false,
+      signatureStatus: message.openPgpSignatureStatus ?? null,
+      signer: message.openPgpSigner ?? null,
+      fingerprint: message.openPgpFingerprint ?? null,
+      encrypted: message.openPgpEncrypted ?? false,
+      decrypted: message.openPgpDecrypted ?? false,
+      error: message.openPgpError ?? null
+    },
     attachments: attachments.map((attachment) => ({
       ...attachment,
       downloadUrl: `/api/external/v1/attachments/${attachment.id}`
@@ -147,7 +156,14 @@ export async function sendExternalMessage(input: unknown) {
       inReplyTo: typeof body.inReplyTo === 'string' ? body.inReplyTo || null : null,
       smtpServerId: typeof body.smtpServerId === 'string' ? body.smtpServerId || null : null,
       fromName: typeof body.fromName === 'string' ? body.fromName.trim() || null : null,
-      attachments: attachments.attachments
+      attachments: attachments.attachments,
+      openPgpSigning: ['none', 'cleartext', 'detached', 'pgp-mime'].includes(
+        String(body.openPgpSigning)
+      )
+        ? (body.openPgpSigning as 'none' | 'cleartext' | 'detached' | 'pgp-mime')
+        : 'none',
+      openPgpEncrypt: body.openPgpEncrypt === true,
+      attachPublicKey: body.attachPublicKey === true
     },
     sendAt
   )

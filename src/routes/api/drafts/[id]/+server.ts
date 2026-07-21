@@ -26,6 +26,11 @@ export const GET: RequestHandler = async ({ params }) => {
         html: draft.html,
         attachments: JSON.parse(draft.attachments),
         inReplyTo: draft.inReplyTo,
+        smtpServerId: null,
+        fromName: null,
+        openPgpSigning: 'none',
+        openPgpEncrypt: false,
+        attachPublicKey: false,
         updatedAt: draft.updatedAt.toISOString()
       }
     })
@@ -61,6 +66,11 @@ export const GET: RequestHandler = async ({ params }) => {
       html: draft.html,
       attachments: parsedAttachments.attachments,
       inReplyTo: draft.inReplyTo,
+      smtpServerId: draft.smtpServerId,
+      fromName: draft.fromName,
+      openPgpSigning: draft.openPgpSigning,
+      openPgpEncrypt: draft.openPgpEncrypt,
+      attachPublicKey: draft.attachPublicKey,
       updatedAt: draft.updatedAt?.toISOString() ?? new Date().toISOString()
     }
   })

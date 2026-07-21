@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { resolve } from '$app/paths'
   import { Editor } from '@tiptap/core'
   import StarterKit from '@tiptap/starter-kit'
   import Underline from '@tiptap/extension-underline'
@@ -37,13 +38,17 @@
     Sparkles,
     Clock3,
     ChevronDown,
-    Braces
+    Braces,
+    ShieldCheck,
+    LockKeyhole,
+    KeyRound
   } from 'lucide-svelte'
   import {
     composer,
     closeComposer,
     type ComposerSmtpServer,
-    type SignatureProfile
+    type SignatureProfile,
+    type OpenPgpSigningMethod
   } from '$lib/composer.svelte'
   import AddressInput from '$lib/components/AddressInput.svelte'
   import CustomSelect, { type SelectValue } from '$lib/components/CustomSelect.svelte'
@@ -91,6 +96,8 @@
   let markdownMode = $state(false)
   let markdownSource = $state('')
   let loadingSmtpServers = $state(false)
+  let loadingOpenPgp = $state(false)
+  let openPgpKeyEmails = $state<string[]>([])
 
   type MessageTemplate = {
     id: number
@@ -114,6 +121,9 @@
     smtpServerId?: string | null
     fromName?: string | null
     sendAt?: string
+    openPgpSigning?: OpenPgpSigningMethod
+    openPgpEncrypt?: boolean
+    attachPublicKey?: boolean
   }
 
   type PendingUndoSend = {
@@ -139,6 +149,14 @@
     composer.smtpServers.find((server) => server.id === composer.selectedSmtpServerId) ??
       composer.smtpServers[0] ??
       null
+  )
+  const selectedSenderEmail = $derived(
+    (selectedSmtpServer?.from.match(/<([^<>]+)>/)?.[1] ?? selectedSmtpServer?.from ?? '')
+      .trim()
+      .toLowerCase()
+  )
+  const openPgpSenderAvailable = $derived(
+    composer.openPgpAvailable && openPgpKeyEmails.includes(selectedSenderEmail)
   )
 
   // Create the editor once when the element is first available
@@ -169,6 +187,7 @@
   let prevOpen = false
   $effect(() => {
     if (composer.open && !prevOpen && editor) {
+      void loadOpenPgpStatus()
       editor.commands.setContent(composer.initialHtml || '<p></p>')
       const focusPosition =
         composer.mode === 'reply' || composer.mode === 'reply-all' ? 'start' : 'end'
@@ -201,7 +220,7 @@
   let lastSavedContent = ''
 
   function draftSnapshot(html: string) {
-    return `${composer.to}|${composer.cc}|${composer.bcc}|${composer.subject}|${html}|${attachmentSignature(composer.attachments)}`
+    return `${composer.to}|${composer.cc}|${composer.bcc}|${composer.subject}|${html}|${attachmentSignature(composer.attachments)}|${composer.selectedSmtpServerId}|${composer.fromName}|${composer.openPgpSigning}|${composer.openPgpEncrypt}|${composer.attachPublicKey}`
   }
 
   function isDirty(html: string) {
@@ -231,7 +250,12 @@
           subject: composer.subject,
           html,
           attachments: composer.attachments,
-          inReplyTo: composer.inReplyTo
+          inReplyTo: composer.inReplyTo,
+          smtpServerId: composer.selectedSmtpServerId || null,
+          fromName: composer.fromName.trim() || null,
+          openPgpSigning: composer.openPgpSigning,
+          openPgpEncrypt: composer.openPgpEncrypt,
+          attachPublicKey: composer.attachPublicKey
         })
       })
       if (res.ok) {
@@ -263,6 +287,7 @@
 
   onMount(() => {
     saveDraftTimer = setInterval(saveDraft, 30_000)
+    void loadOpenPgpStatus()
 
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
       if (!composer.open || !editor) return
@@ -281,7 +306,12 @@
         bcc: composer.bcc,
         subject: composer.subject,
         html,
-        inReplyTo: composer.inReplyTo
+        inReplyTo: composer.inReplyTo,
+        smtpServerId: composer.selectedSmtpServerId || null,
+        fromName: composer.fromName.trim() || null,
+        openPgpSigning: composer.openPgpSigning,
+        openPgpEncrypt: composer.openPgpEncrypt,
+        attachPublicKey: composer.attachPublicKey
       })
       navigator.sendBeacon('/api/drafts', new Blob([payload], { type: 'application/json' }))
     }
@@ -424,6 +454,25 @@
       }
     } finally {
       loadingSmtpServers = false
+    }
+  }
+
+  async function loadOpenPgpStatus() {
+    if (loadingOpenPgp) return
+    loadingOpenPgp = true
+    try {
+      const response = await fetch('/api/openpgp/keys')
+      if (!response.ok) return
+      const data = (await response.json()) as {
+        keys?: Array<{ hasPrivateKey?: boolean; isOwn?: boolean; email?: string }>
+      }
+      const ownKeys = data.keys?.filter((key) => key.hasPrivateKey && key.isOwn) ?? []
+      openPgpKeyEmails = ownKeys.flatMap((key) =>
+        key.email ? [key.email.trim().toLowerCase()] : []
+      )
+      composer.openPgpAvailable = ownKeys.length > 0
+    } finally {
+      loadingOpenPgp = false
     }
   }
 
@@ -581,6 +630,9 @@
       smtpServerId?: string | null
       fromName?: string | null
       sendAt?: string
+      openPgpSigning?: OpenPgpSigningMethod
+      openPgpEncrypt?: boolean
+      attachPublicKey?: boolean
     } = {
       to: normalizeRecipientList(composer.to),
       cc: normalizeRecipientList(composer.cc) || null,
@@ -590,7 +642,10 @@
       attachments: composer.attachments,
       inReplyTo: composer.inReplyTo,
       smtpServerId: composer.selectedSmtpServerId || null,
-      fromName: composer.fromName.trim() || null
+      fromName: composer.fromName.trim() || null,
+      openPgpSigning: composer.openPgpSigning,
+      openPgpEncrypt: composer.openPgpEncrypt,
+      attachPublicKey: composer.attachPublicKey
     }
     if (sendLaterAt) payload.sendAt = new Date(sendLaterAt).toISOString()
     sending = true
@@ -669,6 +724,9 @@
       composer.inReplyTo = restored.inReplyTo
       composer.selectedSmtpServerId = restored.smtpServerId ?? ''
       composer.fromName = restored.fromName ?? ''
+      composer.openPgpSigning = restored.openPgpSigning ?? 'none'
+      composer.openPgpEncrypt = restored.openPgpEncrypt ?? false
+      composer.attachPublicKey = restored.attachPublicKey ?? false
       composer.draftId = null
       composer.lastSavedAt = 0
       composer.minimized = false
@@ -1027,6 +1085,51 @@
           placeholder="Subject"
           class="flex-1 bg-transparent py-2.5 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none"
         />
+      </div>
+
+      <div class="flex flex-wrap items-center gap-3 border-t border-white/8 px-4 py-2 text-xs">
+        <div class="flex items-center gap-1.5 text-zinc-500">
+          <ShieldCheck size={13} />
+          <label for="composer-pgp-signing">OpenPGP</label>
+        </div>
+        <select
+          id="composer-pgp-signing"
+          bind:value={composer.openPgpSigning}
+          disabled={!openPgpSenderAvailable}
+          class="rounded border border-white/10 bg-[#202027] px-2 py-1 text-zinc-300 disabled:opacity-40"
+          title="OpenPGP signing method"
+        >
+          <option value="none">Not signed</option>
+          <option value="cleartext">Cleartext signature</option>
+          <option value="detached">Detached signature</option>
+          <option value="pgp-mime">PGP/MIME signature</option>
+        </select>
+        <label
+          class="flex items-center gap-1.5 text-zinc-400"
+          title="Encrypt for every recipient with a known public key"
+        >
+          <input
+            type="checkbox"
+            bind:checked={composer.openPgpEncrypt}
+            disabled={!openPgpSenderAvailable}
+            class="accent-blue-500"
+          />
+          <LockKeyhole size={12} /> Encrypt
+        </label>
+        <label class="flex items-center gap-1.5 text-zinc-400">
+          <input
+            type="checkbox"
+            bind:checked={composer.attachPublicKey}
+            disabled={!openPgpSenderAvailable}
+            class="accent-blue-500"
+          />
+          <KeyRound size={12} /> Attach public key
+        </label>
+        {#if !openPgpSenderAvailable && !loadingOpenPgp}
+          <a href={resolve('/settings/openpgp')} class="text-amber-300 hover:text-amber-200"
+            >Configure a key for this sender</a
+          >
+        {/if}
       </div>
     </div>
 
