@@ -232,6 +232,13 @@
       "when": 1784653200000,
       "tag": "0019_openpgp",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1784660400000,
+      "tag": "0020_sent_message",
+      "breakpoints": true
     }
   ]
 }

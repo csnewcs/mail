@@ -1,6 +1,12 @@
 import { and, asc, count, eq, inArray, lte } from 'drizzle-orm'
 import nodemailer from 'nodemailer'
-import { getSmtpConfig, getSmtpConfigs, type SmtpConfig } from './config'
+import {
+  getImapConfigs,
+  getSmtpConfig,
+  getSmtpConfigs,
+  type ImapConfig,
+  type SmtpConfig
+} from './config'
 import { parseAddressFields, upsertContacts } from './contacts'
 import { db } from './db'
 import { mailMessage, smtpJob } from './db/schema'
@@ -20,6 +26,17 @@ import {
   outgoingMessageBody,
   outgoingSenderAddress
 } from './outgoing-message.ts'
+import {
+  getWorkerConnection,
+  invalidateWorkerConnection,
+  wakeMailboxSync
+} from './imap-connections'
+import {
+  selectSentImapConfig,
+  SMTP_JOB_HEADER,
+  storeSentMessage,
+  withoutBccHeader
+} from './sent-message'
 
 const MAX_JOB_ATTEMPTS = 8
 const PERMANENT_SMTP_ERROR_RE =
@@ -110,7 +127,8 @@ async function markJobDone(job: SmtpJobRow) {
     .set({
       status: 'done',
       updatedAt: new Date(),
-      lastError: null
+      lastError: null,
+      rawMessage: null
     })
     .where(eq(smtpJob.id, job.id))
 }
@@ -144,9 +162,11 @@ async function failJob(job: SmtpJobRow, error: unknown) {
     .where(eq(smtpJob.id, job.id))
 }
 
-async function runJob(job: SmtpJobRow) {
-  const payload = parsePayload(job)
-  const smtpConfig = await resolveSmtpConfig(payload.smtpServerId)
+async function buildRawMessage(
+  job: SmtpJobRow,
+  payload: SmtpSendJobPayload,
+  smtpConfig: SmtpConfig
+) {
   const attachments: Array<{
     filename: string
     contentType: string
@@ -163,17 +183,6 @@ async function runJob(job: SmtpJobRow) {
       contentType: attachment.contentType,
       content,
       size: attachment.size
-    }
-  })
-
-  const transporter = nodemailer.createTransport({
-    host: smtpConfig.host,
-    port: smtpConfig.port,
-    secure: smtpConfig.secure,
-    tls: { rejectUnauthorized: !smtpConfig.allowInvalidCertificate },
-    auth: {
-      user: smtpConfig.user,
-      pass: smtpConfig.password
     }
   })
 
@@ -226,62 +235,122 @@ async function runJob(job: SmtpJobRow) {
     ...body,
     inReplyTo: payload.inReplyTo || undefined,
     references,
-    headers: outgoingListHeaders(smtpConfig.from),
+    headers: {
+      ...outgoingListHeaders(smtpConfig.from),
+      [SMTP_JOB_HEADER]: String(job.id)
+    },
     attachments: attachments.length > 0 ? attachments : undefined
   }
 
-  let raw: Buffer | null = null
-  if (payload.openPgpSigning === 'pgp-mime' || payload.openPgpEncrypt) {
-    const builder = nodemailer.createTransport({
-      streamTransport: true,
-      buffer: true,
-      newline: 'windows'
-    })
-    const built = await builder.sendMail(mailOptions)
-    raw = Buffer.isBuffer(built.message)
-      ? built.message
-      : Buffer.from(built.message as unknown as Uint8Array)
-    if (payload.openPgpEncrypt) {
-      const recipientEmails = parseAddressFields([payload.to, payload.cc, payload.bcc]).map(
-        (recipient) => recipient.email
+  const builder = nodemailer.createTransport({
+    streamTransport: true,
+    buffer: true,
+    newline: 'windows'
+  })
+  const built = await builder.sendMail(mailOptions)
+  let raw = Buffer.isBuffer(built.message)
+    ? built.message
+    : Buffer.from(built.message as unknown as Uint8Array)
+  if (payload.openPgpEncrypt) {
+    const recipientEmails = parseAddressFields([payload.to, payload.cc, payload.bcc]).map(
+      (recipient) => recipient.email
+    )
+    const encryption = await getEncryptionKeysForAddresses(recipientEmails)
+    if (encryption.missing.length > 0) {
+      throw new Error(
+        `Invalid SMTP payload: missing OpenPGP keys for ${encryption.missing.join(', ')}`
       )
-      const encryption = await getEncryptionKeysForAddresses(recipientEmails)
-      if (encryption.missing.length > 0) {
-        throw new Error(
-          `Invalid SMTP payload: missing OpenPGP keys for ${encryption.missing.join(', ')}`
-        )
-      }
-      raw = await encryptPgpMime(
-        raw,
-        Array.from(
-          new Map(
-            [...encryption.keys, openPgpKey!.publicKey].map((key) => [key.getFingerprint(), key])
-          ).values()
-        ),
-        payload.openPgpSigning !== 'none' ? openPgpKey?.privateKey : undefined
-      )
-    } else if (openPgpKey) {
-      raw = await signPgpMime(raw, openPgpKey.privateKey)
     }
+    raw = await encryptPgpMime(
+      raw,
+      Array.from(
+        new Map(
+          [...encryption.keys, openPgpKey!.publicKey].map((key) => [key.getFingerprint(), key])
+        ).values()
+      ),
+      payload.openPgpSigning !== 'none' ? openPgpKey?.privateKey : undefined
+    )
+  } else if (payload.openPgpSigning === 'pgp-mime' && openPgpKey) {
+    raw = await signPgpMime(raw, openPgpKey.privateKey)
   }
+
+  return raw
+}
+
+async function deliverMessage(raw: Buffer, payload: SmtpSendJobPayload, smtpConfig: SmtpConfig) {
+  const transporter = nodemailer.createTransport({
+    host: smtpConfig.host,
+    port: smtpConfig.port,
+    secure: smtpConfig.secure,
+    tls: { rejectUnauthorized: !smtpConfig.allowInvalidCertificate },
+    auth: {
+      user: smtpConfig.user,
+      pass: smtpConfig.password
+    }
+  })
 
   await withRetry(
     () =>
-      transporter.sendMail(
-        raw
-          ? {
-              raw,
-              envelope: {
-                from: outgoingSenderAddress(smtpConfig.from),
-                to: parseAddressFields([payload.to, payload.cc, payload.bcc]).map(
-                  (recipient) => recipient.email
-                )
-              }
-            }
-          : mailOptions
-      ),
+      transporter.sendMail({
+        raw: withoutBccHeader(raw),
+        envelope: {
+          from: outgoingSenderAddress(smtpConfig.from),
+          to: parseAddressFields([payload.to, payload.cc, payload.bcc]).map(
+            (recipient) => recipient.email
+          )
+        }
+      }),
     { label: 'smtp sendMail', maxAttempts: 3, baseDelayMs: 1000 }
   )
+}
+
+async function connectImap(config: ImapConfig) {
+  return withRetry(() => getWorkerConnection(config), {
+    label: `append sent message for ${config.name}`,
+    maxAttempts: 3,
+    baseDelayMs: 1000
+  })
+}
+
+async function saveSentCopy(
+  job: SmtpJobRow,
+  smtpConfig: SmtpConfig,
+  raw: Buffer,
+  deliveredAt: Date
+) {
+  const imapConfig = selectSentImapConfig(smtpConfig, await getImapConfigs())
+  if (!imapConfig) throw new Error('Missing IMAP config for Sent mailbox')
+
+  let client = null
+  try {
+    client = await connectImap(imapConfig)
+    const mailbox = await storeSentMessage(client, raw, job.id, deliveredAt)
+    wakeMailboxSync(imapConfig.id, mailbox)
+  } catch (error) {
+    if (client) invalidateWorkerConnection(imapConfig.id, client)
+    throw error
+  }
+}
+
+async function runJob(job: SmtpJobRow) {
+  const payload = parsePayload(job)
+  const smtpConfig = await resolveSmtpConfig(payload.smtpServerId)
+  let raw = job.rawMessage
+  let deliveredAt = job.deliveredAt
+
+  if (!deliveredAt) {
+    raw = await buildRawMessage(job, payload, smtpConfig)
+    await deliverMessage(raw, payload, smtpConfig)
+    deliveredAt = new Date()
+    await db
+      .update(smtpJob)
+      .set({ deliveredAt, rawMessage: raw, updatedAt: deliveredAt })
+      .where(eq(smtpJob.id, job.id))
+  } else if (!raw) {
+    throw new Error(`SMTP job ${job.id} is missing its delivered message`)
+  }
+
+  await saveSentCopy(job, smtpConfig, raw, deliveredAt)
 
   await upsertContacts(
     parseAddressFields([payload.to, payload.cc, payload.bcc]).map((contact) => ({

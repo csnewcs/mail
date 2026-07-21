@@ -177,6 +177,8 @@ export const smtpJob = pgTable(
     attemptCount: integer('attempt_count').notNull().default(0),
     availableAt: timestamp('available_at', { withTimezone: true, mode: 'date' }).notNull(),
     lastError: text('last_error'),
+    deliveredAt: timestamp('delivered_at', { withTimezone: true, mode: 'date' }),
+    rawMessage: bytea('raw_message'),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' })
       .defaultNow()
