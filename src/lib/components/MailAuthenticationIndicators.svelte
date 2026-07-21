@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { mailAuthenticationStatusLabel } from '$lib/mail-authentication'
+
   type Props = {
     spfStatus?: string | null
     dkimStatus?: string | null
@@ -22,7 +24,6 @@
   ])
 
   function tone(status: string | null) {
-    if (!authenticationTrusted) return 'border-white/8 bg-white/3 text-zinc-400'
     if (status === 'pass') return 'border-emerald-400/20 bg-emerald-400/10 text-emerald-300'
     if (status === 'fail' || status === 'permerror') {
       return 'border-rose-400/20 bg-rose-400/10 text-rose-300'
@@ -31,12 +32,6 @@
       return 'border-amber-400/20 bg-amber-400/10 text-amber-300'
     }
     return 'border-white/8 bg-white/3 text-zinc-400'
-  }
-
-  function statusLabel(status: string | null) {
-    if (!status) return 'unknown'
-    if (!authenticationTrusted) return 'unverified'
-    return status.replace('error', ' error')
   }
 </script>
 
@@ -52,11 +47,12 @@
       class={[
         'inline-flex items-center rounded-full border font-medium uppercase',
         compact ? 'px-1.5 py-0.5 text-[9px]' : 'px-2 py-0.5 text-[10px]',
+        !authenticationTrusted && 'border-dashed',
         tone(check.status)
       ]}
     >
       {check.label}
-      {statusLabel(check.status)}
+      {mailAuthenticationStatusLabel(check.status)}
     </span>
   {/each}
 </div>

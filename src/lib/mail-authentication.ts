@@ -27,6 +27,11 @@ function normalizeStatus(value: string | undefined): MailAuthenticationStatus | 
   return null
 }
 
+export function mailAuthenticationStatusLabel(status: string | null) {
+  if (!status) return 'unknown'
+  return status.replace('error', ' error')
+}
+
 function methodStatus(value: string, method: 'spf' | 'dkim' | 'dmarc') {
   const clauses: string[] = []
   let clause = ''
