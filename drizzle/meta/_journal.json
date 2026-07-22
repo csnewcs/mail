@@ -253,6 +253,13 @@
       "when": 1784761843000,
       "tag": "0022_public_attachments",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1784763000000,
+      "tag": "0023_email_tracking",
+      "breakpoints": true
     }
   ]
 }

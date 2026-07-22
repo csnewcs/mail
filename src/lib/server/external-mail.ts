@@ -179,6 +179,8 @@ export async function getExternalSendJob(id: number) {
       attemptCount: smtpJob.attemptCount,
       availableAt: smtpJob.availableAt,
       lastError: smtpJob.lastError,
+      deliveredAt: smtpJob.deliveredAt,
+      openedAt: smtpJob.openedAt,
       createdAt: smtpJob.createdAt,
       updatedAt: smtpJob.updatedAt
     })
@@ -189,6 +191,8 @@ export async function getExternalSendJob(id: number) {
   return {
     ...job,
     availableAt: job.availableAt.toISOString(),
+    deliveredAt: job.deliveredAt?.toISOString() ?? null,
+    openedAt: job.openedAt?.toISOString() ?? null,
     createdAt: job.createdAt.toISOString(),
     updatedAt: job.updatedAt.toISOString()
   }

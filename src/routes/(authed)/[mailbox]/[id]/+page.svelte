@@ -86,6 +86,7 @@
     snoozedUntil: string | null
     sendStatus: 'sending' | 'failed' | 'sent' | null
     smtpJobId: number | null
+    openedAt: string | null
   }
 
   type Attachment = {
@@ -674,7 +675,10 @@
 
   function sendStatusDescription(status: NonNullable<Message['sendStatus']>) {
     if (status === 'failed') return sendError || 'The message could not be sent.'
-    if (status === 'sent') return 'The message was sent successfully.'
+    if (status === 'sent' && message.openedAt) {
+      return `A recipient's mail client loaded the tracking image on ${formatFullDate(message.openedAt)}.`
+    }
+    if (status === 'sent') return 'The tracking image has not been loaded yet.'
     return 'The message is being sent.'
   }
 

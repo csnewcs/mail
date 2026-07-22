@@ -81,6 +81,7 @@
     threadDepth: number
     sendStatus: 'sending' | 'failed' | 'sent' | null
     smtpJobId: number | null
+    openedAt: string | null
   }
 
   type Attachment = {
@@ -1280,6 +1281,13 @@
                   >
                     [{msg.sendStatus}]
                   </p>
+                  {#if msg.sendStatus === 'sent'}
+                    <p class="mt-1 text-sm text-zinc-400">
+                      {msg.openedAt
+                        ? `A recipient's mail client loaded the tracking image on ${formatFullDate(msg.openedAt)}.`
+                        : 'The tracking image has not been loaded yet.'}
+                    </p>
+                  {/if}
                 </div>
               {/if}
               <div class="mb-3">

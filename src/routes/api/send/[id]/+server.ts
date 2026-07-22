@@ -13,6 +13,7 @@ export const GET: RequestHandler = async ({ params }) => {
     .select({
       status: smtpJob.status,
       deliveredAt: smtpJob.deliveredAt,
+      openedAt: smtpJob.openedAt,
       lastError: smtpJob.lastError,
       messageId: smtpJob.messageId,
       sentMailbox: smtpJob.sentMailbox
@@ -38,6 +39,7 @@ export const GET: RequestHandler = async ({ params }) => {
   return json({
     status: sendStatusFromJobStatus(job.status, job.deliveredAt),
     error: job.deliveredAt ? null : job.lastError,
+    openedAt: job.openedAt?.toISOString() ?? null,
     storedMessageId: storedCopy?.id ?? null
   })
 }

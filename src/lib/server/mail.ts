@@ -222,6 +222,7 @@ export type MailListRow = {
   important?: boolean
   sendStatus?: SendStatus | null
   smtpJobId?: number | null
+  openedAt?: Date | null
 }
 
 // Joined row returned by detail queries
@@ -2123,6 +2124,7 @@ const sentPlaceholderJobSelect = {
   sentMailbox: smtpJob.sentMailbox,
   placeholderActive: smtpJob.placeholderActive,
   deliveredAt: smtpJob.deliveredAt,
+  openedAt: smtpJob.openedAt,
   createdAt: smtpJob.createdAt
 }
 
@@ -2252,6 +2254,13 @@ const detailSelect = {
   replyTo: mailMessage.replyTo,
   inReplyTo: mailMessage.inReplyTo,
   references: mailMessage.references,
+  openedAt: sql<Date | null>`(
+    select send_job.opened_at
+    from smtp_job as send_job
+    where send_job.message_id = ${mailMessage.messageId}
+    order by send_job.id desc
+    limit 1
+  )`,
   spfStatus: mailMessageMailbox.spfStatus,
   dkimStatus: mailMessageMailbox.dkimStatus,
   dmarcStatus: mailMessageMailbox.dmarcStatus,

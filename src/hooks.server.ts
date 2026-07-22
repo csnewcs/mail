@@ -46,6 +46,7 @@ const handleStartup: Handle = async ({ event, resolve }) => {
 const SETUP_PATHS = ['/setup']
 const AUTH_PATHS = ['/login', '/api/auth', '/share', '/attachments', '/api-docs']
 const EXTERNAL_API_PREFIX = '/api/external/v1'
+const EMAIL_TRACKING_PREFIX = '/email-open/'
 
 function isExternalApiPath(path: string) {
   return path === EXTERNAL_API_PREFIX || path.startsWith(`${EXTERNAL_API_PREFIX}/`)
@@ -66,6 +67,8 @@ const handleBetterAuth: Handle = async ({ event, resolve }) => {
     event.locals.user = demo.user
     return resolve(event)
   }
+
+  if (path.startsWith(EMAIL_TRACKING_PREFIX)) return resolve(event)
 
   // Before anything else: if no owner or external provider exists, funnel to setup.
   if (!building) {
@@ -141,13 +144,16 @@ const handleTraffic: Handle = async ({ event, resolve }) => {
   const start = performance.now()
   const { method } = event.request
   const path = event.url.pathname
+  const loggedPath = path.startsWith(EMAIL_TRACKING_PREFIX)
+    ? `${EMAIL_TRACKING_PREFIX}[redacted]/pixel.gif`
+    : path
 
   const response = await resolve(event)
 
   const ms = Number((performance.now() - start).toFixed(1))
   const contentLength = response.headers.get('content-length')
   console.log(
-    `[traffic] ${method} ${path} ${response.status} ${ms}ms${contentLength ? ` size=${contentLength}` : ''}`
+    `[traffic] ${method} ${loggedPath} ${response.status} ${ms}ms${contentLength ? ` size=${contentLength}` : ''}`
   )
 
   return response

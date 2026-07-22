@@ -45,6 +45,7 @@ function serializeMessage(
     rawSourceAvailable: message.rawSourceAvailable ?? isDemoModeEnabled(),
     sendStatus: message.sendStatus ?? null,
     smtpJobId: message.smtpJobId ?? null,
+    openedAt: message.openedAt?.toISOString() ?? null,
     flags: seen && !flags.includes('\\Seen') ? [...flags, '\\Seen'] : flags,
     receivedAt: message.receivedAt?.toISOString() ?? null,
     snoozedUntil: message.snoozedUntil?.toISOString() ?? null

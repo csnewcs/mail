@@ -46,6 +46,7 @@ export async function scheduleSmtpSend(
 ) {
   const now = new Date()
   const messageId = `<pmail-${randomUUID()}@mail.local>`
+  const trackingToken = randomUUID()
   const sentMailbox = await sentMailboxForPayload(payload)
   const [job] = await db
     .insert(smtpJob)
@@ -56,6 +57,7 @@ export async function scheduleSmtpSend(
       availableAt,
       lastError: null,
       messageId,
+      trackingToken,
       sentMailbox,
       placeholderActive: sentMailbox !== null,
       createdAt: now,

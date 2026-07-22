@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { and, eq, inArray, lte, or } from 'drizzle-orm'
 import nodemailer from 'nodemailer'
+import { env } from '$env/dynamic/private'
 import {
   getImapConfigs,
   getSmtpConfig,
@@ -40,6 +41,7 @@ import {
   withoutBccHeader
 } from './sent-message'
 import { startBackgroundAction, waitForBackgroundActions } from './background-actions'
+import { addEmailTrackingPixel, emailTrackingPixelUrl } from './email-tracking'
 
 const MAX_JOB_ATTEMPTS = 8
 const PERMANENT_SMTP_ERROR_RE =
@@ -216,6 +218,10 @@ async function buildRawMessage(
   }
 
   const body = outgoingMessageBody(payload.html)
+  const trackingPixelUrl = emailTrackingPixelUrl(env.ORIGIN, job.trackingToken)
+  if (body.html && trackingPixelUrl) {
+    body.html = addEmailTrackingPixel(body.html, trackingPixelUrl)
+  }
   if (!payload.openPgpEncrypt && payload.openPgpSigning === 'cleartext' && openPgpKey) {
     body.text = await clearSignText(body.text ?? '', openPgpKey.privateKey)
     delete body.html
@@ -352,13 +358,16 @@ async function saveSentCopy(
 }
 
 async function ensureJobIdentity(job: SmtpJobRow, payload: SmtpSendOperationPayload) {
-  if (job.messageId) return
-  job.messageId = job.deliveredAt
-    ? job.rawMessage
-      ? messageIdFromRawMessage(job.rawMessage)
-      : null
-    : `<pmail-${randomUUID()}@mail.local>`
+  if (job.messageId && (job.trackingToken || job.deliveredAt)) return
+  if (!job.messageId) {
+    job.messageId = job.deliveredAt
+      ? job.rawMessage
+        ? messageIdFromRawMessage(job.rawMessage)
+        : null
+      : `<pmail-${randomUUID()}@mail.local>`
+  }
   if (!job.messageId) return
+  if (!job.deliveredAt) job.trackingToken ??= randomUUID()
   job.sentMailbox = await sentMailboxForPayload(payload)
   const [storedCopy] = job.sentMailbox
     ? await db
@@ -377,6 +386,7 @@ async function ensureJobIdentity(job: SmtpJobRow, payload: SmtpSendOperationPayl
     .update(smtpJob)
     .set({
       messageId: job.messageId,
+      trackingToken: job.trackingToken,
       sentMailbox: job.sentMailbox,
       placeholderActive: job.placeholderActive,
       updatedAt: new Date()
@@ -460,6 +470,9 @@ export async function dispatchReadySmtpOperations() {
 }
 
 export async function recoverInterruptedSmtpJobs() {
+  if (!emailTrackingPixelUrl(env.ORIGIN, randomUUID())) {
+    console.warn('[smtp] ORIGIN is missing or invalid; outgoing email read tracking is disabled')
+  }
   const interruptedOrQueued = await db
     .select()
     .from(smtpJob)

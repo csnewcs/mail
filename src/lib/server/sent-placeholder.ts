@@ -9,6 +9,7 @@ export type SentPlaceholderJob = {
   messageId: string | null
   sentMailbox?: string | null
   deliveredAt?: Date | null
+  openedAt?: Date | null
   createdAt: Date
 }
 
@@ -42,6 +43,7 @@ export type SentPlaceholder = {
   hasThreadNote: false
   sendStatus: SendStatus
   smtpJobId: number
+  openedAt: Date | null
 }
 
 export function sentPlaceholderId(jobId: number) {
@@ -105,7 +107,8 @@ export function createSentPlaceholder(
     threadPinned: false,
     hasThreadNote: false,
     sendStatus,
-    smtpJobId: job.id
+    smtpJobId: job.id,
+    openedAt: job.openedAt ?? null
   }
 }
 

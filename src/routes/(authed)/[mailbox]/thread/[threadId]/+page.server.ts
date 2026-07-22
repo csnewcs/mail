@@ -52,6 +52,7 @@ function serializeMessage(message: Awaited<ReturnType<typeof getMessagesInThread
     rawSourceAvailable: message.rawSourceAvailable ?? isDemoModeEnabled(),
     sendStatus: message.sendStatus ?? null,
     smtpJobId: message.smtpJobId ?? null,
+    openedAt: message.openedAt?.toISOString() ?? null,
     flags,
     receivedAt: message.receivedAt?.toISOString() ?? null,
     snoozedUntil: message.snoozedUntil?.toISOString() ?? null,
