@@ -353,6 +353,15 @@ export const mailAttachment = pgTable(
   (table) => [index('mail_attachment_message_id_idx').on(table.messageId)]
 )
 
+export const publicAttachment = pgTable('public_attachment', {
+  token: text('token').primaryKey(),
+  filename: text('filename').notNull(),
+  contentType: text('content_type').notNull().default('application/octet-stream'),
+  size: integer('size').notNull(),
+  content: bytea('content').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull()
+})
+
 export const mailAttachmentSummary = pgTable('mail_attachment_summary', {
   id: serial('id').primaryKey(),
   attachmentId: integer('attachment_id').notNull().unique(),

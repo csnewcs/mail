@@ -20,10 +20,9 @@ export type AttachmentSafetyScore = {
 }
 
 export const MAX_ATTACHMENT_COUNT = 10
-export const MAX_ATTACHMENT_SIZE_BYTES = 5 * 1024 * 1024
-export const MAX_TOTAL_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024
-
-const BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
+export const MAX_INLINE_ATTACHMENT_SIZE_BYTES = 5 * 1024 * 1024
+export const MAX_ATTACHMENT_SIZE_BYTES = 25 * 1024 * 1024
+export const MAX_TOTAL_ATTACHMENT_SIZE_BYTES = 25 * 1024 * 1024
 
 const HIGH_RISK_EXTENSIONS = new Set([
   'app',
@@ -177,6 +176,27 @@ function getDecodedBase64Size(contentBase64: string): number {
   return (contentBase64.length / 4) * 3 - padding
 }
 
+function isValidBase64(contentBase64: string) {
+  if (contentBase64.length % 4 !== 0) return false
+  const padding = contentBase64.endsWith('==') ? 2 : contentBase64.endsWith('=') ? 1 : 0
+  const contentLength = contentBase64.length - padding
+
+  for (let index = 0; index < contentLength; index += 1) {
+    const code = contentBase64.charCodeAt(index)
+    const valid =
+      (code >= 48 && code <= 57) ||
+      (code >= 65 && code <= 90) ||
+      (code >= 97 && code <= 122) ||
+      code === 43 ||
+      code === 47
+    if (!valid) return false
+  }
+  for (let index = contentLength; index < contentBase64.length; index += 1) {
+    if (contentBase64.charCodeAt(index) !== 61) return false
+  }
+  return true
+}
+
 export function parseComposerAttachments(
   input: unknown
 ): { ok: true; attachments: ComposerAttachment[] } | { ok: false; error: string } {
@@ -209,22 +229,21 @@ export function parseComposerAttachments(
     if (!Number.isInteger(sizeNumber) || sizeNumber < 0) {
       return { ok: false, error: `Invalid size for attachment ${name}` }
     }
-    if (!contentBase64) {
-      return { ok: false, error: `Attachment content is required for ${name}` }
-    }
-    if (contentBase64.length % 4 !== 0 || !BASE64_PATTERN.test(contentBase64)) {
-      return { ok: false, error: `Attachment content is not valid base64 for ${name}` }
-    }
-    if (getDecodedBase64Size(contentBase64) !== sizeNumber) {
-      return { ok: false, error: `Attachment size mismatch for ${name}` }
-    }
     if (sizeNumber > MAX_ATTACHMENT_SIZE_BYTES) {
       return {
         ok: false,
         error: `Attachment ${name} exceeds the ${MAX_ATTACHMENT_SIZE_BYTES} byte limit`
       }
     }
-
+    if (!contentBase64) {
+      return { ok: false, error: `Attachment content is required for ${name}` }
+    }
+    if (!isValidBase64(contentBase64)) {
+      return { ok: false, error: `Attachment content is not valid base64 for ${name}` }
+    }
+    if (getDecodedBase64Size(contentBase64) !== sizeNumber) {
+      return { ok: false, error: `Attachment size mismatch for ${name}` }
+    }
     totalSize += sizeNumber
     if (totalSize > MAX_TOTAL_ATTACHMENT_SIZE_BYTES) {
       return {

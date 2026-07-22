@@ -44,7 +44,7 @@ const handleStartup: Handle = async ({ event, resolve }) => {
 }
 
 const SETUP_PATHS = ['/setup']
-const AUTH_PATHS = ['/login', '/api/auth', '/share', '/api-docs']
+const AUTH_PATHS = ['/login', '/api/auth', '/share', '/attachments', '/api-docs']
 const EXTERNAL_API_PREFIX = '/api/external/v1'
 
 function isExternalApiPath(path: string) {

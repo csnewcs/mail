@@ -1762,6 +1762,33 @@ export async function sendDemoMessage(payload: {
   return message
 }
 
+const demoPublicAttachments = new Map<
+  string,
+  { filename: string; contentType: string; size: number; content: Buffer }
+>()
+
+export function storeDemoPublicAttachments(
+  attachments: Array<{ name: string; contentType: string; contentBase64: string; size: number }>,
+  links: Array<{ token: string }>
+) {
+  for (const [index, attachment] of attachments.entries()) {
+    demoPublicAttachments.set(links[index].token, {
+      filename: attachment.name,
+      contentType: attachment.contentType,
+      size: attachment.size,
+      content: Buffer.from(attachment.contentBase64, 'base64')
+    })
+  }
+}
+
+export function getDemoPublicAttachment(token: string) {
+  return demoPublicAttachments.get(token) ?? null
+}
+
+export function deleteDemoPublicAttachments(tokens: string[]) {
+  for (const token of tokens) demoPublicAttachments.delete(token)
+}
+
 export function getDemoVapidPublicKey() {
   return null
 }

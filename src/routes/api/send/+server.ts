@@ -1,6 +1,7 @@
 import { json, error } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
-import { parseComposerAttachments } from '$lib/mail-attachments'
+import { MAX_INLINE_ATTACHMENT_SIZE_BYTES, parseComposerAttachments } from '$lib/mail-attachments'
+import { appendPublicAttachmentLinks } from '$lib/public-attachments'
 import { normalizeRecipientList, validateRecipientFields } from '$lib/recipients'
 import { getSmtpConfig, getSmtpConfigs, getUndoSendSeconds } from '$lib/server/config'
 import { isDemoModeEnabled, sendDemoMessage } from '$lib/server/demo'
@@ -9,6 +10,7 @@ import type { OpenPgpSigningMethod } from '$lib/server/openpgp-message'
 import { getEncryptionKeysForAddresses, getOpenPgpKeyForAddress } from '$lib/server/openpgp-keys'
 import { outgoingSenderAddress } from '$lib/server/outgoing-message'
 import { parseAddressFields } from '$lib/server/contacts'
+import { deletePublicAttachments, storePublicAttachments } from '$lib/server/public-attachments'
 
 const OPENPGP_SIGNING_METHODS = new Set<OpenPgpSigningMethod>([
   'none',
@@ -21,7 +23,7 @@ function sendValidationError(message: string, details?: unknown) {
   return json({ error: { code: 'SEND_VALIDATION_ERROR', message, details } }, { status: 400 })
 }
 
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ request, url }) => {
   const {
     to,
     cc,
@@ -61,20 +63,15 @@ export const POST: RequestHandler = async ({ request }) => {
     ? openPgpSigning
     : 'none'
   const useOpenPgp = signingMethod !== 'none' || openPgpEncrypt === true || attachPublicKey === true
+  const inlineAttachments = parsedAttachments.attachments.filter(
+    (attachment) => attachment.size <= MAX_INLINE_ATTACHMENT_SIZE_BYTES
+  )
+  const largeAttachments = parsedAttachments.attachments.filter(
+    (attachment) => attachment.size > MAX_INLINE_ATTACHMENT_SIZE_BYTES
+  )
 
   if (isDemoModeEnabled()) {
     if (useOpenPgp) return error(400, 'OpenPGP is unavailable in demo mode')
-    await sendDemoMessage({
-      to: normalizedTo,
-      cc: normalizedCc,
-      bcc: normalizedBcc,
-      subject,
-      html,
-      inReplyTo,
-      fromName: typeof fromName === 'string' ? fromName.trim() : null,
-      attachments: parsedAttachments.attachments
-    })
-    return json({ success: true, demo: true })
   }
 
   const selectedSmtpServerId = typeof smtpServerId === 'string' ? smtpServerId.trim() || null : null
@@ -111,23 +108,55 @@ export const POST: RequestHandler = async ({ request }) => {
     return error(400, 'Invalid sendAt value')
   }
 
-  const jobId = await scheduleSmtpSend(
-    {
-      to: normalizedTo,
-      cc: normalizedCc || null,
-      bcc: normalizedBcc || null,
-      subject,
-      html: html ?? null,
-      inReplyTo: inReplyTo || null,
-      smtpServerId: selectedSmtpServerId,
-      fromName: typeof fromName === 'string' ? fromName.trim() || null : null,
-      attachments: parsedAttachments.attachments,
-      openPgpSigning: signingMethod,
-      openPgpEncrypt: openPgpEncrypt === true,
-      attachPublicKey: attachPublicKey === true
-    },
-    availableAt
-  )
+  const publicAttachments = await storePublicAttachments(largeAttachments)
+  const deliveryHtml = appendPublicAttachmentLinks(html, url.origin, publicAttachments)
+
+  if (isDemoModeEnabled()) {
+    try {
+      await sendDemoMessage({
+        to: normalizedTo,
+        cc: normalizedCc,
+        bcc: normalizedBcc,
+        subject,
+        html: deliveryHtml ?? undefined,
+        inReplyTo,
+        fromName: typeof fromName === 'string' ? fromName.trim() : null,
+        attachments: inlineAttachments
+      })
+    } catch (sendError) {
+      await deletePublicAttachments(publicAttachments.map((attachment) => attachment.token))
+      throw sendError
+    }
+    return json({
+      success: true,
+      demo: true,
+      publicAttachmentCount: publicAttachments.length
+    })
+  }
+
+  let jobId: number | null
+  try {
+    jobId = await scheduleSmtpSend(
+      {
+        to: normalizedTo,
+        cc: normalizedCc || null,
+        bcc: normalizedBcc || null,
+        subject,
+        html: deliveryHtml,
+        inReplyTo: inReplyTo || null,
+        smtpServerId: selectedSmtpServerId,
+        fromName: typeof fromName === 'string' ? fromName.trim() || null : null,
+        attachments: inlineAttachments,
+        openPgpSigning: signingMethod,
+        openPgpEncrypt: openPgpEncrypt === true,
+        attachPublicKey: attachPublicKey === true
+      },
+      availableAt
+    )
+  } catch (sendError) {
+    await deletePublicAttachments(publicAttachments.map((attachment) => attachment.token))
+    throw sendError
+  }
 
   return json({
     success: true,
@@ -135,6 +164,7 @@ export const POST: RequestHandler = async ({ request }) => {
     jobId,
     sendAt: availableAt.toISOString(),
     undoable: undoSendSeconds > 0,
-    undoSendSeconds
+    undoSendSeconds,
+    publicAttachmentCount: publicAttachments.length
   })
 }
