@@ -33,6 +33,7 @@
   import MailAuthenticationIndicators from '$lib/components/MailAuthenticationIndicators.svelte'
   import OpenPgpIndicator from '$lib/components/OpenPgpIndicator.svelte'
   import RawMessageDialog from '$lib/components/RawMessageDialog.svelte'
+  import UrlWarningDialog from '$lib/components/UrlWarningDialog.svelte'
   import { errorMessageFromUnknown, readErrorMessage } from '$lib/http'
   import { trackAppLoading } from '$lib/loading.svelte'
   import { onMount } from 'svelte'
@@ -47,6 +48,7 @@
   } from '$lib/remote-content'
   import { scoreAttachmentSafety, type AttachmentSafetyScore } from '$lib/mail-attachments'
   import { saveOfflineMessage } from '$lib/offline-cache'
+  import { interceptMailContentLinks } from '$lib/mail-content-links'
   import { toast } from 'svelte-sonner'
 
   type DensityPreference = 'comfortable' | 'compact' | 'condensed'
@@ -173,6 +175,7 @@
   let liveSendStatus = $state<Message['sendStatus'] | undefined>(undefined)
   let liveSendStatusMessageId = $state<number | null>(null)
   let sendError = $state<string | null>(null)
+  let pendingUrl = $state<string | null>(null)
 
   const offlineUserKey = $derived(data.user?.email ?? null)
   const sendStatus = $derived(
@@ -743,15 +746,25 @@
 }
 </style>`
 
-  const LINK_SCRIPT =
-    `<script>document.addEventListener('click',function(e){var a=e.target.closest('a');if(a&&a.href&&a.protocol!=='javascript:'){e.preventDefault();window.open(a.href,'_blank','noopener,noreferrer');}});</scr` +
-    `ipt>`
-
   function injectScrollbarStyle(html: string): string {
     const headClose = html.indexOf('</head>')
-    if (headClose !== -1)
-      return html.slice(0, headClose) + SCROLLBAR_STYLE + LINK_SCRIPT + html.slice(headClose)
-    return SCROLLBAR_STYLE + LINK_SCRIPT + html
+    if (headClose !== -1) return html.slice(0, headClose) + SCROLLBAR_STYLE + html.slice(headClose)
+    return SCROLLBAR_STYLE + html
+  }
+
+  function setupMessageFrame(frame: HTMLIFrameElement) {
+    const doc = frame.contentDocument
+    if (!doc) return
+
+    interceptMailContentLinks(doc, (url) => (pendingUrl = url))
+    syncMessageFrameHeight(frame)
+    applyTranslationsToMessageFrame(translatedHtmlSegments)
+  }
+
+  function openPendingUrl() {
+    if (!pendingUrl) return
+    window.open(pendingUrl, '_blank', 'noopener,noreferrer')
+    pendingUrl = null
   }
 
   const remoteContentSettings = $derived({
@@ -1511,14 +1524,12 @@
       <iframe
         bind:this={messageFrame}
         title={`Email body for ${subjectLabel(message.subject)}`}
-        sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-scripts"
+        sandbox="allow-same-origin"
         {srcdoc}
         class="block min-h-[400px] w-full bg-white"
         onload={(e) => {
           const iframe = e.currentTarget as HTMLIFrameElement
-          syncMessageFrameHeight(iframe)
-
-          applyTranslationsToMessageFrame(translatedHtmlSegments)
+          setupMessageFrame(iframe)
         }}
       ></iframe>
     {:else}
@@ -1782,6 +1793,14 @@
       </div>
     </div>
   </div>
+{/if}
+
+{#if pendingUrl}
+  <UrlWarningDialog
+    url={pendingUrl}
+    oncancel={() => (pendingUrl = null)}
+    oncontinue={openPendingUrl}
+  />
 {/if}
 
 <ErrorDialog

@@ -31,6 +31,7 @@
   import MailAuthenticationIndicators from '$lib/components/MailAuthenticationIndicators.svelte'
   import OpenPgpIndicator from '$lib/components/OpenPgpIndicator.svelte'
   import RawMessageDialog from '$lib/components/RawMessageDialog.svelte'
+  import UrlWarningDialog from '$lib/components/UrlWarningDialog.svelte'
   import { errorMessageFromUnknown, readErrorMessage } from '$lib/http'
   import { trackAppLoading } from '$lib/loading.svelte'
   import { onMount, tick } from 'svelte'
@@ -45,6 +46,7 @@
     prepareRemoteContent
   } from '$lib/remote-content'
   import { scoreAttachmentSafety, type AttachmentSafetyScore } from '$lib/mail-attachments'
+  import { interceptMailContentLinks } from '$lib/mail-content-links'
   import { toast } from 'svelte-sonner'
 
   type Message = {
@@ -166,6 +168,7 @@
   let extractingThreadActions = $state(false)
   let activeAiPanel = $state<'summary' | 'actions' | null>(null)
   let threadMetadata = $state({ starred: false, pinned: false })
+  let pendingUrl = $state<string | null>(null)
 
   $effect(() => {
     threadMetadata = data.metadata
@@ -648,14 +651,10 @@
 :root{padding:12px}
 </style>`
 
-  const LINK_TARGET_BASE = '<base target="_blank">'
-  const OPENABLE_LINK_PROTOCOLS = new Set(['http:', 'https:', 'mailto:', 'tel:'])
-
   function injectScrollbarStyle(html: string): string {
     const headClose = html.indexOf('</head>')
-    if (headClose !== -1)
-      return html.slice(0, headClose) + LINK_TARGET_BASE + SCROLLBAR_STYLE + html.slice(headClose)
-    return LINK_TARGET_BASE + SCROLLBAR_STYLE + html
+    if (headClose !== -1) return html.slice(0, headClose) + SCROLLBAR_STYLE + html.slice(headClose)
+    return SCROLLBAR_STYLE + html
   }
 
   const remoteContentSettings = $derived({
@@ -703,64 +702,20 @@
     }
   }
 
-  function closestEmailLink(target: EventTarget | null) {
-    if (!target || typeof target !== 'object') return null
-
-    const candidate = target as {
-      closest?: (selector: string) => Element | null
-      parentElement?: { closest?: (selector: string) => Element | null }
-    }
-
-    return (candidate.closest?.('a[href]') ??
-      candidate.parentElement?.closest?.('a[href]') ??
-      null) as HTMLAnchorElement | null
-  }
-
-  function openEmailLinkInNewWindow(event: MouseEvent) {
-    const anchor = closestEmailLink(event.target)
-    const rawHref = anchor?.getAttribute('href')?.trim()
-    if (!anchor || !rawHref || rawHref.startsWith('#')) return
-
-    let url: URL
-    try {
-      url = new URL(rawHref, anchor.ownerDocument?.baseURI ?? window.location.href)
-    } catch {
-      return
-    }
-
-    if (!OPENABLE_LINK_PROTOCOLS.has(url.protocol)) return
-
-    event.preventDefault()
-    event.stopPropagation()
-    window.open(url.href, '_blank', 'noopener,noreferrer')
-  }
-
-  function retargetEmailLinks(doc: Document) {
-    for (const anchor of doc.querySelectorAll('a[href]')) {
-      const rawHref = anchor.getAttribute('href')?.trim()
-      if (!rawHref || rawHref.startsWith('#')) continue
-
-      try {
-        const url = new URL(rawHref, doc.baseURI)
-        if (!OPENABLE_LINK_PROTOCOLS.has(url.protocol)) continue
-      } catch {
-        continue
-      }
-
-      anchor.setAttribute('target', '_blank')
-      anchor.setAttribute('rel', 'noopener noreferrer')
-    }
-  }
-
   function setupEmailIframe(iframe: HTMLIFrameElement) {
     const doc = iframe.contentDocument
     if (!doc) return
 
-    retargetEmailLinks(doc)
-    doc.addEventListener('click', openEmailLinkInNewWindow)
+    interceptMailContentLinks(doc, (url) => (pendingUrl = url))
 
     const height = doc.documentElement.scrollHeight
     if (height > 50) iframe.style.height = `${height + 24}px`
+  }
+
+  function openPendingUrl() {
+    if (!pendingUrl) return
+    window.open(pendingUrl, '_blank', 'noopener,noreferrer')
+    pendingUrl = null
   }
 
   function getMessageAttachments(messageId: string) {
@@ -1386,7 +1341,7 @@
                 <iframe
                   title="Message body"
                   {srcdoc}
-                  sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+                  sandbox="allow-same-origin"
                   class="min-h-[300px] w-full rounded-lg border border-white/8 bg-white"
                   onload={(e) => {
                     const iframe = e.currentTarget as HTMLIFrameElement
@@ -1552,6 +1507,14 @@
     messageId={rawMessage.id}
     subject={rawMessage.subject}
     onclose={() => (rawMessage = null)}
+  />
+{/if}
+
+{#if pendingUrl}
+  <UrlWarningDialog
+    url={pendingUrl}
+    oncancel={() => (pendingUrl = null)}
+    oncontinue={openPendingUrl}
   />
 {/if}
 
