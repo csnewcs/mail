@@ -1108,11 +1108,6 @@
         {/if}
       </div>
 
-      <p
-        class="shrink-0 px-3 pt-1 pb-2 text-xs font-semibold tracking-widest text-zinc-500 uppercase"
-      >
-        Mail
-      </p>
       <nav bind:this={mailboxNavEl} class="min-h-0 flex-1 space-y-1.5 overflow-y-auto">
         {#if composedMailboxes.length > 0}
           <div class="pb-2">
@@ -1367,21 +1362,6 @@
             ></span>
           </span>
         </button>
-        <button
-          type="button"
-          onclick={() => (shortcutHelpOpen = true)}
-          aria-keyshortcuts="?"
-          class="flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-sm text-zinc-400 transition hover:bg-white/4 hover:text-zinc-200"
-        >
-          <span class="flex items-center gap-2.5">
-            <CircleHelp size={15} />
-            Shortcuts
-          </span>
-          <kbd
-            class="rounded border border-white/15 bg-white/6 px-1.5 py-0.5 font-mono text-[11px] text-zinc-500"
-            >?</kbd
-          >
-        </button>
         <div class="relative">
           <button
             type="button"
@@ -1518,6 +1498,26 @@
                 <BookOpen size={14} />
                 Manual
               </a>
+              <button
+                type="button"
+                role="menuitem"
+                aria-keyshortcuts="?"
+                onclick={() => {
+                  mobileNavOpen = false
+                  utilityNavOpen = false
+                  shortcutHelpOpen = true
+                }}
+                class="flex w-full items-center justify-between gap-2.5 rounded-xl px-3 py-2.5 text-sm text-zinc-400 transition hover:bg-white/6 hover:text-zinc-100"
+              >
+                <span class="flex items-center gap-2.5">
+                  <CircleHelp size={14} />
+                  Shortcuts
+                </span>
+                <kbd
+                  class="rounded border border-white/15 bg-white/6 px-1.5 py-0.5 font-mono text-[11px] text-zinc-500"
+                  >?</kbd
+                >
+              </button>
             </div>
           {/if}
         </div>
@@ -1695,15 +1695,6 @@
         </div>
 
         <div class="flex items-center gap-2">
-          <button
-            type="button"
-            class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-200 transition hover:bg-white/6"
-            aria-label="Open keyboard shortcut help"
-            aria-keyshortcuts="?"
-            onclick={() => (shortcutHelpOpen = true)}
-          >
-            <CircleHelp size={16} />
-          </button>
           <button
             type="button"
             class="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-blue-500"
