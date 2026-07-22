@@ -82,6 +82,8 @@
     flags: string[]
     receivedAt: string | null
     snoozedUntil: string | null
+    sendStatus: 'sending' | 'failed' | 'sent' | null
+    smtpJobId: number | null
   }
 
   type Attachment = {
@@ -168,8 +170,14 @@
   let translationRequestId = 0
   let messageFrame = $state<HTMLIFrameElement | undefined>(undefined)
   let online = $state(true)
+  let liveSendStatus = $state<Message['sendStatus'] | undefined>(undefined)
+  let liveSendStatusMessageId = $state<number | null>(null)
+  let sendError = $state<string | null>(null)
 
   const offlineUserKey = $derived(data.user?.email ?? null)
+  const sendStatus = $derived(
+    liveSendStatusMessageId === data.message.id ? liveSendStatus : data.message.sendStatus
+  )
 
   type TranslationStreamPayload = {
     translations?: string[]
@@ -655,6 +663,46 @@
     return subject
   }
 
+  function sendStatusClass(status: NonNullable<Message['sendStatus']>) {
+    if (status === 'failed') return 'text-rose-300'
+    if (status === 'sent') return 'text-emerald-300'
+    return 'text-amber-300'
+  }
+
+  function sendStatusDescription(status: NonNullable<Message['sendStatus']>) {
+    if (status === 'failed') return sendError || 'The message could not be sent.'
+    if (status === 'sent') return 'The message was sent successfully.'
+    return 'The message is being sent.'
+  }
+
+  async function refreshSendStatus() {
+    const waitingForStoredCopy = message.id < 0 && sendStatus === 'sent'
+    if (!message.smtpJobId || (sendStatus !== 'sending' && !waitingForStoredCopy)) return
+    try {
+      const response = await fetch(`/api/send/${message.smtpJobId}`)
+      if (!response.ok) return
+      const payload = (await response.json()) as {
+        status?: Message['sendStatus']
+        error?: string | null
+        storedMessageId?: number | null
+      }
+      if (payload.storedMessageId) {
+        await goto(resolve(`/${page.params.mailbox}/${payload.storedMessageId}`), {
+          replaceState: true
+        })
+        return
+      }
+      liveSendStatusMessageId = message.id
+      liveSendStatus = payload.status ?? null
+      sendError = payload.error ?? null
+      if (payload.status === 'failed' || payload.status === 'sent') {
+        notifyMailboxStateChanged(`send:${payload.status}`)
+      }
+    } catch {
+      // The next polling interval will retry transient status request failures.
+    }
+  }
+
   function hasValue(value: string | null | undefined) {
     return Boolean(value && value.trim())
   }
@@ -877,6 +925,8 @@
     }
     window.addEventListener('online', updateOnline)
     window.addEventListener('offline', updateOnline)
+    void refreshSendStatus()
+    const sendStatusInterval = setInterval(() => void refreshSendStatus(), 2000)
 
     setTimeout(() => notifyMailboxStateChanged('message-opened'), 0)
 
@@ -896,6 +946,7 @@
     return () => {
       window.removeEventListener('online', updateOnline)
       window.removeEventListener('offline', updateOnline)
+      clearInterval(sendStatusInterval)
       teardown()
     }
   })
@@ -929,11 +980,18 @@
           {senderInitials(message.from)}
         </div>
         <div class="min-w-0">
-          <p class="truncate text-sm font-semibold text-white">{subjectLabel(message.subject)}</p>
+          <p class="truncate text-sm font-semibold text-white">
+            {subjectLabel(message.subject)}
+            {#if sendStatus}
+              <span class={['ml-1 font-medium', sendStatusClass(sendStatus)]}>[{sendStatus}]</span>
+            {/if}
+          </p>
           <p class="truncate text-xs text-zinc-500">{senderName(message.from)}</p>
         </div>
       </div>
-      <p class="hidden shrink-0 text-xs text-zinc-600 sm:block">Hover for actions</p>
+      {#if message.id > 0}
+        <p class="hidden shrink-0 text-xs text-zinc-600 sm:block">Hover for actions</p>
+      {/if}
     </div>
     {#if !online && messageToolbarExpanded}
       <div
@@ -943,10 +1001,21 @@
         <span>Offline</span>
       </div>
     {/if}
+    {#if message.id < 0}
+      <button
+        type="button"
+        onclick={() => gotoMailbox()}
+        class="inline-flex items-center gap-2 rounded-lg border border-transparent bg-white/3 px-3 py-2 text-sm text-zinc-200 transition hover:bg-white/6 md:hidden"
+      >
+        <ChevronLeft size={16} />
+        Back to list
+      </button>
+    {/if}
     <div
       class={[
         'mail-actions-toolbar flex flex-wrap items-center justify-between gap-3',
-        messageToolbarExpanded && 'is-visible'
+        messageToolbarExpanded && 'is-visible',
+        message.id < 0 && 'hidden'
       ].join(' ')}
     >
       <div class="flex flex-wrap items-center gap-1">
@@ -1280,9 +1349,16 @@
         </div>
 
         <div class="min-w-0">
-          <h2 class="truncate text-xl font-semibold text-white">
-            {subjectLabel(message.subject)}
-          </h2>
+          <div class="flex min-w-0 items-center gap-2">
+            <h2 class="truncate text-xl font-semibold text-white">
+              {subjectLabel(message.subject)}
+            </h2>
+            {#if sendStatus}
+              <span class={['shrink-0 text-sm font-medium', sendStatusClass(sendStatus)]}
+                >[{sendStatus}]</span
+              >
+            {/if}
+          </div>
           <div class="mt-1 flex min-w-0 items-center gap-2">
             <p class="truncate text-sm font-medium text-zinc-200">{senderName(message.from)}</p>
             {#if senderAddress(message.from)}
@@ -1338,6 +1414,13 @@
   </div>
 
   <div class="flex flex-col">
+    {#if sendStatus}
+      <section class="border-b border-white/8 bg-white/[0.025] p-4 sm:p-5">
+        <p class={['text-sm font-semibold', sendStatusClass(sendStatus)]}>[{sendStatus}]</p>
+        <p class="mt-1 text-sm text-zinc-400">{sendStatusDescription(sendStatus)}</p>
+      </section>
+    {/if}
+
     {#if translationText || translatedHtmlSegments || translating}
       <section class={messageSectionClass}>
         <div class="flex items-center justify-between gap-3">

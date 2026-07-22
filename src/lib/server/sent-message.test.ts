@@ -3,6 +3,8 @@ import test from 'node:test'
 import type { ImapConfig, SmtpConfig } from './config'
 import {
   findSentMailbox,
+  findSentMailboxForAccount,
+  messageIdFromRawMessage,
   selectSentImapConfig,
   storeSentMessage,
   withoutBccHeader
@@ -64,6 +66,15 @@ test('prefers the IMAP special-use Sent mailbox and supports common fallbacks', 
   assert.equal(findSentMailbox([{ path: 'INBOX' }]), null)
 })
 
+test('does not fall back to another account Sent mailbox', () => {
+  const mailboxes = [
+    { path: 'primary/INBOX', configId: 'primary' },
+    { path: 'work/Sent', configId: 'work', specialUse: '\\Sent' }
+  ]
+  assert.equal(findSentMailboxForAccount(mailboxes, 'primary', 2), null)
+  assert.equal(findSentMailboxForAccount(mailboxes, 'work', 2), 'work/Sent')
+})
+
 test('removes Bcc headers from SMTP delivery without changing the stored message body', () => {
   const raw = Buffer.from(
     'From: sender@example.com\r\nBcc: first@example.com,\r\n second@example.com\r\nSubject: Test\r\n\r\nBcc: body content\r\n',
@@ -73,6 +84,16 @@ test('removes Bcc headers from SMTP delivery without changing the stored message
     withoutBccHeader(raw).toString('utf8'),
     'From: sender@example.com\r\nSubject: Test\r\n\r\nBcc: body content\r\n'
   )
+})
+
+test('recovers a Message-ID from a previously built SMTP message', () => {
+  assert.equal(
+    messageIdFromRawMessage(
+      Buffer.from('From: sender@example.com\r\nMessage-ID: <queued@mail.local>\r\n\r\nBody')
+    ),
+    '<queued@mail.local>'
+  )
+  assert.equal(messageIdFromRawMessage(Buffer.from('Subject: Missing\r\n\r\nBody')), null)
 })
 
 test('appends a seen Sent copy once and recognizes it on retry', async () => {

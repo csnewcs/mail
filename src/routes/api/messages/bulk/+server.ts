@@ -49,6 +49,9 @@ export const POST: RequestHandler = async ({ request }) => {
   if (!Array.isArray(ids) || ids.length === 0) {
     return error(400, 'ids must be a non-empty array')
   }
+  if (ids.some((id) => !Number.isInteger(id) || id <= 0)) {
+    return error(409, 'Sending placeholders cannot be modified')
+  }
 
   if (body.threaded === true) {
     if (typeof body.mailbox !== 'string' || !body.mailbox.trim()) {

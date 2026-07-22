@@ -50,6 +50,8 @@ function serializeMessage(message: Awaited<ReturnType<typeof getMessagesInThread
     openPgpDecrypted: message.openPgpDecrypted ?? false,
     openPgpError: message.openPgpError ?? null,
     rawSourceAvailable: message.rawSourceAvailable ?? isDemoModeEnabled(),
+    sendStatus: message.sendStatus ?? null,
+    smtpJobId: message.smtpJobId ?? null,
     flags,
     receivedAt: message.receivedAt?.toISOString() ?? null,
     snoozedUntil: message.snoozedUntil?.toISOString() ?? null,

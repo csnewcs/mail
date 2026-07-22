@@ -52,10 +52,11 @@ import {
   mailShare,
   mailAttachment,
   imapJob,
+  smtpJob,
   syncRuntime
 } from './db/schema'
 import { scheduleMoveMessage } from './imap-operations'
-import { getImapConfig, getImapConfigs, type ImapConfig } from './config'
+import { getImapConfig, getImapConfigs, getSmtpConfigs, type ImapConfig } from './config'
 import { logServerError, perfError, perfLog, perfMs, perfNow } from './perf'
 import { withRetry } from './retry'
 import { getWorkerConnection, invalidateWorkerConnection } from './imap-connections'
@@ -86,6 +87,16 @@ import {
 import { assignThreadKeys, orderThread, referenceCandidates } from './threading'
 import { processInboundOpenPgp, type OpenPgpSecurityResult } from './openpgp-message'
 import { getOpenPgpPrivateKeys, getOpenPgpPublicKeys } from './openpgp-keys'
+import {
+  createSentPlaceholder,
+  parseSentPlaceholderPayload,
+  sentPlaceholderDetail,
+  smtpConfigForPlaceholder,
+  smtpJobIdFromPlaceholder,
+  type SentPlaceholder,
+  type SentPlaceholderJob
+} from './sent-placeholder'
+import type { SendStatus } from '../send-status'
 
 const INITIAL_SYNC_FAILURE_RETRY_MS = 10 * 60 * 1000
 const FULL_RECONCILE_INTERVAL_MS = 5 * 60 * 1000
@@ -209,6 +220,8 @@ export type MailListRow = {
   threadPinned?: boolean
   hasThreadNote?: boolean
   important?: boolean
+  sendStatus?: SendStatus | null
+  smtpJobId?: number | null
 }
 
 // Joined row returned by detail queries
@@ -1065,6 +1078,17 @@ async function storeMailboxEntry(
         syncedAt: new Date()
       }
     })
+
+  await db
+    .update(smtpJob)
+    .set({ placeholderActive: false })
+    .where(
+      and(
+        eq(smtpJob.messageId, sanitizedMessageId),
+        eq(smtpJob.sentMailbox, sanitizedMailbox),
+        eq(smtpJob.placeholderActive, true)
+      )
+    )
 
   const ms = Date.now() - startedAt
   if (ms >= 100) {
@@ -2049,6 +2073,26 @@ const listSelect = {
   snoozedUntil: mailMessageMailbox.snoozedUntil,
   threadId: mailMessage.threadKey,
   important: mailMessage.aiImportant,
+  sendStatus: sql<SendStatus | null>`(
+    select case
+      when send_job.delivered_at is not null then 'sent'
+      when send_job.status in ('pending', 'running') then 'sending'
+      when send_job.status = 'failed' then 'failed'
+      when send_job.status = 'done' then 'sent'
+      else null
+    end
+    from smtp_job as send_job
+    where send_job.message_id = ${mailMessage.messageId}
+    order by send_job.id desc
+    limit 1
+  )`,
+  smtpJobId: sql<number | null>`(
+    select send_job.id
+    from smtp_job as send_job
+    where send_job.message_id = ${mailMessage.messageId}
+    order by send_job.id desc
+    limit 1
+  )`,
   threadStarred: sql<boolean>`exists (
     select 1
     from mail_thread_metadata
@@ -2069,6 +2113,88 @@ const listSelect = {
     where ${mailThreadNote.threadKey} = ${mailMessage.threadKey}
     and length(trim(${mailThreadNote.body})) > 0
   )`
+}
+
+const sentPlaceholderJobSelect = {
+  id: smtpJob.id,
+  payload: smtpJob.payload,
+  status: smtpJob.status,
+  messageId: smtpJob.messageId,
+  sentMailbox: smtpJob.sentMailbox,
+  placeholderActive: smtpJob.placeholderActive,
+  deliveredAt: smtpJob.deliveredAt,
+  createdAt: smtpJob.createdAt
+}
+
+function sentPlaceholderCondition(mailboxPath: string) {
+  return and(
+    eq(smtpJob.sentMailbox, mailboxPath),
+    eq(smtpJob.placeholderActive, true),
+    inArray(smtpJob.status, ['pending', 'running', 'failed', 'done']),
+    isNotNull(smtpJob.messageId),
+    sql`not exists (
+      select 1
+      from mail_message_mailbox as sent_copy
+      where sent_copy.message_id = ${smtpJob.messageId}
+      and sent_copy.mailbox = ${mailboxPath}
+    )`
+  )
+}
+
+async function sentPlaceholderRows(mailboxPath: string, limit: number): Promise<SentPlaceholder[]> {
+  const [jobs, smtpConfigs] = await Promise.all([
+    db
+      .select(sentPlaceholderJobSelect)
+      .from(smtpJob)
+      .where(sentPlaceholderCondition(mailboxPath))
+      .orderBy(desc(smtpJob.createdAt))
+      .limit(limit),
+    getSmtpConfigs()
+  ])
+
+  return jobs.flatMap((job) => {
+    const payload = parseSentPlaceholderPayload(job)
+    if (!payload) return []
+    const smtpConfig = smtpConfigForPlaceholder(payload, smtpConfigs)
+    const placeholder = createSentPlaceholder(job, mailboxPath, smtpConfig)
+    return placeholder ? [placeholder] : []
+  })
+}
+
+async function sentPlaceholderForJob(job: SentPlaceholderJob) {
+  if (!job.sentMailbox) return null
+  const payload = parseSentPlaceholderPayload(job)
+  if (!payload) return null
+  const smtpConfigs = await getSmtpConfigs()
+  const smtpConfig = smtpConfigForPlaceholder(payload, smtpConfigs)
+  return createSentPlaceholder(job, job.sentMailbox, smtpConfig)
+}
+
+async function countSentPlaceholders(mailboxPath: string) {
+  const [row] = await db
+    .select({ value: count() })
+    .from(smtpJob)
+    .where(sentPlaceholderCondition(mailboxPath))
+  return Number(row?.value ?? 0)
+}
+
+function sortSentRows<T extends MailListRow>(rows: T[]) {
+  return rows.sort((left, right) => {
+    const pinned = Number(Boolean(right.threadPinned)) - Number(Boolean(left.threadPinned))
+    if (pinned !== 0) return pinned
+    const time = (right.receivedAt?.getTime() ?? 0) - (left.receivedAt?.getTime() ?? 0)
+    return time || right.uid - left.uid
+  })
+}
+
+function mergeSentPlaceholders<T extends MailListRow>(
+  rows: T[],
+  limit: number,
+  offset: number,
+  placeholders: SentPlaceholder[]
+) {
+  if (placeholders.length === 0) return rows
+  return sortSentRows([...rows, ...(placeholders as T[])]).slice(offset, offset + limit)
 }
 
 function threadMetadataWhere(mailboxPath: string, filter?: ThreadMetadataFilter) {
@@ -2344,6 +2470,10 @@ export async function listStoredMessages(
   if (unreadOnly && isAlwaysReadMailbox(mailboxPath)) return []
 
   const startedAt = perfNow()
+  const placeholders =
+    metadataFilter || unreadOnly ? [] : await sentPlaceholderRows(mailboxPath, limit + offset)
+  const databaseOffset = placeholders.length > 0 ? 0 : offset
+  const databaseLimit = placeholders.length > 0 ? limit + offset : limit
 
   try {
     const whereClause = unreadOnly
@@ -2375,8 +2505,8 @@ export async function listStoredMessages(
         desc(mailMessageMailbox.receivedAt),
         desc(mailMessageMailbox.uid)
       )
-      .limit(limit)
-      .offset(offset)
+      .limit(databaseLimit)
+      .offset(databaseOffset)
 
     perfLog('mail.listStoredMessages', {
       mailbox: mailboxPath,
@@ -2387,12 +2517,13 @@ export async function listStoredMessages(
       ms: perfMs(startedAt)
     })
 
-    return rows.map((row) =>
+    const storedRows = rows.map((row) =>
       normalizeMailRowFlags({
         ...row,
         receivedAt: row.receivedAt != null ? new Date(row.receivedAt) : null
       })
     )
+    return mergeSentPlaceholders(storedRows, limit, offset, placeholders)
   } catch (error) {
     perfLog('mail.listStoredMessages', {
       mailbox: mailboxPath,
@@ -2426,13 +2557,17 @@ export async function countStoredMessages(
         noPendingMoveCondition(),
         threadMetadataWhere(mailboxPath, metadataFilter)
       )
-  const [row] = await db
-    .select({ value: count() })
-    .from(mailMessageMailbox)
-    .innerJoin(mailMessage, eq(mailMessageMailbox.messageId, mailMessage.messageId))
-    .where(whereClause)
+  const [rows, placeholders] = await Promise.all([
+    db
+      .select({ value: count() })
+      .from(mailMessageMailbox)
+      .innerJoin(mailMessage, eq(mailMessageMailbox.messageId, mailMessage.messageId))
+      .where(whereClause),
+    metadataFilter || unreadOnly ? Promise.resolve(0) : countSentPlaceholders(mailboxPath)
+  ])
+  const [row] = rows
 
-  return Number(row?.value ?? 0)
+  return Number(row?.value ?? 0) + placeholders
 }
 
 function senderWhereClause(mailboxPath: string, normalizedSender: string) {
@@ -2502,6 +2637,10 @@ export async function listStoredThreads(
 
   const startedAt = perfNow()
   const alwaysReadMailbox = isAlwaysReadMailbox(mailboxPath)
+  const placeholders =
+    metadataFilter || unreadOnly ? [] : await sentPlaceholderRows(mailboxPath, limit + offset)
+  const databaseOffset = placeholders.length > 0 ? 0 : offset
+  const databaseLimit = placeholders.length > 0 ? limit + offset : limit
 
   try {
     const rows = await db
@@ -2520,6 +2659,8 @@ export async function listStoredThreads(
         snoozedUntil: mailMessageMailbox.snoozedUntil,
         threadId: mailThreadSummary.threadKey,
         threadCount: mailThreadSummary.threadCount,
+        sendStatus: listSelect.sendStatus,
+        smtpJobId: listSelect.smtpJobId,
         hasUnread: sql<boolean>`exists (
           select 1
           from mail_message_mailbox as unread_mmm
@@ -2597,8 +2738,8 @@ export async function listStoredThreads(
         desc(mailThreadSummary.latestReceivedAt),
         desc(mailThreadSummary.latestUid)
       )
-      .limit(limit)
-      .offset(offset)
+      .limit(databaseLimit)
+      .offset(databaseOffset)
 
     perfLog('mail.listStoredThreads', {
       mailbox: mailboxPath,
@@ -2608,7 +2749,7 @@ export async function listStoredThreads(
       ms: perfMs(startedAt)
     })
 
-    return rows.map((row) =>
+    const storedRows = rows.map((row) =>
       normalizeMailRowFlags({
         ...row,
         threadCount: Number(row.threadCount),
@@ -2626,6 +2767,13 @@ export async function listStoredThreads(
         receivedAt: row.receivedAt != null ? new Date(row.receivedAt) : null
       })
     ) as unknown as ThreadRow[]
+    const placeholderThreads = placeholders.map((placeholder) => ({
+      ...placeholder,
+      threadCount: 1,
+      hasUnread: false,
+      hasImportantUnread: false
+    }))
+    return mergeSentPlaceholders(storedRows, limit, offset, placeholderThreads) as ThreadRow[]
   } catch (error) {
     perfLog('mail.listStoredThreads', {
       mailbox: mailboxPath,
@@ -2647,36 +2795,40 @@ export async function countStoredThreads(
     return metadataFilter ? 0 : countDemoStoredThreads(mailboxPath, unreadOnly)
   if (unreadOnly && isAlwaysReadMailbox(mailboxPath)) return 0
 
-  const [row] = await db
-    .select({ value: count() })
-    .from(mailThreadSummary)
-    .innerJoin(
-      mailMessageMailbox,
-      eq(mailMessageMailbox.id, mailThreadSummary.representativeMailboxEntryId)
-    )
-    .where(
-      unreadOnly
-        ? and(
-            activeSnoozeCondition(),
-            noPendingMoveCondition(),
-            threadSummaryMetadataWhere(mailboxPath, metadataFilter),
-            sql`exists (
-              select 1
-              from mail_message_mailbox as unread_mmm
-              inner join mail_message as unread_mm on unread_mmm.message_id = unread_mm.message_id
-              where unread_mm.thread_key = ${mailThreadSummary.threadKey}
-              and unread_mmm.mailbox = ${mailThreadSummary.mailbox}
-              and unread_mmm.flags not like ${'%\\\\Seen%'}
-            )`
-          )
-        : and(
-            activeSnoozeCondition(),
-            noPendingMoveCondition(),
-            threadSummaryMetadataWhere(mailboxPath, metadataFilter)
-          )
-    )
+  const [rows, placeholders] = await Promise.all([
+    db
+      .select({ value: count() })
+      .from(mailThreadSummary)
+      .innerJoin(
+        mailMessageMailbox,
+        eq(mailMessageMailbox.id, mailThreadSummary.representativeMailboxEntryId)
+      )
+      .where(
+        unreadOnly
+          ? and(
+              activeSnoozeCondition(),
+              noPendingMoveCondition(),
+              threadSummaryMetadataWhere(mailboxPath, metadataFilter),
+              sql`exists (
+                select 1
+                from mail_message_mailbox as unread_mmm
+                inner join mail_message as unread_mm on unread_mmm.message_id = unread_mm.message_id
+                where unread_mm.thread_key = ${mailThreadSummary.threadKey}
+                and unread_mmm.mailbox = ${mailThreadSummary.mailbox}
+                and unread_mmm.flags not like ${'%\\\\Seen%'}
+              )`
+            )
+          : and(
+              activeSnoozeCondition(),
+              noPendingMoveCondition(),
+              threadSummaryMetadataWhere(mailboxPath, metadataFilter)
+            )
+      ),
+    metadataFilter || unreadOnly ? Promise.resolve(0) : countSentPlaceholders(mailboxPath)
+  ])
+  const [row] = rows
 
-  return Number(row?.value ?? 0)
+  return Number(row?.value ?? 0) + placeholders
 }
 
 // Returns all messages belonging to a thread, ordered oldest-first.
@@ -2868,6 +3020,31 @@ function buildSearchWhere(query: string) {
 export async function getStoredMessageById(id: string | number): Promise<MailRow | null> {
   if (isDemoModeEnabled()) return getDemoStoredMessageById(id)
   const numericId = typeof id === 'string' ? parseInt(id, 10) : id
+  const placeholderJobId = smtpJobIdFromPlaceholder(numericId)
+  if (placeholderJobId !== null) {
+    const [job] = await db
+      .select(sentPlaceholderJobSelect)
+      .from(smtpJob)
+      .where(eq(smtpJob.id, placeholderJobId))
+      .limit(1)
+    if (!job) return null
+    if (job.messageId && job.sentMailbox) {
+      const [storedCopy] = await db
+        .select({ id: mailMessageMailbox.id })
+        .from(mailMessageMailbox)
+        .where(
+          and(
+            eq(mailMessageMailbox.messageId, job.messageId),
+            eq(mailMessageMailbox.mailbox, job.sentMailbox)
+          )
+        )
+        .limit(1)
+      if (storedCopy) return getStoredMessageById(storedCopy.id)
+    }
+    if (!job.placeholderActive) return null
+    const placeholder = await sentPlaceholderForJob(job)
+    return placeholder ? (sentPlaceholderDetail(placeholder, job) as MailRow) : null
+  }
   const [message] = await db
     .select(detailSelect)
     .from(mailMessageMailbox)

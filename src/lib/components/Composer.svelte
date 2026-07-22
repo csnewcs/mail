@@ -701,6 +701,7 @@
           undoSendSeconds?: number
         }
         await deleteDraft()
+        notifyMailboxStateChanged('message-scheduled')
         sendLaterAt = ''
         pendingSendWarnings = []
         closeComposer()
@@ -752,6 +753,7 @@
       const restored = pendingUndoSend.payload
       clearTimeout(pendingUndoSend.timeout)
       pendingUndoSend = null
+      notifyMailboxStateChanged('message-send-canceled')
 
       composer.mode = 'compose'
       composer.to = restored.to

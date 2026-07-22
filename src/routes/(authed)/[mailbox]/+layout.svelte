@@ -7,7 +7,7 @@
   import { errorMessageFromUnknown, readErrorMessage } from '$lib/http'
   import { trackAppLoading } from '$lib/loading.svelte'
   import { pathToSlug } from '$lib/mailbox'
-  import { notifyMailboxStateChanged } from '$lib/mailbox-state'
+  import { MAILBOX_STATE_CHANGED_EVENT, notifyMailboxStateChanged } from '$lib/mailbox-state'
   import { getSimplifiedModeSidebarActionContext } from '$lib/simplified-mode-context'
   import { page } from '$app/state'
   import { onMount, tick, untrack } from 'svelte'
@@ -76,6 +76,8 @@
     threadStarred?: boolean
     threadPinned?: boolean
     hasThreadNote?: boolean
+    sendStatus?: 'sending' | 'failed' | 'sent' | null
+    smtpJobId?: number | null
   }
 
   type SavedSearch = {
@@ -798,6 +800,12 @@
     return subject
   }
 
+  function sendStatusClass(status: NonNullable<Message['sendStatus']>) {
+    if (status === 'failed') return 'text-rose-300'
+    if (status === 'sent') return 'text-emerald-300'
+    return 'text-amber-300'
+  }
+
   function previewLabel(preview: string | null | undefined) {
     return preview || 'No preview available.'
   }
@@ -1165,6 +1173,7 @@
   }
 
   function handleMobileSwipePointerDown(event: PointerEvent, message: Message) {
+    if (message.id < 0) return
     if (!isMobileSwipeEnabled(event)) return
 
     const row = event.currentTarget as HTMLElement
@@ -1317,7 +1326,7 @@
   }
 
   function handleSimplifiedCardPointerDown(event: PointerEvent) {
-    if (!activeSimplifiedMessage) return
+    if (!activeSimplifiedMessage || activeSimplifiedMessage.id < 0) return
     if (!shouldStartSimplifiedCardDrag(event)) return
 
     const card = event.currentTarget as HTMLElement
@@ -1497,12 +1506,13 @@
 
   function toggleSelection(id: number, index: number, shiftKey = false) {
     const list = isSearchMode ? searchResults : visibleMessages
+    if (id < 0) return
 
     if (shiftKey && lastSelectedIndex !== null) {
       const lo = Math.min(lastSelectedIndex, index)
       const hi = Math.max(lastSelectedIndex, index)
       for (let i = lo; i <= hi; i++) {
-        if (list[i]) selectedIds.add(list[i].id)
+        if (list[i] && list[i].id > 0) selectedIds.add(list[i].id)
       }
     } else {
       if (selectedIds.has(id)) selectedIds.delete(id)
@@ -1514,7 +1524,7 @@
   function selectAll() {
     selectedIds.clear()
     for (const message of listMessages) {
-      selectedIds.add(message.id)
+      if (message.id > 0) selectedIds.add(message.id)
     }
   }
 
@@ -1555,6 +1565,7 @@
     const items: Array<{ action: ContextMenuAction; label: string }> = [
       { action: 'open', label: 'Open' }
     ]
+    if (message.id < 0) return items
 
     if (role === 'archive' || role === 'trash' || role === 'spam') {
       items.push({ action: 'inbox', label: 'Move to inbox' })
@@ -1606,6 +1617,7 @@
   ) {
     event.stopPropagation()
     event.preventDefault()
+    if (message.id < 0) return
     const threadId = message.threadId ?? message.messageId
     if (!threadId) return
 
@@ -1772,6 +1784,13 @@
     }
     window.addEventListener('online', updateOnline)
     window.addEventListener('offline', updateOnline)
+    const refreshAfterSend = (event: Event) => {
+      const reason = event instanceof CustomEvent ? String(event.detail?.reason ?? '') : ''
+      if (reason.startsWith('message-s') || reason.startsWith('send:')) {
+        void refreshVisibleListWindow(reason)
+      }
+    }
+    window.addEventListener(MAILBOX_STATE_CHANGED_EVENT, refreshAfterSend)
     void cacheCurrentList()
     if (!online) void readCachedList('mount-offline')
 
@@ -1843,6 +1862,7 @@
     return () => {
       window.removeEventListener('online', updateOnline)
       window.removeEventListener('offline', updateOnline)
+      window.removeEventListener(MAILBOX_STATE_CHANGED_EVENT, refreshAfterSend)
       clearInterval(interval)
       teardown()
     }
@@ -1850,6 +1870,7 @@
 
   async function archiveMessage(id: number) {
     closeContextMenu()
+    if (id < 0) return
     try {
       await trackAppLoading(async () => {
         const response = await fetch('/api/messages/bulk', {
@@ -1878,6 +1899,7 @@
 
   async function trashMessage(id: number) {
     closeContextMenu()
+    if (id < 0) return
     try {
       await trackAppLoading(async () => {
         const response = await fetch('/api/messages/bulk', {
@@ -1906,6 +1928,7 @@
 
   async function moveMessageAction(id: number, action: 'archive' | 'trash' | 'spam' | 'inbox') {
     closeContextMenu()
+    if (id < 0) return
     try {
       await trackAppLoading(async () => {
         const response = await fetch('/api/messages/bulk', {
@@ -1999,6 +2022,7 @@
   }
 
   async function markMessageRead(id: number) {
+    if (id < 0) return
     closeContextMenu()
     updateMessageFlags(id, (flags) => (flags.includes('\\Seen') ? flags : [...flags, '\\Seen']))
 
@@ -2029,6 +2053,7 @@
   }
 
   async function markMessageUnread(id: number) {
+    if (id < 0) return
     closeContextMenu()
     updateMessageFlags(id, (flags) => flags.filter((flag) => flag !== '\\Seen'))
 
@@ -2093,6 +2118,7 @@
   }
 
   async function snoozeMessage(id: number) {
+    if (id < 0) return
     closeContextMenu()
     const snoozedUntil = await promptForSnoozeDate()
     if (!snoozedUntil) return
@@ -2747,6 +2773,14 @@
                         class="mt-4 line-clamp-3 text-2xl font-semibold tracking-tight text-white sm:text-3xl"
                       >
                         {subjectLabel(message.subject)}
+                        {#if message.sendStatus}
+                          <span
+                            class={[
+                              'ml-2 text-sm font-medium',
+                              sendStatusClass(message.sendStatus)
+                            ]}>[{message.sendStatus}]</span
+                          >
+                        {/if}
                       </h2>
                     </div>
 
@@ -3229,7 +3263,11 @@
                     }}
                     class={[
                       'absolute top-1/2 left-2 z-20 -translate-y-1/2 transition',
-                      selectionMode ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                      message.id < 0
+                        ? 'hidden'
+                        : selectionMode
+                          ? 'opacity-100'
+                          : 'opacity-0 group-hover:opacity-100'
                     ].join(' ')}
                   >
                     {#if selectedIds.has(message.id)}
@@ -3238,7 +3276,12 @@
                       <Square size={16} class="text-zinc-600" />
                     {/if}
                   </button>
-                  <div class="absolute top-3 right-3 z-30 flex items-center gap-1">
+                  <div
+                    class={[
+                      'absolute top-3 right-3 z-30 flex items-center gap-1',
+                      message.id < 0 && 'hidden'
+                    ]}
+                  >
                     <button
                       type="button"
                       aria-label={message.threadStarred ? 'Unstar thread' : 'Star thread'}
@@ -3315,9 +3358,19 @@
                           {/if}
                         </div>
 
-                        <p class="mt-1 truncate text-sm font-medium text-zinc-200">
-                          {subjectLabel(message.subject)}
-                        </p>
+                        <div class="mt-1 flex min-w-0 items-center gap-2">
+                          <p class="truncate text-sm font-medium text-zinc-200">
+                            {subjectLabel(message.subject)}
+                          </p>
+                          {#if message.sendStatus}
+                            <span
+                              class={[
+                                'shrink-0 text-xs font-medium',
+                                sendStatusClass(message.sendStatus)
+                              ]}>[{message.sendStatus}]</span
+                            >
+                          {/if}
+                        </div>
                       </div>
 
                       <div class="flex shrink-0 flex-col items-end gap-1">
@@ -3397,7 +3450,11 @@
                   }}
                   class={[
                     'absolute top-1/2 left-2 z-20 -translate-y-1/2 transition',
-                    selectionMode ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                    message.id < 0
+                      ? 'hidden'
+                      : selectionMode
+                        ? 'opacity-100'
+                        : 'opacity-0 group-hover:opacity-100'
                   ].join(' ')}
                 >
                   {#if selectedIds.has(message.id)}
@@ -3406,7 +3463,12 @@
                     <Square size={16} class="text-zinc-600" />
                   {/if}
                 </button>
-                <div class="absolute top-3 right-3 z-30 flex items-center gap-1">
+                <div
+                  class={[
+                    'absolute top-3 right-3 z-30 flex items-center gap-1',
+                    message.id < 0 && 'hidden'
+                  ]}
+                >
                   <button
                     type="button"
                     aria-label={message.threadStarred ? 'Unstar thread' : 'Star thread'}
@@ -3485,9 +3547,19 @@
                         {/if}
                       </div>
 
-                      <p class="mt-1 truncate text-sm font-medium text-zinc-200">
-                        {subjectLabel(message.subject)}
-                      </p>
+                      <div class="mt-1 flex min-w-0 items-center gap-2">
+                        <p class="truncate text-sm font-medium text-zinc-200">
+                          {subjectLabel(message.subject)}
+                        </p>
+                        {#if message.sendStatus}
+                          <span
+                            class={[
+                              'shrink-0 text-xs font-medium',
+                              sendStatusClass(message.sendStatus)
+                            ]}>[{message.sendStatus}]</span
+                          >
+                        {/if}
+                      </div>
                     </div>
 
                     <p class="shrink-0 text-xs text-zinc-500">

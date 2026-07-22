@@ -179,13 +179,25 @@ export const smtpJob = pgTable(
     lastError: text('last_error'),
     deliveredAt: timestamp('delivered_at', { withTimezone: true, mode: 'date' }),
     rawMessage: bytea('raw_message'),
+    messageId: text('message_id'),
+    sentMailbox: text('sent_mailbox'),
+    placeholderActive: boolean('placeholder_active').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' })
       .defaultNow()
       .$onUpdate(() => /* @__PURE__ */ new Date())
       .notNull()
   },
-  (table) => [index('smtp_job_status_available_at_idx').on(table.status, table.availableAt)]
+  (table) => [
+    index('smtp_job_status_available_at_idx').on(table.status, table.availableAt),
+    index('smtp_job_message_id_idx').on(table.messageId),
+    index('smtp_job_placeholder_mailbox_status_created_at_idx').on(
+      table.placeholderActive,
+      table.sentMailbox,
+      table.status,
+      table.createdAt
+    )
+  ]
 )
 
 export const mailMessage = pgTable(

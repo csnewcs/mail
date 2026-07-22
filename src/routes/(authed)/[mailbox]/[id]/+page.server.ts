@@ -43,6 +43,8 @@ function serializeMessage(
     openPgpDecrypted: message.openPgpDecrypted ?? false,
     openPgpError: message.openPgpError ?? null,
     rawSourceAvailable: message.rawSourceAvailable ?? isDemoModeEnabled(),
+    sendStatus: message.sendStatus ?? null,
+    smtpJobId: message.smtpJobId ?? null,
     flags: seen && !flags.includes('\\Seen') ? [...flags, '\\Seen'] : flags,
     receivedAt: message.receivedAt?.toISOString() ?? null,
     snoozedUntil: message.snoozedUntil?.toISOString() ?? null

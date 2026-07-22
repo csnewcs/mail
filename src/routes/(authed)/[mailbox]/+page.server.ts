@@ -31,6 +31,8 @@ function serializeMessage(message: ListRow) {
     threadId: message.threadId ?? null,
     hasThreadNote: 'hasThreadNote' in message ? Boolean(message.hasThreadNote) : false,
     important: 'important' in message ? (message.important ?? false) : false,
+    sendStatus: message.sendStatus ?? null,
+    smtpJobId: message.smtpJobId ?? null,
     ...('threadCount' in message ? { threadCount: message.threadCount } : {}),
     ...('hasUnread' in message ? { hasUnread: message.hasUnread } : {}),
     ...('hasImportantUnread' in message ? { hasImportantUnread: message.hasImportantUnread } : {}),

@@ -77,6 +77,8 @@
     receivedAt: string | null
     snoozedUntil: string | null
     threadDepth: number
+    sendStatus: 'sending' | 'failed' | 'sent' | null
+    smtpJobId: number | null
   }
 
   type Attachment = {
@@ -1068,7 +1070,21 @@
       </div>
     </div>
 
-    <h1 class="mt-3 text-lg font-semibold text-white">{subject}</h1>
+    <div class="mt-3 flex min-w-0 items-center gap-2">
+      <h1 class="truncate text-lg font-semibold text-white">{subject}</h1>
+      {#if lastMessage.sendStatus}
+        <span
+          class={[
+            'shrink-0 text-xs font-medium',
+            lastMessage.sendStatus === 'failed'
+              ? 'text-rose-300'
+              : lastMessage.sendStatus === 'sent'
+                ? 'text-emerald-300'
+                : 'text-amber-300'
+          ]}>[{lastMessage.sendStatus}]</span
+        >
+      {/if}
+    </div>
     <p class="mt-0.5 text-sm text-zinc-500">
       {messages.length} message{messages.length === 1 ? '' : 's'}
     </p>
@@ -1238,6 +1254,18 @@
                   {#if isUnread(msg.flags)}
                     <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400"></span>
                   {/if}
+                  {#if msg.sendStatus}
+                    <span
+                      class={[
+                        'shrink-0 text-xs font-medium',
+                        msg.sendStatus === 'failed'
+                          ? 'text-rose-300'
+                          : msg.sendStatus === 'sent'
+                            ? 'text-emerald-300'
+                            : 'text-amber-300'
+                      ]}>[{msg.sendStatus}]</span
+                    >
+                  {/if}
                 </div>
                 {#if !isExpanded}
                   <p class="mt-0.5 truncate text-xs text-zinc-500">
@@ -1283,6 +1311,22 @@
           <!-- Expanded content -->
           {#if isExpanded}
             <div class="px-4 pb-4 sm:px-5">
+              {#if msg.sendStatus}
+                <div class="mb-3 rounded-lg border border-white/8 bg-white/[0.03] p-3">
+                  <p
+                    class={[
+                      'text-sm font-semibold',
+                      msg.sendStatus === 'failed'
+                        ? 'text-rose-300'
+                        : msg.sendStatus === 'sent'
+                          ? 'text-emerald-300'
+                          : 'text-amber-300'
+                    ]}
+                  >
+                    [{msg.sendStatus}]
+                  </p>
+                </div>
+              {/if}
               <div class="mb-3">
                 <div class="flex flex-wrap gap-2">
                   <MailAuthenticationIndicators

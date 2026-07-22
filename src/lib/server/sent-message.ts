@@ -5,6 +5,7 @@ export const SMTP_JOB_HEADER = 'X-Pmail-Smtp-Job-ID'
 
 type SentMailbox = {
   path: string
+  configId?: string | null
   specialUse?: string | null
   flags?: Set<string> | null
 }
@@ -45,6 +46,13 @@ export function withoutBccHeader(rawMessage: Buffer) {
   ])
 }
 
+export function messageIdFromRawMessage(rawMessage: Buffer) {
+  const headerEnd = rawMessage.indexOf(Buffer.from('\r\n\r\n'))
+  const headers = rawMessage.subarray(0, headerEnd >= 0 ? headerEnd : rawMessage.length).toString()
+  const match = headers.match(/^message-id\s*:\s*([^\r\n]*(?:\r?\n[\t ][^\r\n]*)*)/im)
+  return match?.[1]?.replace(/\r?\n[\t ]+/g, ' ').trim() || null
+}
+
 export function selectSentImapConfig(smtpConfig: SmtpConfig, imapConfigs: ImapConfig[]) {
   return (
     imapConfigs.find((config) => config.id === smtpConfig.id) ??
@@ -66,6 +74,18 @@ export function findSentMailbox(mailboxes: SentMailbox[]) {
       /(^|[/_. -])sent([_. -]?(mail|items|messages))?$/i.test(mailbox.path)
     )?.path ??
     null
+  )
+}
+
+export function findSentMailboxForAccount(
+  mailboxes: SentMailbox[],
+  configId: string,
+  accountCount: number
+) {
+  return findSentMailbox(
+    mailboxes.filter(
+      (mailbox) => mailbox.configId === configId || (accountCount === 1 && mailbox.configId == null)
+    )
   )
 }
 

@@ -37,6 +37,8 @@ function serializeMessage(message: MailListRow | ThreadRow, includeMailbox = fal
     threadStarred: message.threadStarred ?? false,
     threadPinned: message.threadPinned ?? false,
     important: message.important ?? false,
+    sendStatus: message.sendStatus ?? null,
+    smtpJobId: message.smtpJobId ?? null,
     ...('hasThreadNote' in message ? { hasThreadNote: Boolean(message.hasThreadNote) } : {}),
     ...('threadCount' in message ? { threadCount: message.threadCount } : {}),
     ...('hasUnread' in message ? { hasUnread: message.hasUnread } : {}),

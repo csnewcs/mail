@@ -105,6 +105,8 @@ export type DemoMailRow = {
   replyTo: string | null
   inReplyTo: string | null
   references: string | null
+  sendStatus?: 'sending' | 'failed' | 'sent' | null
+  smtpJobId?: number | null
 }
 
 function isUnreadDemoMessage(message: Pick<DemoMailRow, 'mailbox' | 'flags'>) {
@@ -1730,7 +1732,9 @@ export async function sendDemoMessage(payload: {
     htmlContent: payload.html ?? null,
     replyTo: 'demo@example.com',
     inReplyTo: payload.inReplyTo ?? null,
-    references: payload.inReplyTo ?? null
+    references: payload.inReplyTo ?? null,
+    sendStatus: 'sent',
+    smtpJobId: null
   }
 
   demoMessages.unshift(message)

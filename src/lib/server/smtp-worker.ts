@@ -1,4 +1,5 @@
-import { and, eq, lte } from 'drizzle-orm'
+import { randomUUID } from 'node:crypto'
+import { and, eq, inArray, lte, or } from 'drizzle-orm'
 import nodemailer from 'nodemailer'
 import {
   getImapConfigs,
@@ -9,10 +10,10 @@ import {
 } from './config'
 import { parseAddressFields, upsertContacts } from './contacts'
 import { db } from './db'
-import { mailMessage, smtpJob } from './db/schema'
+import { mailboxCatalog, mailMessage, mailMessageMailbox, smtpJob } from './db/schema'
 import { logServerError } from './perf'
 import { isAuthError, withRetry } from './retry'
-import type { SmtpSendOperationPayload } from './smtp-operations'
+import { sentMailboxForPayload, type SmtpSendOperationPayload } from './smtp-operations'
 import {
   clearSignText,
   detachedSignText,
@@ -33,6 +34,7 @@ import {
 } from './imap-connections'
 import {
   selectSentImapConfig,
+  messageIdFromRawMessage,
   SMTP_JOB_HEADER,
   storeSentMessage,
   withoutBccHeader
@@ -226,6 +228,7 @@ async function buildRawMessage(
   }
 
   const mailOptions = {
+    messageId: job.messageId || undefined,
     from: payload.fromName
       ? { name: payload.fromName, address: outgoingSenderAddress(smtpConfig.from) }
       : smtpConfig.from,
@@ -331,15 +334,60 @@ async function saveSentCopy(
     client = await connectImap(imapConfig)
     const mailbox = await storeSentMessage(client, raw, job.id, deliveredAt)
     wakeMailboxSync(imapConfig.id, mailbox)
+    const [catalogMailbox] = await db
+      .select({ path: mailboxCatalog.path })
+      .from(mailboxCatalog)
+      .where(
+        and(
+          eq(mailboxCatalog.configId, imapConfig.id),
+          or(eq(mailboxCatalog.remotePath, mailbox), eq(mailboxCatalog.path, mailbox))
+        )
+      )
+      .limit(1)
+    return catalogMailbox?.path ?? job.sentMailbox ?? null
   } catch (error) {
     if (client) invalidateWorkerConnection(imapConfig.id, client)
     throw error
   }
 }
 
+async function ensureJobIdentity(job: SmtpJobRow, payload: SmtpSendOperationPayload) {
+  if (job.messageId) return
+  job.messageId = job.deliveredAt
+    ? job.rawMessage
+      ? messageIdFromRawMessage(job.rawMessage)
+      : null
+    : `<pmail-${randomUUID()}@mail.local>`
+  if (!job.messageId) return
+  job.sentMailbox = await sentMailboxForPayload(payload)
+  const [storedCopy] = job.sentMailbox
+    ? await db
+        .select({ id: mailMessageMailbox.id })
+        .from(mailMessageMailbox)
+        .where(
+          and(
+            eq(mailMessageMailbox.messageId, job.messageId),
+            eq(mailMessageMailbox.mailbox, job.sentMailbox)
+          )
+        )
+        .limit(1)
+    : []
+  job.placeholderActive = job.sentMailbox !== null && !storedCopy
+  await db
+    .update(smtpJob)
+    .set({
+      messageId: job.messageId,
+      sentMailbox: job.sentMailbox,
+      placeholderActive: job.placeholderActive,
+      updatedAt: new Date()
+    })
+    .where(eq(smtpJob.id, job.id))
+}
+
 async function runJob(job: SmtpJobRow) {
   const payload = parsePayload(job)
   const smtpConfig = await resolveSmtpConfig(payload.smtpServerId)
+  await ensureJobIdentity(job, payload)
   let raw = job.rawMessage
   let deliveredAt = job.deliveredAt
 
@@ -355,7 +403,13 @@ async function runJob(job: SmtpJobRow) {
     throw new Error(`SMTP job ${job.id} is missing its delivered message`)
   }
 
-  await saveSentCopy(job, smtpConfig, raw, deliveredAt)
+  const sentMailbox = await saveSentCopy(job, smtpConfig, raw, deliveredAt)
+  if (sentMailbox && sentMailbox !== job.sentMailbox) {
+    await db
+      .update(smtpJob)
+      .set({ sentMailbox, updatedAt: new Date() })
+      .where(eq(smtpJob.id, job.id))
+  }
 
   await upsertContacts(
     parseAddressFields([payload.to, payload.cc, payload.bcc]).map((contact) => ({
@@ -406,10 +460,22 @@ export async function dispatchReadySmtpOperations() {
 }
 
 export async function recoverInterruptedSmtpJobs() {
+  const interruptedOrQueued = await db
+    .select()
+    .from(smtpJob)
+    .where(inArray(smtpJob.status, ['pending', 'running']))
   await db
     .update(smtpJob)
     .set({ status: 'pending', updatedAt: new Date() })
     .where(eq(smtpJob.status, 'running'))
+
+  for (const job of interruptedOrQueued) {
+    try {
+      await ensureJobIdentity(job, parsePayload(job))
+    } catch (error) {
+      logServerError('smtpOperation.recoverIdentity', error, { jobId: job.id })
+    }
+  }
 }
 
 export async function waitForSmtpOperations() {

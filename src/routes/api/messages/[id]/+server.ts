@@ -19,6 +19,10 @@ function parseSnoozedUntil(value: unknown) {
 }
 
 export const POST: RequestHandler = async ({ params, request }) => {
+  const id = Number(params.id)
+  if (!Number.isInteger(id) || id <= 0) {
+    error(409, 'Sending placeholders cannot be modified')
+  }
   const body = await request.json().catch(() => null)
   const action = body?.action as string | undefined
 
@@ -29,7 +33,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
       error(400, 'snoozedUntil must be in the future')
     }
 
-    const count = await snoozeMessages([Number(params.id)], snoozedUntil)
+    const count = await snoozeMessages([id], snoozedUntil)
     if (count === 0) error(404, 'Message not found')
 
     return json({ ok: true, snoozedUntil: snoozedUntil?.toISOString() ?? null })
