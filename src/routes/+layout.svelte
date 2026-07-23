@@ -5,6 +5,7 @@
   import type { Snippet } from 'svelte'
   import { onMount } from 'svelte'
   import { Toaster } from '$lib/components/ui/sonner'
+  import WindowControlsOverlay from '$lib/components/WindowControlsOverlay.svelte'
   import { applyThemeStyle, type ThemeStyle } from '$lib/theme'
 
   type ThemePreference = 'light' | 'dark' | 'system'
@@ -58,5 +59,7 @@
 <div aria-hidden="true" class={['route-loading-bar', isLoading && 'active']}></div>
 
 <Toaster position="top-center" theme={data.themePreference} />
+
+<WindowControlsOverlay />
 
 {@render children()}
