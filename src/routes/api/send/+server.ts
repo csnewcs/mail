@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
-import { MAX_INLINE_ATTACHMENT_SIZE_BYTES, parseComposerAttachments } from '$lib/mail-attachments'
+import { parseComposerAttachments } from '$lib/mail-attachments'
 import { appendPublicAttachmentLinks } from '$lib/public-attachments'
 import { normalizeRecipientList, validateRecipientFields } from '$lib/recipients'
 import { getSmtpConfig, getSmtpConfigs, getUndoSendSeconds } from '$lib/server/config'
@@ -64,10 +64,10 @@ export const POST: RequestHandler = async ({ request, url }) => {
     : 'none'
   const useOpenPgp = signingMethod !== 'none' || openPgpEncrypt === true || attachPublicKey === true
   const inlineAttachments = parsedAttachments.attachments.filter(
-    (attachment) => attachment.size <= MAX_INLINE_ATTACHMENT_SIZE_BYTES
+    (attachment) => attachment.deliveryMode === 'mail'
   )
-  const largeAttachments = parsedAttachments.attachments.filter(
-    (attachment) => attachment.size > MAX_INLINE_ATTACHMENT_SIZE_BYTES
+  const linkedAttachments = parsedAttachments.attachments.filter(
+    (attachment) => attachment.deliveryMode === 'public'
   )
 
   if (isDemoModeEnabled()) {
@@ -108,7 +108,7 @@ export const POST: RequestHandler = async ({ request, url }) => {
     return error(400, 'Invalid sendAt value')
   }
 
-  const publicAttachments = await storePublicAttachments(largeAttachments)
+  const publicAttachments = await storePublicAttachments(linkedAttachments)
   const deliveryHtml = appendPublicAttachmentLinks(html, url.origin, publicAttachments)
 
   if (isDemoModeEnabled()) {

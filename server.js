@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 import { WebSocketServer } from 'ws'
 
-process.env.BODY_SIZE_LIMIT ||= '40M'
+process.env.BODY_SIZE_LIMIT ||= 'Infinity'
 const { handler } = await import('./build/handler.js')
 
 const host = process.env.HOST || '0.0.0.0'

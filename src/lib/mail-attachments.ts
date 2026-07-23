@@ -3,7 +3,10 @@ export type ComposerAttachment = {
   contentType: string
   size: number
   contentBase64: string
+  deliveryMode: AttachmentDeliveryMode
 }
+
+export type AttachmentDeliveryMode = 'mail' | 'public'
 
 export type AttachmentSafetyInput = {
   filename?: string | null
@@ -20,9 +23,7 @@ export type AttachmentSafetyScore = {
 }
 
 export const MAX_ATTACHMENT_COUNT = 10
-export const MAX_INLINE_ATTACHMENT_SIZE_BYTES = 5 * 1024 * 1024
-export const MAX_ATTACHMENT_SIZE_BYTES = 25 * 1024 * 1024
-export const MAX_TOTAL_ATTACHMENT_SIZE_BYTES = 25 * 1024 * 1024
+const LEGACY_PUBLIC_LINK_THRESHOLD_BYTES = 5 * 1024 * 1024
 
 const HIGH_RISK_EXTENSIONS = new Set([
   'app',
@@ -159,7 +160,8 @@ export function attachmentSignature(attachments: ComposerAttachment[]): string {
         attachment.name,
         attachment.contentType,
         String(attachment.size),
-        attachment.contentBase64
+        attachment.contentBase64,
+        attachment.deliveryMode
       ].join(':')
     )
     .join('|')
@@ -168,7 +170,12 @@ export function attachmentSignature(attachments: ComposerAttachment[]): string {
 export function summarizeAttachments(
   attachments: ComposerAttachment[]
 ): ComposerAttachmentSummary[] {
-  return attachments.map(({ name, contentType, size }) => ({ name, contentType, size }))
+  return attachments.map(({ name, contentType, size, deliveryMode }) => ({
+    name,
+    contentType,
+    size,
+    deliveryMode
+  }))
 }
 
 function getDecodedBase64Size(contentBase64: string): number {
@@ -207,8 +214,6 @@ export function parseComposerAttachments(
   }
 
   const attachments: ComposerAttachment[] = []
-  let totalSize = 0
-
   for (const item of input) {
     if (!item || typeof item !== 'object') {
       return { ok: false, error: 'Each attachment must be an object' }
@@ -224,16 +229,17 @@ export function parseComposerAttachments(
       typeof record.contentType === 'string' && record.contentType.trim()
         ? record.contentType.trim()
         : 'application/octet-stream'
-
     if (!name) return { ok: false, error: 'Attachment name is required' }
     if (!Number.isInteger(sizeNumber) || sizeNumber < 0) {
       return { ok: false, error: `Invalid size for attachment ${name}` }
     }
-    if (sizeNumber > MAX_ATTACHMENT_SIZE_BYTES) {
-      return {
-        ok: false,
-        error: `Attachment ${name} exceeds the ${MAX_ATTACHMENT_SIZE_BYTES} byte limit`
-      }
+    let deliveryMode: AttachmentDeliveryMode
+    if (record.deliveryMode == null) {
+      deliveryMode = sizeNumber > LEGACY_PUBLIC_LINK_THRESHOLD_BYTES ? 'public' : 'mail'
+    } else if (record.deliveryMode === 'mail' || record.deliveryMode === 'public') {
+      deliveryMode = record.deliveryMode
+    } else {
+      return { ok: false, error: `Invalid delivery mode for attachment ${name}` }
     }
     if (!contentBase64) {
       return { ok: false, error: `Attachment content is required for ${name}` }
@@ -244,19 +250,12 @@ export function parseComposerAttachments(
     if (getDecodedBase64Size(contentBase64) !== sizeNumber) {
       return { ok: false, error: `Attachment size mismatch for ${name}` }
     }
-    totalSize += sizeNumber
-    if (totalSize > MAX_TOTAL_ATTACHMENT_SIZE_BYTES) {
-      return {
-        ok: false,
-        error: `Total attachment size exceeds ${MAX_TOTAL_ATTACHMENT_SIZE_BYTES} bytes`
-      }
-    }
-
     attachments.push({
       name,
       contentType,
       size: sizeNumber,
-      contentBase64
+      contentBase64,
+      deliveryMode
     })
   }
 

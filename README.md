@@ -76,12 +76,12 @@ by any non-empty value except `false`.
 
 These settings apply to `node server.js` and the prebuilt web container.
 
-| Variable          | Description                                                                                                                   | Default                        | Example      |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------ | ------------ |
-| `HOST`            | Address on which the HTTP server listens.                                                                                     | `0.0.0.0`                      | `127.0.0.1`  |
-| `PORT`            | HTTP server port.                                                                                                             | `3000`                         | `8080`       |
-| `BODY_SIZE_LIMIT` | Maximum request-body size accepted by the SvelteKit handler. Use a number of bytes or a unit suffix such as `K`, `M`, or `G`. | `16M`                          | `32M`        |
-| `NODE_ENV`        | Set to `production` to disable development performance logs. The runtime Docker image sets this automatically.                | unset (`production` in Docker) | `production` |
+| Variable          | Description                                                                                                                                     | Default                        | Example      |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ | ------------ |
+| `HOST`            | Address on which the HTTP server listens.                                                                                                       | `0.0.0.0`                      | `127.0.0.1`  |
+| `PORT`            | HTTP server port.                                                                                                                               | `3000`                         | `8080`       |
+| `BODY_SIZE_LIMIT` | Maximum request-body size accepted by the SvelteKit handler. Use `Infinity` for no limit, or a number with an optional `K`, `M`, or `G` suffix. | `Infinity`                     | `32M`        |
+| `NODE_ENV`        | Set to `production` to disable development performance logs. The runtime Docker image sets this automatically.                                  | unset (`production` in Docker) | `production` |
 
 ### Authentication providers
 

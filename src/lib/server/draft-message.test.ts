@@ -20,7 +20,8 @@ test('builds a complete draft MIME message with stable headers and attachments',
         name: 'note.txt',
         contentType: 'text/plain',
         size: 5,
-        contentBase64: Buffer.from('hello').toString('base64')
+        contentBase64: Buffer.from('hello').toString('base64'),
+        deliveryMode: 'mail'
       }
     ]
   )

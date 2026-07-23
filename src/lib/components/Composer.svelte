@@ -59,8 +59,7 @@
   import {
     attachmentSignature,
     MAX_ATTACHMENT_COUNT,
-    MAX_ATTACHMENT_SIZE_BYTES,
-    MAX_TOTAL_ATTACHMENT_SIZE_BYTES,
+    type AttachmentDeliveryMode,
     type ComposerAttachment
   } from '$lib/mail-attachments'
   import { normalizeRecipientList, validateRecipientFields } from '$lib/recipients'
@@ -77,6 +76,9 @@
   let showDiscardDialog = $state(false)
   let discardDialogWasMinimized = $state(false)
   let attachmentInput = $state<HTMLInputElement | undefined>(undefined)
+  let showAttachmentModeMenu = $state(false)
+  let attachmentInputMode = $state<AttachmentDeliveryMode>('mail')
+  let droppedAttachmentFiles = $state<File[] | null>(null)
   let viewportWidth = $state(1024)
   let composingAi = $state(false)
   let aiRewriteMode = $state<RewriteMode | null>(null)
@@ -143,9 +145,7 @@
     composer.fullscreen ||
       (!composer.minimized && (isMobile || (isAdvancedLayout && viewportWidth < 800)))
   )
-  const isAttachmentDragActive = $derived(
-    isAdvancedLayout && attachmentDragDepth > 0 && !composer.minimized
-  )
+  const isAttachmentDragActive = $derived(attachmentDragDepth > 0 && !composer.minimized)
   const recipientValidation = $derived(
     validateRecipientFields({
       to: composer.to,
@@ -212,7 +212,6 @@
         composer.cc ||
         composer.bcc ||
         composer.fromName ||
-        composer.attachments.length > 0 ||
         (composer.selectedSmtpServerId &&
           composer.selectedSmtpServerId !== composer.smtpServers[0]?.id) ||
         composer.openPgpSigning !== 'none' ||
@@ -226,6 +225,8 @@
       errorDialogMessage = null
       attachmentError = null
       attachmentDragDepth = 0
+      showAttachmentModeMenu = false
+      droppedAttachmentFiles = null
       pendingSendWarnings = []
       void loadTemplates()
       void loadSmtpServers()
@@ -235,6 +236,8 @@
     if (!composer.open && prevOpen) {
       lastSavedContent = ''
       attachmentDragDepth = 0
+      showAttachmentModeMenu = false
+      droppedAttachmentFiles = null
       pendingSendWarnings = []
       markdownMode = false
       markdownSource = ''
@@ -543,6 +546,8 @@
     showTemplateMenu = false
     showAiMenu = false
     showSendLaterMenu = false
+    showAttachmentModeMenu = false
+    droppedAttachmentFiles = null
   }
 
   function splitQuotedHtml(html: string) {
@@ -676,7 +681,7 @@
       bcc: isAdvancedLayout ? normalizeRecipientList(composer.bcc) || null : null,
       subject: composer.subject,
       html,
-      attachments: isAdvancedLayout ? composer.attachments : [],
+      attachments: composer.attachments,
       inReplyTo: composer.inReplyTo,
       smtpServerId: isAdvancedLayout
         ? composer.selectedSmtpServerId || null
@@ -872,18 +877,22 @@
     return btoa(binary)
   }
 
-  async function fileToAttachment(file: File): Promise<ComposerAttachment> {
+  async function fileToAttachment(
+    file: File,
+    deliveryMode: AttachmentDeliveryMode
+  ): Promise<ComposerAttachment> {
     const buffer = await file.arrayBuffer()
 
     return {
       name: file.name,
       contentType: file.type || 'application/octet-stream',
       size: file.size,
-      contentBase64: arrayBufferToBase64(buffer)
+      contentBase64: arrayBufferToBase64(buffer),
+      deliveryMode
     }
   }
 
-  async function addAttachmentFiles(files: File[]) {
+  async function addAttachmentFiles(files: File[], deliveryMode: AttachmentDeliveryMode) {
     if (files.length === 0) return
 
     if (composer.attachments.length + files.length > MAX_ATTACHMENT_COUNT) {
@@ -905,26 +914,10 @@
       return
     }
 
-    const currentTotal = composer.attachments.reduce(
-      (sum: number, attachment: ComposerAttachment) => sum + attachment.size,
-      0
-    )
-    const newTotal = files.reduce((sum, file) => sum + file.size, 0)
-
-    if (files.some((file) => file.size > MAX_ATTACHMENT_SIZE_BYTES)) {
-      showAttachmentError(`Each file must be ${formatBytes(MAX_ATTACHMENT_SIZE_BYTES)} or smaller.`)
-      return
-    }
-
-    if (currentTotal + newTotal > MAX_TOTAL_ATTACHMENT_SIZE_BYTES) {
-      showAttachmentError(
-        `Attachments can total up to ${formatBytes(MAX_TOTAL_ATTACHMENT_SIZE_BYTES)}.`
-      )
-      return
-    }
-
     try {
-      const attachments = await Promise.all(files.map((file) => fileToAttachment(file)))
+      const attachments = await Promise.all(
+        files.map((file) => fileToAttachment(file, deliveryMode))
+      )
       composer.attachments = [...composer.attachments, ...attachments]
       attachmentError = null
       await saveDraft()
@@ -938,32 +931,59 @@
     const files = Array.from(input.files ?? [])
     input.value = ''
 
-    await addAttachmentFiles(files)
+    await addAttachmentFiles(files, attachmentInputMode)
+  }
+
+  function openAttachmentModeChooser(files: File[] | null = null) {
+    if (files === null && showAttachmentModeMenu) {
+      showAttachmentModeMenu = false
+      droppedAttachmentFiles = null
+      return
+    }
+    droppedAttachmentFiles = files
+    showSendLaterMenu = false
+    showTemplateMenu = false
+    showAiMenu = false
+    showAttachmentModeMenu = true
+  }
+
+  function chooseAttachmentMode(mode: AttachmentDeliveryMode) {
+    const files = droppedAttachmentFiles
+    attachmentInputMode = mode
+    droppedAttachmentFiles = null
+    showAttachmentModeMenu = false
+
+    if (files) {
+      void addAttachmentFiles(files, mode)
+      return
+    }
+    attachmentInput?.click()
   }
 
   function handleAttachmentDragEnter(event: DragEvent) {
-    if (!isAdvancedLayout || !hasDraggedFiles(event) || composer.minimized) return
+    if (!hasDraggedFiles(event) || composer.minimized) return
     event.preventDefault()
     attachmentDragDepth += 1
   }
 
   function handleAttachmentDragOver(event: DragEvent) {
-    if (!isAdvancedLayout || !hasDraggedFiles(event) || composer.minimized) return
+    if (!hasDraggedFiles(event) || composer.minimized) return
     event.preventDefault()
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
   }
 
   function handleAttachmentDragLeave(event: DragEvent) {
-    if (!isAdvancedLayout || !hasDraggedFiles(event) || composer.minimized) return
+    if (!hasDraggedFiles(event) || composer.minimized) return
     event.preventDefault()
     attachmentDragDepth = Math.max(0, attachmentDragDepth - 1)
   }
 
   async function handleAttachmentDrop(event: DragEvent) {
-    if (!isAdvancedLayout || !hasDraggedFiles(event) || composer.minimized) return
+    if (!hasDraggedFiles(event) || composer.minimized) return
     event.preventDefault()
     attachmentDragDepth = 0
-    await addAttachmentFiles(Array.from(event.dataTransfer?.files ?? []))
+    const files = Array.from(event.dataTransfer?.files ?? [])
+    if (files.length > 0) openAttachmentModeChooser(files)
   }
 
   async function removeAttachment(index: number) {
@@ -1218,7 +1238,6 @@
 
     <!-- Toolbar -->
     <div
-      class:hidden={!isAdvancedLayout}
       class="flex shrink-0 flex-wrap items-center gap-0.5 border-b border-white/8 bg-[#16161a] px-2 py-1.5"
     >
       {#if !markdownMode}
@@ -1482,14 +1501,14 @@
             <Paperclip size={22} class="mx-auto mb-2 text-blue-300" />
             <p class="text-sm font-medium text-blue-100">Drop files to attach</p>
             <p class="mt-1 text-xs text-zinc-400">
-              Up to {MAX_ATTACHMENT_COUNT} files, {formatBytes(MAX_TOTAL_ATTACHMENT_SIZE_BYTES)} total
+              Up to {MAX_ATTACHMENT_COUNT} files
             </p>
           </div>
         </div>
       {/if}
     </div>
 
-    {#if isAdvancedLayout && attachmentError}
+    {#if attachmentError}
       <div class="border-t border-rose-400/20 bg-rose-500/10 px-4 py-2 text-xs text-rose-200">
         {attachmentError}
       </div>
@@ -1526,31 +1545,33 @@
       </div>
     {/if}
 
-    {#if isAdvancedLayout && composer.attachments.length > 0}
+    {#if composer.attachments.length > 0}
       <div class="border-t border-white/8 bg-[#16161a] px-4 py-3">
-        {#if composer.attachments.length > 0}
-          <div class="flex flex-wrap gap-2">
-            {#each composer.attachments as attachment, index (`${attachment.name}-${attachment.size}-${index}`)}
-              <div
-                class="flex min-w-0 items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-zinc-300"
-              >
-                <FileText size={14} class="shrink-0 text-zinc-400" />
-                <div class="min-w-0">
-                  <p class="truncate font-medium text-zinc-200">{attachment.name}</p>
-                  <p class="text-zinc-500">{formatBytes(attachment.size)}</p>
-                </div>
-                <button
-                  type="button"
-                  aria-label={`Remove ${attachment.name}`}
-                  onclick={() => removeAttachment(index)}
-                  class="rounded p-1 text-zinc-500 transition hover:bg-white/8 hover:text-rose-400"
-                >
-                  <Trash2 size={13} />
-                </button>
+        <div class="flex flex-wrap gap-2">
+          {#each composer.attachments as attachment, index (`${attachment.name}-${attachment.size}-${index}`)}
+            <div
+              class="flex min-w-0 items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-zinc-300"
+            >
+              <FileText size={14} class="shrink-0 text-zinc-400" />
+              <div class="min-w-0">
+                <p class="truncate font-medium text-zinc-200">{attachment.name}</p>
+                <p class="text-zinc-500">
+                  {formatBytes(attachment.size)} · {attachment.deliveryMode === 'public'
+                    ? 'Public link'
+                    : 'Mail attachment'}
+                </p>
               </div>
-            {/each}
-          </div>
-        {/if}
+              <button
+                type="button"
+                aria-label={`Remove ${attachment.name}`}
+                onclick={() => removeAttachment(index)}
+                class="rounded p-1 text-zinc-500 transition hover:bg-white/8 hover:text-rose-400"
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
+          {/each}
+        </div>
       </div>
     {/if}
 
@@ -1643,16 +1664,56 @@
             </div>
           {/if}
         </div>
-        <button
-          class:hidden={!isAdvancedLayout}
-          type="button"
-          disabled={sending}
-          onclick={() => attachmentInput?.click()}
-          class="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-zinc-300 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          <Paperclip size={14} />
-          Attach
-        </button>
+        <div class="relative">
+          <button
+            type="button"
+            disabled={sending}
+            aria-haspopup="menu"
+            aria-expanded={showAttachmentModeMenu}
+            onclick={() => openAttachmentModeChooser()}
+            class="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-zinc-300 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Paperclip size={14} />
+            Attach
+          </button>
+
+          {#if showAttachmentModeMenu}
+            <div
+              class="absolute bottom-full left-0 z-20 mb-2 w-64 overflow-hidden rounded-xl border border-white/10 bg-zinc-950 p-1 shadow-2xl shadow-black/40"
+              role="menu"
+              aria-label="Attachment delivery mode"
+            >
+              <button
+                type="button"
+                role="menuitem"
+                onclick={() => chooseAttachmentMode('mail')}
+                class="flex w-full items-start gap-3 rounded-lg px-3 py-2 text-left hover:bg-white/8"
+              >
+                <Paperclip size={15} class="mt-0.5 shrink-0 text-blue-300" />
+                <span>
+                  <span class="block text-sm font-medium text-zinc-200">Mail attachment</span>
+                  <span class="mt-0.5 block text-xs text-zinc-500">
+                    Include the files directly in the email.
+                  </span>
+                </span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onclick={() => chooseAttachmentMode('public')}
+                class="flex w-full items-start gap-3 rounded-lg px-3 py-2 text-left hover:bg-white/8"
+              >
+                <LinkIcon size={15} class="mt-0.5 shrink-0 text-emerald-300" />
+                <span>
+                  <span class="block text-sm font-medium text-zinc-200">Public link</span>
+                  <span class="mt-0.5 block text-xs text-zinc-500">
+                    Upload the files and add public download links.
+                  </span>
+                </span>
+              </button>
+            </div>
+          {/if}
+        </div>
         <div class:hidden={!isAdvancedLayout} class="relative">
           <button
             type="button"

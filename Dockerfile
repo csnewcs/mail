@@ -32,7 +32,7 @@ COPY --from=build /app/src ./src
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=3000 \
-    BODY_SIZE_LIMIT=40M
+    BODY_SIZE_LIMIT=Infinity
 
 EXPOSE 3000
 CMD ["node", "server.js"]
