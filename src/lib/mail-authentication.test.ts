@@ -1,12 +1,23 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mailAuthenticationStatusLabel, parseMailAuthentication } from './mail-authentication.ts'
+import {
+  mailAuthenticationStatusLabel,
+  mailAuthenticationSummary,
+  parseMailAuthentication
+} from './mail-authentication.ts'
 
 test('displays actual receiver-reported authentication statuses', () => {
   assert.equal(mailAuthenticationStatusLabel('pass'), 'pass')
   assert.equal(mailAuthenticationStatusLabel('fail'), 'fail')
   assert.equal(mailAuthenticationStatusLabel('temperror'), 'temp error')
   assert.equal(mailAuthenticationStatusLabel(null), 'unknown')
+})
+
+test('summarizes authentication results as pass, fail, or none', () => {
+  assert.equal(mailAuthenticationSummary(['pass', 'pass', 'pass']), 'pass')
+  assert.equal(mailAuthenticationSummary(['pass', null, 'none']), 'pass')
+  assert.equal(mailAuthenticationSummary(['pass', 'softfail', null]), 'fail')
+  assert.equal(mailAuthenticationSummary(['neutral', 'none', null]), 'none')
 })
 
 test('parses receiver-reported SPF, DKIM, and DMARC results', () => {

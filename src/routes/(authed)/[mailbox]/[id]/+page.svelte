@@ -1447,12 +1447,24 @@
                 authenticationTrusted={message.authenticationTrusted}
               />
               {#if message.tracingCodeCount > 0}
-                <span
-                  class="inline-flex items-center rounded-full border border-rose-400/20 bg-rose-400/10 px-2 py-0.5 text-[10px] font-medium text-rose-300 uppercase"
-                  title={`${message.tracingCodeCount} tracing code${message.tracingCodeCount === 1 ? '' : 's'} found in this email's HTML content.`}
-                >
-                  Tracing code detected
-                </span>
+                <div class="group relative inline-flex">
+                  <button
+                    type="button"
+                    class="inline-flex items-center rounded-full border border-rose-400/20 bg-rose-400/10 px-2 py-0.5 text-[10px] font-medium text-rose-300 uppercase"
+                    aria-describedby="tracing-code-tooltip"
+                  >
+                    Tracing code detected
+                  </button>
+                  <span
+                    id="tracing-code-tooltip"
+                    role="tooltip"
+                    class="pointer-events-none absolute top-full left-1/2 z-20 mt-2 w-max max-w-64 -translate-x-1/2 rounded-md border border-white/10 bg-zinc-800 px-2 py-1 text-xs font-normal text-zinc-200 normal-case opacity-0 shadow-xl transition-opacity group-focus-within:opacity-100 group-hover:opacity-100"
+                  >
+                    {message.tracingCodeCount} tracing code{message.tracingCodeCount === 1
+                      ? ''
+                      : 's'} found in this email's HTML content.
+                  </span>
+                </div>
               {/if}
               <OpenPgpIndicator
                 signed={message.openPgpSigned}

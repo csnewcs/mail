@@ -32,6 +32,23 @@ export function mailAuthenticationStatusLabel(status: string | null) {
   return status.replace('error', ' error')
 }
 
+export function mailAuthenticationSummary(statuses: readonly (string | null | undefined)[]) {
+  if (
+    statuses.some(
+      (status) =>
+        status === 'fail' ||
+        status === 'softfail' ||
+        status === 'temperror' ||
+        status === 'permerror' ||
+        status === 'policy'
+    )
+  ) {
+    return 'fail'
+  }
+  if (statuses.some((status) => status === 'pass')) return 'pass'
+  return 'none'
+}
+
 function methodStatus(value: string, method: 'spf' | 'dkim' | 'dmarc') {
   const clauses: string[] = []
   let clause = ''
