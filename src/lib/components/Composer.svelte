@@ -86,6 +86,8 @@
   let attachmentError = $state<string | null>(null)
   let processingAttachmentCount = $state(0)
   let uploadingPublicAttachmentCount = $state(0)
+  let publicAttachmentUploadedBytes = $state(0)
+  let publicAttachmentTotalBytes = $state(0)
   let attachmentDragDepth = $state(0)
   let sendLaterAt = $state('')
   let showSendLaterMenu = $state(false)
@@ -146,6 +148,16 @@
       (!composer.minimized && (isMobile || (isAdvancedLayout && viewportWidth < 800)))
   )
   const isAttachmentDragActive = $derived(attachmentDragDepth > 0 && !composer.minimized)
+  const publicAttachmentUploadProgress = $derived(
+    publicAttachmentTotalBytes === 0
+      ? uploadingPublicAttachmentCount > 0
+        ? 100
+        : 0
+      : Math.min(
+          100,
+          Math.round((publicAttachmentUploadedBytes / publicAttachmentTotalBytes) * 100)
+        )
+  )
   const recipientValidation = $derived(
     validateRecipientFields({
       to: composer.to,
@@ -896,32 +908,52 @@
     return btoa(binary)
   }
 
+  function uploadPublicAttachment(file: File, onProgress: (loaded: number) => void) {
+    return new Promise<string>((resolveUpload, rejectUpload) => {
+      const request = new XMLHttpRequest()
+      const fallback = `Failed to upload ${file.name}.`
+
+      request.open('POST', '/api/public-attachments')
+      request.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
+      request.setRequestHeader('X-Attachment-Name', encodeURIComponent(file.name))
+      request.setRequestHeader('X-Attachment-Size', String(file.size))
+      request.upload.addEventListener('progress', (event) => onProgress(event.loaded))
+      request.addEventListener('error', () => rejectUpload(new Error(fallback)))
+      request.addEventListener('load', () => {
+        if (request.status < 200 || request.status >= 300) {
+          const responseText = request.responseText.trim()
+          try {
+            rejectUpload(new Error(errorMessageFromUnknown(JSON.parse(responseText), fallback)))
+          } catch {
+            rejectUpload(new Error(responseText || fallback))
+          }
+          return
+        }
+
+        try {
+          const uploaded = JSON.parse(request.responseText) as { token?: unknown }
+          if (typeof uploaded.token !== 'string' || !uploaded.token) throw new Error(fallback)
+          resolveUpload(uploaded.token)
+        } catch {
+          rejectUpload(new Error(fallback))
+        }
+      })
+      request.send(file)
+    })
+  }
+
   async function fileToAttachment(
     file: File,
-    deliveryMode: AttachmentDeliveryMode
+    deliveryMode: AttachmentDeliveryMode,
+    onUploadProgress: (loaded: number) => void = () => undefined
   ): Promise<ComposerAttachment> {
     if (deliveryMode === 'public') {
-      const response = await fetch('/api/public-attachments', {
-        method: 'POST',
-        headers: {
-          'Content-Type': file.type || 'application/octet-stream',
-          'X-Attachment-Name': encodeURIComponent(file.name),
-          'X-Attachment-Size': String(file.size)
-        },
-        body: file
-      })
-      if (!response.ok) {
-        throw new Error(await readErrorMessage(response, `Failed to upload ${file.name}.`))
-      }
-      const uploaded = (await response.json()) as { token?: unknown }
-      if (typeof uploaded.token !== 'string' || !uploaded.token) {
-        throw new Error(`Failed to upload ${file.name}.`)
-      }
+      const token = await uploadPublicAttachment(file, onUploadProgress)
       return {
         name: file.name,
         contentType: file.type || 'application/octet-stream',
         size: file.size,
-        token: uploaded.token,
+        token,
         deliveryMode
       }
     }
@@ -961,9 +993,30 @@
 
     const attachments: ComposerAttachment[] = []
     processingAttachmentCount += files.length
-    if (deliveryMode === 'public') uploadingPublicAttachmentCount += files.length
+    const totalUploadSize = files.reduce((total, file) => total + file.size, 0)
+    let batchUploadedSize = 0
+    if (deliveryMode === 'public') {
+      uploadingPublicAttachmentCount += files.length
+      publicAttachmentTotalBytes += totalUploadSize
+    }
     try {
-      for (const file of files) attachments.push(await fileToAttachment(file, deliveryMode))
+      for (const file of files) {
+        let fileUploadedSize = 0
+        attachments.push(
+          await fileToAttachment(file, deliveryMode, (loaded) => {
+            const nextUploadedSize = Math.min(file.size, loaded)
+            const uploadedSizeDelta = Math.max(0, nextUploadedSize - fileUploadedSize)
+            fileUploadedSize = nextUploadedSize
+            batchUploadedSize += uploadedSizeDelta
+            publicAttachmentUploadedBytes += uploadedSizeDelta
+          })
+        )
+        if (deliveryMode === 'public') {
+          const uploadedSizeDelta = file.size - fileUploadedSize
+          batchUploadedSize += uploadedSizeDelta
+          publicAttachmentUploadedBytes += uploadedSizeDelta
+        }
+      }
       composer.attachments = [...composer.attachments, ...attachments]
       attachmentError = null
       await saveDraft()
@@ -974,6 +1027,11 @@
       processingAttachmentCount = Math.max(0, processingAttachmentCount - files.length)
       if (deliveryMode === 'public') {
         uploadingPublicAttachmentCount = Math.max(0, uploadingPublicAttachmentCount - files.length)
+        publicAttachmentUploadedBytes = Math.max(
+          0,
+          publicAttachmentUploadedBytes - batchUploadedSize
+        )
+        publicAttachmentTotalBytes = Math.max(0, publicAttachmentTotalBytes - totalUploadSize)
       }
     }
   }
@@ -1603,9 +1661,27 @@
     {/if}
 
     {#if uploadingPublicAttachmentCount > 0}
-      <div class="border-t border-blue-400/20 bg-blue-500/10 px-4 py-2 text-xs text-blue-200">
-        Uploading {uploadingPublicAttachmentCount} public-link
-        {uploadingPublicAttachmentCount === 1 ? 'attachment' : 'attachments'}…
+      <div class="border-t border-blue-400/20 bg-blue-500/10 px-4 py-2.5 text-blue-200">
+        <div class="mb-1.5 flex items-center justify-between gap-3 text-xs">
+          <span>
+            Uploading {uploadingPublicAttachmentCount} public-link
+            {uploadingPublicAttachmentCount === 1 ? 'attachment' : 'attachments'}…
+          </span>
+          <span class="font-medium tabular-nums">{publicAttachmentUploadProgress}%</span>
+        </div>
+        <div
+          role="progressbar"
+          aria-label="Attachment upload progress"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow={publicAttachmentUploadProgress}
+          class="h-1.5 overflow-hidden rounded-full bg-blue-950/60"
+        >
+          <div
+            class="h-full rounded-full bg-blue-400 transition-[width] duration-150 ease-out"
+            style:width={`${publicAttachmentUploadProgress}%`}
+          ></div>
+        </div>
       </div>
     {/if}
 
