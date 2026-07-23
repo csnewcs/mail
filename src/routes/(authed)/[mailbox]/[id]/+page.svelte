@@ -33,6 +33,7 @@
   import MailAuthenticationIndicators from '$lib/components/MailAuthenticationIndicators.svelte'
   import OpenPgpIndicator from '$lib/components/OpenPgpIndicator.svelte'
   import RawMessageDialog from '$lib/components/RawMessageDialog.svelte'
+  import SendStatusIndicator from '$lib/components/SendStatusIndicator.svelte'
   import UrlWarningDialog from '$lib/components/UrlWarningDialog.svelte'
   import { errorMessageFromUnknown, readErrorMessage } from '$lib/http'
   import { trackAppLoading } from '$lib/loading.svelte'
@@ -1037,9 +1038,7 @@
           <p class="truncate text-sm font-semibold text-white">
             {subjectLabel(message.subject)}
             {#if sendStatus}
-              <span class={['ml-1 font-medium', sendStatusClass(sendStatus)]}
-                >{sendStatusLabel(sendStatus, openedAt)}</span
-              >
+              <SendStatusIndicator status={sendStatus} {openedAt} size={12} />
             {/if}
           </p>
           <p class="truncate text-xs text-zinc-500">{senderName(message.from)}</p>
@@ -1410,9 +1409,7 @@
               {subjectLabel(message.subject)}
             </h2>
             {#if sendStatus}
-              <span class={['shrink-0 text-sm font-medium', sendStatusClass(sendStatus)]}
-                >{sendStatusLabel(sendStatus, openedAt)}</span
-              >
+              <SendStatusIndicator status={sendStatus} {openedAt} />
             {/if}
           </div>
           <div class="mt-1 flex min-w-0 items-center gap-2">

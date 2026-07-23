@@ -12,5 +12,8 @@ export function sendStatusFromJobStatus(
 }
 
 export function sendStatusLabel(status: SendStatus, openedAt?: Date | string | null) {
-  return status === 'sent' && openedAt ? '[read]' : `[${status}]`
+  if (status === 'sent' && openedAt) return 'Read'
+  if (status === 'failed') return 'Failed'
+  if (status === 'sending') return 'Sending'
+  return 'Sent'
 }

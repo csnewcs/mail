@@ -31,6 +31,7 @@
   import MailAuthenticationIndicators from '$lib/components/MailAuthenticationIndicators.svelte'
   import OpenPgpIndicator from '$lib/components/OpenPgpIndicator.svelte'
   import RawMessageDialog from '$lib/components/RawMessageDialog.svelte'
+  import SendStatusIndicator from '$lib/components/SendStatusIndicator.svelte'
   import UrlWarningDialog from '$lib/components/UrlWarningDialog.svelte'
   import { errorMessageFromUnknown, readErrorMessage } from '$lib/http'
   import { trackAppLoading } from '$lib/loading.svelte'
@@ -1080,16 +1081,7 @@
     <div class="mt-3 flex min-w-0 items-center gap-2">
       <h1 class="truncate text-lg font-semibold text-white">{subject}</h1>
       {#if lastMessage.sendStatus}
-        <span
-          class={[
-            'shrink-0 text-xs font-medium',
-            lastMessage.sendStatus === 'failed'
-              ? 'text-rose-300'
-              : lastMessage.sendStatus === 'sent'
-                ? 'text-emerald-300'
-                : 'text-amber-300'
-          ]}>{sendStatusLabel(lastMessage.sendStatus, openedAtFor(lastMessage))}</span
-        >
+        <SendStatusIndicator status={lastMessage.sendStatus} openedAt={openedAtFor(lastMessage)} />
       {/if}
     </div>
     <p class="mt-0.5 text-sm text-zinc-500">
@@ -1262,16 +1254,11 @@
                     <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400"></span>
                   {/if}
                   {#if msg.sendStatus}
-                    <span
-                      class={[
-                        'shrink-0 text-xs font-medium',
-                        msg.sendStatus === 'failed'
-                          ? 'text-rose-300'
-                          : msg.sendStatus === 'sent'
-                            ? 'text-emerald-300'
-                            : 'text-amber-300'
-                      ]}>{sendStatusLabel(msg.sendStatus, openedAtFor(msg))}</span
-                    >
+                    <SendStatusIndicator
+                      status={msg.sendStatus}
+                      openedAt={openedAtFor(msg)}
+                      size={12}
+                    />
                   {/if}
                 </div>
                 {#if !isExpanded}

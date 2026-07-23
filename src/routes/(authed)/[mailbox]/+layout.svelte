@@ -4,10 +4,10 @@
   import { resolve } from '$app/paths'
   import ActionModal from '$lib/components/ActionModal.svelte'
   import ErrorDialog from '$lib/components/ErrorDialog.svelte'
+  import SendStatusIndicator from '$lib/components/SendStatusIndicator.svelte'
   import { errorMessageFromUnknown, readErrorMessage } from '$lib/http'
   import { trackAppLoading } from '$lib/loading.svelte'
   import { pathToSlug } from '$lib/mailbox'
-  import { sendStatusLabel } from '$lib/send-status'
   import { MAILBOX_STATE_CHANGED_EVENT, notifyMailboxStateChanged } from '$lib/mailbox-state'
   import { getSimplifiedModeSidebarActionContext } from '$lib/simplified-mode-context'
   import { page } from '$app/state'
@@ -804,12 +804,6 @@
   function subjectLabel(subject: string | null | undefined) {
     if (!subject) return '(no subject)'
     return subject
-  }
-
-  function sendStatusClass(status: NonNullable<Message['sendStatus']>) {
-    if (status === 'failed') return 'text-rose-300'
-    if (status === 'sent') return 'text-emerald-300'
-    return 'text-amber-300'
   }
 
   function previewLabel(preview: string | null | undefined) {
@@ -2801,12 +2795,11 @@
                       >
                         {subjectLabel(message.subject)}
                         {#if message.sendStatus}
-                          <span
-                            class={[
-                              'ml-2 text-sm font-medium',
-                              sendStatusClass(message.sendStatus)
-                            ]}>{sendStatusLabel(message.sendStatus, message.openedAt)}</span
-                          >
+                          <SendStatusIndicator
+                            status={message.sendStatus}
+                            openedAt={message.openedAt}
+                            size={16}
+                          />
                         {/if}
                       </h2>
                     </div>
@@ -3390,12 +3383,11 @@
                             {subjectLabel(message.subject)}
                           </p>
                           {#if message.sendStatus}
-                            <span
-                              class={[
-                                'shrink-0 text-xs font-medium',
-                                sendStatusClass(message.sendStatus)
-                              ]}>{sendStatusLabel(message.sendStatus, message.openedAt)}</span
-                            >
+                            <SendStatusIndicator
+                              status={message.sendStatus}
+                              openedAt={message.openedAt}
+                              size={12}
+                            />
                           {/if}
                         </div>
                       </div>
@@ -3579,12 +3571,11 @@
                           {subjectLabel(message.subject)}
                         </p>
                         {#if message.sendStatus}
-                          <span
-                            class={[
-                              'shrink-0 text-xs font-medium',
-                              sendStatusClass(message.sendStatus)
-                            ]}>{sendStatusLabel(message.sendStatus, message.openedAt)}</span
-                          >
+                          <SendStatusIndicator
+                            status={message.sendStatus}
+                            openedAt={message.openedAt}
+                            size={12}
+                          />
                         {/if}
                       </div>
                     </div>
