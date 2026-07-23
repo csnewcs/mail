@@ -12,6 +12,7 @@
   import { invalidateSignatureCache } from '$lib/composer.svelte'
   import { errorMessageFromUnknown, readErrorMessage } from '$lib/http'
   import { normalizeAllowedSenders } from '$lib/remote-content'
+  import type { ShareAction } from '$lib/share-action'
   import type { ComposedMailboxIcon } from '$lib/composed-mailbox'
   import { pushNotifications } from '$lib/push-notifications.svelte'
   import {
@@ -126,6 +127,10 @@
     { value: 'light', label: 'Light' },
     { value: 'dark', label: 'Dark' }
   ]
+  const shareActionOptions: SelectOption[] = [
+    { value: 'native-share', label: 'Open native share screen' },
+    { value: 'copy-url', label: 'Copy URL' }
+  ]
   const senderRuleTypeOptions: SelectOption[] = [
     { value: 'block', label: 'Block' },
     { value: 'allow', label: 'Allow' }
@@ -222,6 +227,8 @@
       simplifiedView: boolean
       threadModeOnPageLoad: boolean
       density: DensityPreference
+      shareClickAction: ShareAction
+      shareShiftClickAction: ShareAction
       compactMode: boolean
       themePreference: ThemePreference
       themeStyle: ThemeStyle
@@ -299,6 +306,8 @@
     themePreference = $state<ThemePreference>('system')
     themeStyle = $state<ThemeStyle>(normalizeThemeStyle(null))
     density = $state<DensityPreference>('comfortable')
+    shareClickAction = $state<ShareAction>('native-share')
+    shareShiftClickAction = $state<ShareAction>('copy-url')
     translationTargetLanguage = $state('Korean')
     blockRemoteContent = $state(true)
     remoteContentAllowedSenders = $state('')
@@ -317,6 +326,8 @@
       themePreference: ThemePreference,
       themeStyle: ThemeStyle,
       density: DensityPreference,
+      shareClickAction: ShareAction,
+      shareShiftClickAction: ShareAction,
       translationTargetLanguage: string,
       remoteContent: Props['data']['remoteContent'],
       mailboxPreferences: MailboxPreferences
@@ -360,6 +371,8 @@
       this.themePreference = themePreference
       this.themeStyle = normalizeThemeStyle(themeStyle)
       this.density = density
+      this.shareClickAction = shareClickAction
+      this.shareShiftClickAction = shareShiftClickAction
       this.translationTargetLanguage = translationTargetLanguage
       this.blockRemoteContent = remoteContent.blockRemoteContent
       this.remoteContentAllowedSenders = remoteContent.allowedSenders.join('\n')
@@ -390,6 +403,8 @@
           data.themePreference,
           data.themeStyle,
           data.density,
+          data.shareClickAction,
+          data.shareShiftClickAction,
           data.translationTargetLanguage,
           data.remoteContent,
           data.mailboxPreferences
@@ -410,6 +425,8 @@
   let themePreference = $derived(form.themePreference)
   let themeStyle = $derived(form.themeStyle)
   let density = $derived(form.density)
+  let shareClickAction = $derived(form.shareClickAction)
+  let shareShiftClickAction = $derived(form.shareShiftClickAction)
   let translationTargetLanguage = $derived(form.translationTargetLanguage)
   let blockRemoteContent = $derived(form.blockRemoteContent)
   let remoteContentAllowedSenders = $derived(form.remoteContentAllowedSenders)
@@ -1475,6 +1492,8 @@
             data.themePreference,
             data.themeStyle,
             data.density,
+            data.shareClickAction,
+            data.shareShiftClickAction,
             data.translationTargetLanguage,
             data.remoteContent,
             data.mailboxPreferences
@@ -1656,6 +1675,8 @@
       themePreference,
       themeStyle,
       density,
+      shareClickAction,
+      shareShiftClickAction,
       translationTargetLanguage,
       blockRemoteContent,
       remoteContentAllowedSenders,
@@ -1973,6 +1994,8 @@
           themePreference,
           themeStyle,
           density,
+          shareClickAction,
+          shareShiftClickAction,
           translationTargetLanguage,
           remoteContent: {
             blockRemoteContent,
@@ -4047,6 +4070,46 @@
                 ></span>
               </span>
             </label>
+          </div>
+          <div class="rounded-lg border border-white/8 bg-white/3 p-4">
+            <div>
+              <p class="text-sm font-medium text-zinc-200">Share button actions</p>
+              <p class="mt-1 text-sm text-zinc-500">
+                Choose what the share button does for a normal click and a Shift-click.
+              </p>
+            </div>
+            <div class="mt-4 grid gap-4 sm:grid-cols-2">
+              <label class="block" for="share-click-action">
+                <span class="text-xs font-medium text-zinc-400">Normal click</span>
+                <CustomSelect
+                  id="share-click-action"
+                  value={shareClickAction}
+                  options={shareActionOptions}
+                  onchange={(value) => {
+                    form.shareClickAction = value as ShareAction
+                    autosaveToggleChange()
+                  }}
+                  ariaLabel="Normal-click share action"
+                  class="mt-2 w-full"
+                  buttonClass="px-3 py-2 text-sm"
+                />
+              </label>
+              <label class="block" for="share-shift-click-action">
+                <span class="text-xs font-medium text-zinc-400">Shift-click</span>
+                <CustomSelect
+                  id="share-shift-click-action"
+                  value={shareShiftClickAction}
+                  options={shareActionOptions}
+                  onchange={(value) => {
+                    form.shareShiftClickAction = value as ShareAction
+                    autosaveToggleChange()
+                  }}
+                  ariaLabel="Shift-click share action"
+                  class="mt-2 w-full"
+                  buttonClass="px-3 py-2 text-sm"
+                />
+              </label>
+            </div>
           </div>
           <div class="rounded-lg border border-white/8 bg-white/3 p-4">
             <div class="flex flex-col gap-4">

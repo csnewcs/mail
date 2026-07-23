@@ -1,4 +1,5 @@
 import { isValidThemeStyle, normalizeThemeStyle, type ThemeStyle } from '$lib/theme'
+import { isShareAction, type ShareAction } from '$lib/share-action'
 
 export const SETTINGS_BACKUP_SCHEMA_VERSION = 1
 
@@ -72,6 +73,8 @@ export type SettingsBackup = {
     themeStyle?: ThemeStyle
     translationTargetLanguage?: string
     density?: 'comfortable' | 'compact' | 'condensed'
+    shareClickAction?: ShareAction
+    shareShiftClickAction?: ShareAction
     remoteContent?: { blockRemoteContent?: boolean; allowedSenders?: string[] }
     mailboxPreferences?: { order?: string[]; hidden?: string[]; collapsedAccounts?: string[] }
     listRatio?: number
@@ -370,6 +373,22 @@ export function validateSettingsBackup(value: unknown): {
     if (themeStyle && !isValidThemeStyle(themeStyle)) {
       errors.push('preferences.themeStyle is invalid')
     }
+    const shareClickAction = optionalString(
+      preferencesObject.shareClickAction,
+      'preferences.shareClickAction',
+      errors
+    )
+    if (shareClickAction != null && !isShareAction(shareClickAction)) {
+      errors.push('preferences.shareClickAction is invalid')
+    }
+    const shareShiftClickAction = optionalString(
+      preferencesObject.shareShiftClickAction,
+      'preferences.shareShiftClickAction',
+      errors
+    )
+    if (shareShiftClickAction != null && !isShareAction(shareShiftClickAction)) {
+      errors.push('preferences.shareShiftClickAction is invalid')
+    }
     backup.preferences = {
       simplifiedView: optionalBoolean(
         preferencesObject.simplifiedView,
@@ -399,6 +418,10 @@ export function validateSettingsBackup(value: unknown): {
       ),
       density: ['comfortable', 'compact', 'condensed'].includes(String(preferencesObject.density))
         ? (preferencesObject.density as 'comfortable' | 'compact' | 'condensed')
+        : undefined,
+      shareClickAction: isShareAction(shareClickAction) ? shareClickAction : undefined,
+      shareShiftClickAction: isShareAction(shareShiftClickAction)
+        ? shareShiftClickAction
         : undefined,
       remoteContent: optionalObject(
         preferencesObject.remoteContent,

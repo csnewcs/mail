@@ -81,6 +81,8 @@ export const load: PageServerLoad = async ({ params }) => {
     message: serializeMessage(message, true),
     mailboxRole: getMailboxRole(message.mailbox),
     density: preferences.density,
+    shareClickAction: preferences.shareClickAction,
+    shareShiftClickAction: preferences.shareShiftClickAction,
     attachments,
     remoteContent: preferences.remoteContent
   }

@@ -615,6 +615,8 @@ export const POST: RequestHandler = async (event) => {
       typeof body.simplifiedView === 'boolean' ? 'simplifiedView' : null,
       typeof body.threadModeOnPageLoad === 'boolean' ? 'threadModeOnPageLoad' : null,
       typeof body.compactMode === 'boolean' ? 'compactMode' : null,
+      typeof body.shareClickAction === 'string' ? 'shareClickAction' : null,
+      typeof body.shareShiftClickAction === 'string' ? 'shareShiftClickAction' : null,
       typeof body.themePreference === 'string' ? 'themePreference' : null,
       body.themeStyle && typeof body.themeStyle === 'object' ? 'themeStyle' : null,
       typeof body.translationTargetLanguage === 'string' ? 'translationTargetLanguage' : null,

@@ -63,6 +63,28 @@ test('shares content with the native Web Share API', async () => {
   assert.deepEqual(copied, [])
 })
 
+test('copies the URL without opening native share when requested', async () => {
+  const shared: ShareData[] = []
+  const copied: string[] = []
+  const data = { title: 'Project update', url: 'https://mail.example/share/copy' }
+
+  const result = await shareContent(
+    data,
+    {
+      canShare: () => true,
+      share: async (value) => {
+        shared.push(value)
+      },
+      clipboard: { writeText: async (value) => void copied.push(value) }
+    },
+    'copy-url'
+  )
+
+  assert.equal(result, 'copied')
+  assert.deepEqual(shared, [])
+  assert.deepEqual(copied, [data.url])
+})
+
 test('falls back to copying the URL when native sharing is unavailable or fails', async () => {
   for (const share of [undefined, async () => Promise.reject(new Error('Share failed'))]) {
     const copied: string[] = []

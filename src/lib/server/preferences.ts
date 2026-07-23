@@ -4,6 +4,12 @@ import { isDemoModeEnabled } from '$lib/server/demo'
 import { DEFAULT_LIST_RATIO, clampRatio } from '$lib/list-width'
 import { normalizeThemeStyle, type ThemeStyle } from '$lib/theme'
 import {
+  DEFAULT_SHARE_CLICK_ACTION,
+  DEFAULT_SHARE_SHIFT_CLICK_ACTION,
+  normalizeShareAction,
+  type ShareAction
+} from '$lib/share-action'
+import {
   mergeMailboxPreferences,
   normalizeMailboxPreferences,
   type MailboxPreferences
@@ -21,6 +27,8 @@ export type Preferences = {
   simplifiedView: boolean
   threadModeOnPageLoad: boolean
   density: DensityPreference
+  shareClickAction: ShareAction
+  shareShiftClickAction: ShareAction
   themePreference: ThemePreference
   themeStyle: ThemeStyle
   translationTargetLanguage: string
@@ -48,7 +56,11 @@ export function normalizeDensityPreference(value: unknown): DensityPreference | 
 }
 
 export function normalizeRemoteContentAllowedSenders(value: unknown) {
-  const values = Array.isArray(value) ? value : typeof value === 'string' ? value.split(/[\n,]/) : []
+  const values = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? value.split(/[\n,]/)
+      : []
   return Array.from(
     new Set(values.map((item) => item.trim().toLowerCase()).filter((item) => item.includes('@')))
   ).sort()
@@ -65,6 +77,11 @@ export function normalizePreferences(value: unknown): Preferences {
     simplifiedView: record.simplifiedView !== false,
     threadModeOnPageLoad: record.threadModeOnPageLoad !== false,
     density,
+    shareClickAction: normalizeShareAction(record.shareClickAction, DEFAULT_SHARE_CLICK_ACTION),
+    shareShiftClickAction: normalizeShareAction(
+      record.shareShiftClickAction,
+      DEFAULT_SHARE_SHIFT_CLICK_ACTION
+    ),
     themePreference: normalizeThemePreference(record.themePreference),
     themeStyle: normalizeThemeStyle(record.themeStyle),
     translationTargetLanguage: normalizeTranslationTargetLanguage(record.translationTargetLanguage),
@@ -86,7 +103,10 @@ export function normalizePreferences(value: unknown): Preferences {
 export async function getStoredPreferences(): Promise<Preferences> {
   if (isDemoModeEnabled()) return demoPreferences ?? normalizePreferences(null)
 
-  const [config] = await db.select({ preferences: mailConfig.preferences }).from(mailConfig).limit(1)
+  const [config] = await db
+    .select({ preferences: mailConfig.preferences })
+    .from(mailConfig)
+    .limit(1)
   return normalizePreferences(config?.preferences)
 }
 

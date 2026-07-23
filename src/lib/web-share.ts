@@ -1,4 +1,5 @@
 import type { ComposeFields } from '$lib/composer.svelte'
+import type { ShareAction } from '$lib/share-action'
 
 export type ShareContent = {
   title?: string
@@ -16,8 +17,14 @@ export type ShareContentResult = 'shared' | 'copied' | 'cancelled'
 
 export async function shareContent(
   data: ShareContent,
-  webNavigator: WebShareNavigator
+  webNavigator: WebShareNavigator,
+  action: ShareAction = 'native-share'
 ): Promise<ShareContentResult> {
+  if (action === 'copy-url') {
+    await webNavigator.clipboard.writeText(data.url)
+    return 'copied'
+  }
+
   const canUseNativeShare =
     typeof webNavigator.share === 'function' &&
     (typeof webNavigator.canShare !== 'function' || webNavigator.canShare(data))

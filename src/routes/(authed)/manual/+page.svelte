@@ -170,9 +170,9 @@
         <div class="rounded-xl border border-white/8 p-4">
           <h3 class="mb-1 text-sm font-medium text-white">Sharing</h3>
           <p class="text-sm leading-6 text-zinc-400">
-            Click the share icon in an open message to generate a public link. The link is copied to
-            your clipboard and the message becomes readable by anyone with the URL, without
-            requiring login.
+            Click the share icon in an open message to generate a public link. Normal-click and
+            Shift-click can open the native share screen or copy the URL, as configured under
+            Interface settings. Anyone with the URL can read the message without requiring login.
           </p>
         </div>
       </div>

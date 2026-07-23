@@ -53,6 +53,7 @@
   import { interceptMailContentLinks } from '$lib/mail-content-links'
   import { toast } from 'svelte-sonner'
   import { shareContent } from '$lib/web-share'
+  import { shareActionForClick, type ShareAction } from '$lib/share-action'
 
   type DensityPreference = 'comfortable' | 'compact' | 'condensed'
 
@@ -106,6 +107,8 @@
       mailboxRole: 'inbox' | 'archive' | 'trash' | 'spam' | null
       attachments: Attachment[]
       density: DensityPreference
+      shareClickAction: ShareAction
+      shareShiftClickAction: ShareAction
       translationTargetLanguage: string
       remoteContent: {
         blockRemoteContent: boolean
@@ -384,7 +387,7 @@
     if (trimmed) onEvent(JSON.parse(trimmed) as TranslationStreamPayload)
   }
 
-  async function shareMessage() {
+  async function shareMessage(shiftKey: boolean) {
     if (sharing) return
     sharing = true
     try {
@@ -404,7 +407,8 @@
           text: data.message.preview || undefined,
           url
         },
-        navigator
+        navigator,
+        shareActionForClick(shiftKey, data.shareClickAction, data.shareShiftClickAction)
       )
       if (result === 'shared') toast('Message shared')
       if (result === 'copied') {
@@ -1293,7 +1297,7 @@
             type="button"
             aria-label={shareCopied ? 'Copied' : 'Share'}
             disabled={sharing}
-            onclick={() => void shareMessage()}
+            onclick={(event) => void shareMessage(event.shiftKey)}
             class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-40 md:border-white/8"
           >
             {#if shareCopied}
