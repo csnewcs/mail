@@ -45,14 +45,15 @@
 
     installing = true
     const prompt = installPrompt
-    installPrompt = null
 
     try {
       await prompt.prompt()
       await prompt.userChoice
+      installPrompt = null
       dismiss()
     } catch {
       // Browsers can reject the prompt when installation becomes unavailable.
+      installPrompt = null
     } finally {
       installing = false
     }
