@@ -43,6 +43,9 @@ test('normalizes composed mailbox definitions and creates stable URL slugs', () 
 
 test('normalizes composed mailbox icons', () => {
   assert.equal(normalizeComposedMailboxIcon('archive'), 'archive')
+  assert.equal(normalizeComposedMailboxIcon('spam'), 'spam')
+  assert.equal(normalizeComposedMailboxIcon('drafts'), 'drafts')
+  assert.equal(normalizeComposedMailboxIcon('sent'), 'sent')
   assert.equal(normalizeComposedMailboxIcon('unknown'), 'layers')
   assert.equal(normalizeComposedMailboxIcon(null), 'layers')
 })

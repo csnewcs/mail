@@ -148,6 +148,9 @@
     inbox: Inbox,
     folder: Folder,
     archive: Archive,
+    spam: ArchiveX,
+    drafts: FileText,
+    sent: Send,
     bookmark: Bookmark,
     briefcase: Briefcase
   }

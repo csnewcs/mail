@@ -5,6 +5,9 @@ export const COMPOSED_MAILBOX_ICONS = [
   'inbox',
   'folder',
   'archive',
+  'spam',
+  'drafts',
+  'sent',
   'bookmark',
   'briefcase'
 ] as const

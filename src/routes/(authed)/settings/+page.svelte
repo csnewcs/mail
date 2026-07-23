@@ -115,6 +115,9 @@
     { value: 'inbox', label: 'Inbox' },
     { value: 'folder', label: 'Folder' },
     { value: 'archive', label: 'Archive' },
+    { value: 'spam', label: 'Spam' },
+    { value: 'drafts', label: 'Drafts' },
+    { value: 'sent', label: 'Sent' },
     { value: 'bookmark', label: 'Bookmark' },
     { value: 'briefcase', label: 'Briefcase' }
   ]
