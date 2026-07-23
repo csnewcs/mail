@@ -3,8 +3,6 @@
   import { resolve } from '$app/paths'
   import { Editor } from '@tiptap/core'
   import StarterKit from '@tiptap/starter-kit'
-  import Underline from '@tiptap/extension-underline'
-  import Link from '@tiptap/extension-link'
   import TextAlign from '@tiptap/extension-text-align'
   import {
     X,
@@ -181,9 +179,10 @@
     editor = new Editor({
       element: editorEl,
       extensions: [
-        StarterKit.configure({ codeBlock: { languageClassPrefix: 'language-' } }),
-        Underline,
-        Link.configure({ openOnClick: false, HTMLAttributes: { rel: 'noopener noreferrer' } }),
+        StarterKit.configure({
+          codeBlock: { languageClassPrefix: 'language-' },
+          link: { openOnClick: false, HTMLAttributes: { rel: 'noopener noreferrer' } }
+        }),
         TextAlign.configure({ types: ['heading', 'paragraph'] })
       ],
       content: '<p></p>',

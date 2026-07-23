@@ -11,12 +11,38 @@ test('declares the compose route as a text and URL share target', () => {
   assert.deepEqual(manifest.share_target, {
     action: '/inbox',
     method: 'GET',
+    enctype: 'application/x-www-form-urlencoded',
     params: {
       title: 'share-title',
       text: 'share-text',
       url: 'share-url'
     }
   })
+})
+
+test('declares matching desktop and mobile install screenshots', () => {
+  const manifest = JSON.parse(
+    readFileSync(new URL('../../static/manifest.json', import.meta.url), 'utf8')
+  )
+
+  assert.ok(
+    manifest.screenshots.some(
+      (screenshot: { form_factor?: string }) => screenshot.form_factor === 'wide'
+    )
+  )
+  assert.ok(
+    manifest.screenshots.some(
+      (screenshot: { form_factor?: string }) => screenshot.form_factor !== 'wide'
+    )
+  )
+
+  for (const screenshot of manifest.screenshots) {
+    const image = readFileSync(new URL(`../../static${screenshot.src}`, import.meta.url))
+    const [width, height] = screenshot.sizes.split('x').map(Number)
+    assert.equal(image.toString('ascii', 1, 4), 'PNG')
+    assert.equal(image.readUInt32BE(16), width)
+    assert.equal(image.readUInt32BE(20), height)
+  }
 })
 
 test('shares content with the native Web Share API', async () => {

@@ -19,6 +19,7 @@
   "share_target": {
     "action": "/inbox",
     "method": "GET",
+    "enctype": "application/x-www-form-urlencoded",
     "params": {
       "title": "share-title",
       "text": "share-text",
@@ -49,6 +50,21 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/pwa-wide.png",
+      "sizes": "1440x900",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "Mail inbox on desktop"
+    },
+    {
+      "src": "/pwa-mobile.png",
+      "sizes": "390x844",
+      "type": "image/png",
+      "label": "Mail inbox on mobile"
     }
   ]
 }
