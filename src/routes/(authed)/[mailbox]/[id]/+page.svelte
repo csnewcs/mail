@@ -1093,9 +1093,7 @@
             >
               <Archive size={16} />
             </button>
-            <span
-              class="pointer-events-none absolute top-full left-1/2 mt-2 -translate-x-1/2 rounded-md bg-zinc-800 px-2 py-1 text-xs whitespace-nowrap text-zinc-200 opacity-0 transition-opacity group-hover:opacity-100"
-            >
+            <span role="tooltip" class="mail-toolbox-label mail-toolbox-label-left">
               Move to inbox
             </span>
           </div>
@@ -1110,11 +1108,7 @@
             >
               <Trash2 size={16} />
             </button>
-            <span
-              class="pointer-events-none absolute top-full left-1/2 mt-2 -translate-x-1/2 rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-200 opacity-0 transition-opacity group-hover:opacity-100"
-            >
-              Restore
-            </span>
+            <span role="tooltip" class="mail-toolbox-label mail-toolbox-label-left"> Restore </span>
           </div>
         {:else if role === 'spam'}
           <div class="group relative">
@@ -1127,9 +1121,7 @@
             >
               <ShieldAlert size={16} />
             </button>
-            <span
-              class="pointer-events-none absolute top-full left-1/2 mt-2 -translate-x-1/2 rounded-md bg-zinc-800 px-2 py-1 text-xs whitespace-nowrap text-zinc-200 opacity-0 transition-opacity group-hover:opacity-100"
-            >
+            <span role="tooltip" class="mail-toolbox-label mail-toolbox-label-left">
               Not spam
             </span>
           </div>
@@ -1144,11 +1136,7 @@
             >
               <Archive size={16} />
             </button>
-            <span
-              class="pointer-events-none absolute top-full left-1/2 mt-2 -translate-x-1/2 rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-200 opacity-0 transition-opacity group-hover:opacity-100"
-            >
-              Archive
-            </span>
+            <span role="tooltip" class="mail-toolbox-label mail-toolbox-label-left"> Archive </span>
           </div>
           <div class="group relative">
             <button
@@ -1160,125 +1148,153 @@
             >
               <Trash2 size={16} />
             </button>
-            <span
-              class="pointer-events-none absolute top-full left-1/2 mt-2 -translate-x-1/2 rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-200 opacity-0 transition-opacity group-hover:opacity-100"
+            <span role="tooltip" class="mail-toolbox-label mail-toolbox-label-left"> Delete </span>
+          </div>
+        {/if}
+        <div class="group relative inline-flex md:hidden">
+          <button
+            type="button"
+            aria-label="Reply"
+            onclick={() => openReply(message)}
+            class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-zinc-200"
+          >
+            <Reply size={16} />
+          </button>
+          <span role="tooltip" class="mail-toolbox-label mail-toolbox-label-left"> Reply </span>
+        </div>
+        <div class="group relative inline-flex md:hidden">
+          <button
+            type="button"
+            aria-label="Reply all"
+            onclick={() => openReplyAll(message)}
+            class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-zinc-200"
+          >
+            <ReplyAll size={16} />
+          </button>
+          <span role="tooltip" class="mail-toolbox-label mail-toolbox-label-left"> Reply all </span>
+        </div>
+        <div class="group relative inline-flex md:hidden">
+          <button
+            type="button"
+            aria-label="Draft reply with AI"
+            disabled={draftingReply}
+            onclick={() => void generateReplyDraft()}
+            class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-sky-300 disabled:cursor-wait disabled:opacity-60"
+          >
+            <Sparkles size={16} class={draftingReply ? 'animate-pulse' : ''} />
+          </button>
+          <span role="tooltip" class="mail-toolbox-label mail-toolbox-label-left">
+            AI reply draft
+          </span>
+        </div>
+        <div class="group relative inline-flex md:hidden">
+          <button
+            type="button"
+            aria-label="Forward"
+            onclick={() => openForward(message)}
+            class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-zinc-200"
+          >
+            <Forward size={16} />
+          </button>
+          <span role="tooltip" class="mail-toolbox-label mail-toolbox-label-left"> Forward </span>
+        </div>
+        <div class="group relative inline-flex md:hidden">
+          <button
+            type="button"
+            aria-label="View metadata"
+            onclick={() => (metadataOpen = true)}
+            class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-zinc-200"
+          >
+            <Info size={16} />
+          </button>
+          <span role="tooltip" class="mail-toolbox-label mail-toolbox-label-left"> Metadata </span>
+        </div>
+        <div class="group relative inline-flex md:hidden">
+          <button
+            type="button"
+            aria-label="View raw message"
+            disabled={!message.rawSourceAvailable}
+            onclick={() => (rawSourceOpen = true)}
+            class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-35"
+          >
+            <Code2 size={16} />
+          </button>
+          <span role="tooltip" class="mail-toolbox-label mail-toolbox-label-left">
+            {message.rawSourceAvailable ? 'View raw' : 'Raw unavailable'}
+          </span>
+        </div>
+        <div class="group relative inline-flex md:hidden">
+          <button
+            type="button"
+            aria-label="Translate"
+            disabled={translating}
+            onclick={() => void translateMessage()}
+            class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Languages size={16} />
+          </button>
+          <span role="tooltip" class="mail-toolbox-label mail-toolbox-label-left"> Translate </span>
+        </div>
+        {#if role !== 'archive' && role !== 'trash' && role !== 'spam'}
+          <div class="group relative inline-flex">
+            <button
+              type="button"
+              aria-label="Move to spam"
+              disabled={acting}
+              onclick={() => performAction('spam')}
+              class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-amber-300 disabled:cursor-not-allowed disabled:opacity-40 md:border-white/8"
             >
-              Delete
+              <ShieldAlert size={16} />
+            </button>
+            <span role="tooltip" class="mail-toolbox-label mail-toolbox-label-left">
+              Move to spam
             </span>
           </div>
         {/if}
-        <button
-          type="button"
-          aria-label="Reply"
-          title="Reply"
-          onclick={() => openReply(message)}
-          class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-zinc-200 md:hidden"
-        >
-          <Reply size={16} />
-        </button>
-        <button
-          type="button"
-          aria-label="Reply all"
-          title="Reply all"
-          onclick={() => openReplyAll(message)}
-          class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-zinc-200 md:hidden"
-        >
-          <ReplyAll size={16} />
-        </button>
-        <button
-          type="button"
-          aria-label="Draft reply with AI"
-          title="Draft reply with AI"
-          disabled={draftingReply}
-          onclick={() => void generateReplyDraft()}
-          class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-sky-300 disabled:cursor-wait disabled:opacity-60 md:hidden"
-        >
-          <Sparkles size={16} class={draftingReply ? 'animate-pulse' : ''} />
-        </button>
-        <button
-          type="button"
-          aria-label="Forward"
-          title="Forward"
-          onclick={() => openForward(message)}
-          class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-zinc-200 md:hidden"
-        >
-          <Forward size={16} />
-        </button>
-        <button
-          type="button"
-          aria-label="View metadata"
-          title="View metadata"
-          onclick={() => (metadataOpen = true)}
-          class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-zinc-200 md:hidden"
-        >
-          <Info size={16} />
-        </button>
-        <button
-          type="button"
-          aria-label="View raw message"
-          title={message.rawSourceAvailable ? 'View raw message' : 'Raw source unavailable'}
-          disabled={!message.rawSourceAvailable}
-          onclick={() => (rawSourceOpen = true)}
-          class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-35 md:hidden"
-        >
-          <Code2 size={16} />
-        </button>
-        <button
-          type="button"
-          aria-label="Translate"
-          title="Translate"
-          disabled={translating}
-          onclick={() => void translateMessage()}
-          class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-40 md:hidden"
-        >
-          <Languages size={16} />
-        </button>
-        {#if role !== 'archive' && role !== 'trash' && role !== 'spam'}
+        <div class="group relative inline-flex">
           <button
             type="button"
-            aria-label="Spam"
-            title="Move to spam"
+            aria-label="Mark unread"
             disabled={acting}
-            onclick={() => performAction('spam')}
-            class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-amber-300 disabled:cursor-not-allowed disabled:opacity-40 md:border-white/8"
+            onclick={() => void markUnread()}
+            class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-40 md:border-white/8"
           >
-            <ShieldAlert size={16} />
+            <Mail size={16} />
           </button>
-        {/if}
-        <button
-          type="button"
-          aria-label="Mark unread"
-          title="Mark unread"
-          disabled={acting}
-          onclick={() => void markUnread()}
-          class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-40 md:border-white/8"
-        >
-          <Mail size={16} />
-        </button>
-        <button
-          type="button"
-          aria-label="Snooze"
-          title="Snooze"
-          disabled={acting}
-          onclick={() => void snoozeMessage()}
-          class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-40 md:border-white/8"
-        >
-          <Clock size={16} />
-        </button>
-        <button
-          type="button"
-          aria-label={shareCopied ? 'Copied' : 'Share'}
-          title={shareCopied ? 'Copied' : 'Share'}
-          disabled={sharing}
-          onclick={() => void shareMessage()}
-          class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-40 md:border-white/8"
-        >
-          {#if shareCopied}
-            <Check size={16} class="text-emerald-400" />
-          {:else}
-            <Share2 size={16} />
-          {/if}
-        </button>
+          <span role="tooltip" class="mail-toolbox-label mail-toolbox-label-left">
+            Mark unread
+          </span>
+        </div>
+        <div class="group relative inline-flex">
+          <button
+            type="button"
+            aria-label="Snooze"
+            disabled={acting}
+            onclick={() => void snoozeMessage()}
+            class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-40 md:border-white/8"
+          >
+            <Clock size={16} />
+          </button>
+          <span role="tooltip" class="mail-toolbox-label mail-toolbox-label-left"> Snooze </span>
+        </div>
+        <div class="group relative inline-flex">
+          <button
+            type="button"
+            aria-label={shareCopied ? 'Copied' : 'Share'}
+            disabled={sharing}
+            onclick={() => void shareMessage()}
+            class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-40 md:border-white/8"
+          >
+            {#if shareCopied}
+              <Check size={16} class="text-emerald-400" />
+            {:else}
+              <Share2 size={16} />
+            {/if}
+          </button>
+          <span role="tooltip" class="mail-toolbox-label mail-toolbox-label-left">
+            {shareCopied ? 'Copied' : 'Share'}
+          </span>
+        </div>
       </div>
 
       <div class="hidden flex-wrap items-center gap-1 md:flex md:justify-end">
@@ -1291,11 +1307,7 @@
           >
             <Reply size={16} />
           </button>
-          <span
-            class="pointer-events-none absolute top-full left-1/2 mt-2 -translate-x-1/2 rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-200 opacity-0 transition-opacity group-hover:opacity-100"
-          >
-            Reply
-          </span>
+          <span role="tooltip" class="mail-toolbox-label mail-toolbox-label-left"> Reply </span>
         </div>
         <div class="group relative">
           <button
@@ -1306,11 +1318,7 @@
           >
             <ReplyAll size={16} />
           </button>
-          <span
-            class="pointer-events-none absolute top-full left-1/2 mt-2 -translate-x-1/2 rounded-md bg-zinc-800 px-2 py-1 text-xs whitespace-nowrap text-zinc-200 opacity-0 transition-opacity group-hover:opacity-100"
-          >
-            Reply all
-          </span>
+          <span role="tooltip" class="mail-toolbox-label mail-toolbox-label-left"> Reply all </span>
         </div>
         <div class="group relative">
           <button
@@ -1322,9 +1330,7 @@
           >
             <Sparkles size={16} class={draftingReply ? 'animate-pulse' : ''} />
           </button>
-          <span
-            class="pointer-events-none absolute top-full left-1/2 mt-2 -translate-x-1/2 rounded-md bg-zinc-800 px-2 py-1 text-xs whitespace-nowrap text-zinc-200 opacity-0 transition-opacity group-hover:opacity-100"
-          >
+          <span role="tooltip" class="mail-toolbox-label mail-toolbox-label-left">
             AI reply draft
           </span>
         </div>
@@ -1337,11 +1343,7 @@
           >
             <Forward size={16} />
           </button>
-          <span
-            class="pointer-events-none absolute top-full right-0 mt-2 rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-200 opacity-0 transition-opacity group-hover:opacity-100"
-          >
-            Forward
-          </span>
+          <span role="tooltip" class="mail-toolbox-label mail-toolbox-label-right"> Forward </span>
         </div>
         <div class="group relative">
           <button
@@ -1352,11 +1354,7 @@
           >
             <Info size={16} />
           </button>
-          <span
-            class="pointer-events-none absolute top-full right-0 mt-2 rounded-md bg-zinc-800 px-2 py-1 text-xs whitespace-nowrap text-zinc-200 opacity-0 transition-opacity group-hover:opacity-100"
-          >
-            Metadata
-          </span>
+          <span role="tooltip" class="mail-toolbox-label mail-toolbox-label-right"> Metadata </span>
         </div>
         <div class="group relative">
           <button
@@ -1368,9 +1366,7 @@
           >
             <Code2 size={16} />
           </button>
-          <span
-            class="pointer-events-none absolute top-full right-0 mt-2 rounded-md bg-zinc-800 px-2 py-1 text-xs whitespace-nowrap text-zinc-200 opacity-0 transition-opacity group-hover:opacity-100"
-          >
+          <span role="tooltip" class="mail-toolbox-label mail-toolbox-label-right">
             {message.rawSourceAvailable ? 'View raw' : 'Raw unavailable'}
           </span>
         </div>
@@ -1384,9 +1380,7 @@
           >
             <Languages size={16} />
           </button>
-          <span
-            class="pointer-events-none absolute top-full right-0 mt-2 rounded-md bg-zinc-800 px-2 py-1 text-xs whitespace-nowrap text-zinc-200 opacity-0 transition-opacity group-hover:opacity-100"
-          >
+          <span role="tooltip" class="mail-toolbox-label mail-toolbox-label-right">
             Translate
           </span>
         </div>
