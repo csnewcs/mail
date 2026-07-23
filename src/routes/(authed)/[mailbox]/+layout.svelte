@@ -7,6 +7,7 @@
   import { errorMessageFromUnknown, readErrorMessage } from '$lib/http'
   import { trackAppLoading } from '$lib/loading.svelte'
   import { pathToSlug } from '$lib/mailbox'
+  import { sendStatusLabel } from '$lib/send-status'
   import { MAILBOX_STATE_CHANGED_EVENT, notifyMailboxStateChanged } from '$lib/mailbox-state'
   import { getSimplifiedModeSidebarActionContext } from '$lib/simplified-mode-context'
   import { page } from '$app/state'
@@ -78,6 +79,7 @@
     hasThreadNote?: boolean
     sendStatus?: 'sending' | 'failed' | 'sent' | null
     smtpJobId?: number | null
+    openedAt?: string | null
   }
 
   type SavedSearch = {
@@ -2803,7 +2805,7 @@
                             class={[
                               'ml-2 text-sm font-medium',
                               sendStatusClass(message.sendStatus)
-                            ]}>[{message.sendStatus}]</span
+                            ]}>{sendStatusLabel(message.sendStatus, message.openedAt)}</span
                           >
                         {/if}
                       </h2>
@@ -3392,7 +3394,7 @@
                               class={[
                                 'shrink-0 text-xs font-medium',
                                 sendStatusClass(message.sendStatus)
-                              ]}>[{message.sendStatus}]</span
+                              ]}>{sendStatusLabel(message.sendStatus, message.openedAt)}</span
                             >
                           {/if}
                         </div>
@@ -3581,7 +3583,7 @@
                             class={[
                               'shrink-0 text-xs font-medium',
                               sendStatusClass(message.sendStatus)
-                            ]}>[{message.sendStatus}]</span
+                            ]}>{sendStatusLabel(message.sendStatus, message.openedAt)}</span
                           >
                         {/if}
                       </div>

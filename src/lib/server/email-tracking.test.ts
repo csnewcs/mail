@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   addEmailTrackingPixel,
+  emailReadNotification,
+  emailReadNotificationRetryDelay,
   emailTrackingPixelResponse,
   emailTrackingPixelUrl,
   isEmailTrackingToken,
@@ -70,4 +72,23 @@ test('ignores image loads from the signed-in sender application', () => {
     ),
     true
   )
+})
+
+test('builds a sender notification for a recipient read', () => {
+  assert.deepEqual(
+    emailReadNotification(JSON.stringify({ subject: 'Quarterly update' }), '/sent/42', 7),
+    {
+      title: 'Email read',
+      body: 'A recipient read "Quarterly update".',
+      url: '/sent/42',
+      tag: 'email-read-7'
+    }
+  )
+  assert.equal(emailReadNotification('{', '/', 8).body, 'A recipient read "(no subject)".')
+})
+
+test('backs off notification retries with a five-minute cap', () => {
+  assert.equal(emailReadNotificationRetryDelay(1), 2_000)
+  assert.equal(emailReadNotificationRetryDelay(8), 256_000)
+  assert.equal(emailReadNotificationRetryDelay(20), 300_000)
 })

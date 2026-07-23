@@ -33,6 +33,7 @@ function serializeMessage(message: ListRow) {
     important: 'important' in message ? (message.important ?? false) : false,
     sendStatus: message.sendStatus ?? null,
     smtpJobId: message.smtpJobId ?? null,
+    openedAt: 'openedAt' in message ? (message.openedAt?.toISOString() ?? null) : null,
     ...('threadCount' in message ? { threadCount: message.threadCount } : {}),
     ...('hasUnread' in message ? { hasUnread: message.hasUnread } : {}),
     ...('hasImportantUnread' in message ? { hasImportantUnread: message.hasImportantUnread } : {}),

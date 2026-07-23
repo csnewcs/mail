@@ -2123,6 +2123,13 @@ const listSelect = {
     order by send_job.id desc
     limit 1
   )`,
+  openedAt: sql<Date | null>`(
+    select send_job.opened_at
+    from smtp_job as send_job
+    where send_job.message_id = ${mailMessage.messageId}
+    order by send_job.id desc
+    limit 1
+  )`,
   threadStarred: sql<boolean>`exists (
     select 1
     from mail_thread_metadata
@@ -2296,13 +2303,6 @@ const detailSelect = {
   replyTo: mailMessage.replyTo,
   inReplyTo: mailMessage.inReplyTo,
   references: mailMessage.references,
-  openedAt: sql<Date | null>`(
-    select send_job.opened_at
-    from smtp_job as send_job
-    where send_job.message_id = ${mailMessage.messageId}
-    order by send_job.id desc
-    limit 1
-  )`,
   spfStatus: mailMessageMailbox.spfStatus,
   dkimStatus: mailMessageMailbox.dkimStatus,
   dmarcStatus: mailMessageMailbox.dmarcStatus,
@@ -2775,6 +2775,7 @@ export async function listStoredThreads(
         threadCount: mailThreadSummary.threadCount,
         sendStatus: listSelect.sendStatus,
         smtpJobId: listSelect.smtpJobId,
+        openedAt: listSelect.openedAt,
         hasUnread: sql<boolean>`exists (
           select 1
           from mail_message_mailbox as unread_mmm

@@ -39,6 +39,7 @@
   import { openReply, openReplyAll } from '$lib/composer.svelte'
   import { setupKeyboardHandler } from '$lib/keyboard.svelte'
   import { notifyMailboxStateChanged } from '$lib/mailbox-state'
+  import { sendStatusLabel } from '$lib/send-status'
   import { encodeThreadId } from '$lib/thread-url'
   import {
     normalizeAllowedSenders,
@@ -129,6 +130,7 @@
   let { data }: Props = $props()
 
   const messages = $derived(data.messages)
+  let liveOpenedAtByJob = $state<Record<number, string>>({})
   const attachments = $derived(data.attachments)
   const role = $derived(data.mailboxRole)
   const subject = $derived(messages[0]?.subject ?? '(no subject)')
@@ -583,6 +585,37 @@
     return from.split('<')[0]?.trim() || from
   }
 
+  function openedAtFor(message: Message) {
+    return message.smtpJobId
+      ? (liveOpenedAtByJob[message.smtpJobId] ?? message.openedAt)
+      : message.openedAt
+  }
+
+  async function refreshReadStatuses() {
+    const jobs = messages.filter(
+      (message) => message.sendStatus === 'sent' && message.smtpJobId && !openedAtFor(message)
+    )
+    if (jobs.length === 0) return
+
+    const updates = await Promise.all(
+      jobs.map(async (message) => {
+        try {
+          const response = await fetch(`/api/send/${message.smtpJobId}`)
+          if (!response.ok) return null
+          const payload = (await response.json()) as { openedAt?: string | null }
+          return payload.openedAt && message.smtpJobId
+            ? ([message.smtpJobId, payload.openedAt] as const)
+            : null
+        } catch {
+          return null
+        }
+      })
+    )
+    const opened = updates.filter((update): update is readonly [number, string] => update !== null)
+    if (opened.length > 0)
+      liveOpenedAtByJob = { ...liveOpenedAtByJob, ...Object.fromEntries(opened) }
+  }
+
   function senderAddress(from: string | null | undefined) {
     if (!from) return ''
     const match = from.match(/<([^>]+)>/)
@@ -795,6 +828,8 @@
 
   onMount(() => {
     setTimeout(() => notifyMailboxStateChanged('thread-opened'), 0)
+    void refreshReadStatuses()
+    const readStatusInterval = setInterval(() => void refreshReadStatuses(), 10_000)
 
     const teardown = setupKeyboardHandler('message', {
       u: () => gotoMailbox(),
@@ -808,7 +843,10 @@
       ArrowUp: () => scrollContainer?.scrollBy({ top: -60, behavior: 'smooth' })
     })
 
-    return teardown
+    return () => {
+      clearInterval(readStatusInterval)
+      teardown()
+    }
   })
 </script>
 
@@ -1050,7 +1088,7 @@
               : lastMessage.sendStatus === 'sent'
                 ? 'text-emerald-300'
                 : 'text-amber-300'
-          ]}>[{lastMessage.sendStatus}]</span
+          ]}>{sendStatusLabel(lastMessage.sendStatus, openedAtFor(lastMessage))}</span
         >
       {/if}
     </div>
@@ -1232,7 +1270,7 @@
                           : msg.sendStatus === 'sent'
                             ? 'text-emerald-300'
                             : 'text-amber-300'
-                      ]}>[{msg.sendStatus}]</span
+                      ]}>{sendStatusLabel(msg.sendStatus, openedAtFor(msg))}</span
                     >
                   {/if}
                 </div>
@@ -1292,12 +1330,12 @@
                           : 'text-amber-300'
                     ]}
                   >
-                    [{msg.sendStatus}]
+                    {sendStatusLabel(msg.sendStatus, openedAtFor(msg))}
                   </p>
                   {#if msg.sendStatus === 'sent'}
                     <p class="mt-1 text-sm text-zinc-400">
-                      {msg.openedAt
-                        ? `A recipient's mail client loaded the tracking image on ${formatFullDate(msg.openedAt)}.`
+                      {openedAtFor(msg)
+                        ? `A recipient's mail client loaded the tracking image on ${formatFullDate(openedAtFor(msg))}.`
                         : 'The tracking image has not been loaded yet.'}
                     </p>
                   {/if}

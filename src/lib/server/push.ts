@@ -6,6 +6,7 @@ import { eq } from 'drizzle-orm'
 import { getQuietHoursConfig } from './config'
 import { isQuietHoursActive } from './quiet-hours'
 import { readControlSubscriptions, readNotificationBatches } from '$lib/push-control'
+import { pushDeliveryComplete, type PushDeliveryResult } from '$lib/push-delivery'
 
 const PUSH_TTL_SECONDS = 24 * 60 * 60
 const CONTROL_PUSH_ATTEMPTS = 3
@@ -37,26 +38,27 @@ type NewMailPush = {
   title: string
   body: string
   url?: string
+  tag?: string
   messageId?: number
   unreadCount?: number
 }
 
 type PushPayload = NewMailPush | { type: 'messages-read'; messageIds: number[] }
 
-async function sendPushPayload(payload: PushPayload): Promise<void> {
+async function sendPushPayload(payload: PushPayload): Promise<boolean> {
   const ready = await ensureInit()
-  if (!ready) return
+  if (!ready) return false
 
   const allSubscriptions = await db.select().from(mailPushSubscription)
   const subscriptions =
     'type' in payload ? readControlSubscriptions(allSubscriptions) : allSubscriptions
-  if (subscriptions.length === 0) return
+  if (subscriptions.length === 0) return false
 
   const data = JSON.stringify(payload)
   const maxAttempts = 'type' in payload ? CONTROL_PUSH_ATTEMPTS : 1
 
-  await Promise.allSettled(
-    subscriptions.map(async (sub: (typeof subscriptions)[number]) => {
+  const results = await Promise.all(
+    subscriptions.map(async (sub: (typeof subscriptions)[number]): Promise<PushDeliveryResult> => {
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         try {
           await webpush.sendNotification(
@@ -64,7 +66,7 @@ async function sendPushPayload(payload: PushPayload): Promise<void> {
             data,
             { TTL: PUSH_TTL_SECONDS }
           )
-          return
+          return 'delivered'
         } catch (err: unknown) {
           // 404/410 means the subscription is gone — remove it
           const status = (err as { statusCode?: number })?.statusCode
@@ -72,7 +74,7 @@ async function sendPushPayload(payload: PushPayload): Promise<void> {
             await db
               .delete(mailPushSubscription)
               .where(eq(mailPushSubscription.endpoint, sub.endpoint))
-            return
+            return 'terminal'
           }
 
           const retryable =
@@ -87,16 +89,18 @@ async function sendPushPayload(payload: PushPayload): Promise<void> {
             status: status ?? null,
             attempts: attempt
           })
-          return
+          return retryable ? 'retryable' : 'terminal'
         }
       }
+      return 'retryable'
     })
   )
+  return pushDeliveryComplete(results)
 }
 
-export async function sendPushToAll(payload: NewMailPush): Promise<void> {
-  if (isQuietHoursActive(await getQuietHoursConfig())) return
-  await sendPushPayload(payload)
+export async function sendPushToAll(payload: NewMailPush): Promise<boolean> {
+  if (isQuietHoursActive(await getQuietHoursConfig())) return false
+  return sendPushPayload(payload)
 }
 
 export async function dismissReadNotifications(messageIds: number[]): Promise<void> {

@@ -13,6 +13,7 @@ import { addDirtyMailbox, closeImapConnections, syncWatchers } from './lib/serve
 import { closePublicImapProxy, startPublicImapProxy } from './lib/server/imap-public-proxy'
 import { getImapConfigs } from './lib/server/config'
 import { maybeClassifyPendingMailFromWorker } from './lib/server/mail-importance'
+import { dispatchPendingEmailReadNotifications } from './lib/server/email-read-notifications'
 import {
   backfillMailAuthenticationFromWorker,
   backfillOpenPgpFromWorker,
@@ -83,6 +84,7 @@ function tick() {
   startWorkerAction('heartbeat', heartbeat)
   startWorkerAction('IMAP operation dispatch', dispatchReadyImapOperations)
   startWorkerAction('SMTP operation dispatch', dispatchReadySmtpOperations)
+  startWorkerAction('email read notification dispatch', dispatchPendingEmailReadNotifications)
   startWorkerAction('cleanup rules', maybeRunCleanupRulesFromWorker)
   startWorkerAction('mailbox sync', maybeRunSync)
   startWorkerAction('importance classification', maybeClassifyPendingMailFromWorker)

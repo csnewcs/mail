@@ -41,6 +41,7 @@
   import { openReply, openReplyAll, openForward } from '$lib/composer.svelte'
   import { setupKeyboardHandler } from '$lib/keyboard.svelte'
   import { notifyMailboxStateChanged } from '$lib/mailbox-state'
+  import { sendStatusLabel } from '$lib/send-status'
   import {
     normalizeAllowedSenders,
     normalizeSenderAddress,
@@ -176,12 +177,17 @@
   let online = $state(true)
   let liveSendStatus = $state<Message['sendStatus'] | undefined>(undefined)
   let liveSendStatusMessageId = $state<number | null>(null)
+  let liveOpenedAt = $state<string | null | undefined>(undefined)
+  let lastReadStatusCheckAt = 0
   let sendError = $state<string | null>(null)
   let pendingUrl = $state<string | null>(null)
 
   const offlineUserKey = $derived(data.user?.email ?? null)
   const sendStatus = $derived(
     liveSendStatusMessageId === data.message.id ? liveSendStatus : data.message.sendStatus
+  )
+  const openedAt = $derived(
+    liveSendStatusMessageId === data.message.id ? liveOpenedAt : data.message.openedAt
   )
 
   type TranslationStreamPayload = {
@@ -692,8 +698,8 @@
 
   function sendStatusDescription(status: NonNullable<Message['sendStatus']>) {
     if (status === 'failed') return sendError || 'The message could not be sent.'
-    if (status === 'sent' && message.openedAt) {
-      return `A recipient's mail client loaded the tracking image on ${formatFullDate(message.openedAt)}.`
+    if (status === 'sent' && openedAt) {
+      return `A recipient's mail client loaded the tracking image on ${formatFullDate(openedAt)}.`
     }
     if (status === 'sent') return 'The tracking image has not been loaded yet.'
     return 'The message is being sent.'
@@ -701,13 +707,24 @@
 
   async function refreshSendStatus() {
     const waitingForStoredCopy = message.id < 0 && sendStatus === 'sent'
-    if (!message.smtpJobId || (sendStatus !== 'sending' && !waitingForStoredCopy)) return
+    const waitingForRead = sendStatus === 'sent' && !openedAt
+    if (
+      !message.smtpJobId ||
+      (sendStatus !== 'sending' && !waitingForStoredCopy && !waitingForRead)
+    )
+      return
+    if (waitingForRead && !waitingForStoredCopy) {
+      const now = Date.now()
+      if (now - lastReadStatusCheckAt < 10_000) return
+      lastReadStatusCheckAt = now
+    }
     try {
       const response = await fetch(`/api/send/${message.smtpJobId}`)
       if (!response.ok) return
       const payload = (await response.json()) as {
         status?: Message['sendStatus']
         error?: string | null
+        openedAt?: string | null
         storedMessageId?: number | null
       }
       if (payload.storedMessageId) {
@@ -716,10 +733,13 @@
         })
         return
       }
+      const previousStatus = sendStatus
+      const previousOpenedAt = openedAt
       liveSendStatusMessageId = message.id
       liveSendStatus = payload.status ?? null
+      liveOpenedAt = payload.openedAt ?? null
       sendError = payload.error ?? null
-      if (payload.status === 'failed' || payload.status === 'sent') {
+      if (payload.status !== previousStatus || (!previousOpenedAt && payload.openedAt)) {
         notifyMailboxStateChanged(`send:${payload.status}`)
       }
     } catch {
@@ -1017,7 +1037,9 @@
           <p class="truncate text-sm font-semibold text-white">
             {subjectLabel(message.subject)}
             {#if sendStatus}
-              <span class={['ml-1 font-medium', sendStatusClass(sendStatus)]}>[{sendStatus}]</span>
+              <span class={['ml-1 font-medium', sendStatusClass(sendStatus)]}
+                >{sendStatusLabel(sendStatus, openedAt)}</span
+              >
             {/if}
           </p>
           <p class="truncate text-xs text-zinc-500">{senderName(message.from)}</p>
@@ -1389,7 +1411,7 @@
             </h2>
             {#if sendStatus}
               <span class={['shrink-0 text-sm font-medium', sendStatusClass(sendStatus)]}
-                >[{sendStatus}]</span
+                >{sendStatusLabel(sendStatus, openedAt)}</span
               >
             {/if}
           </div>
@@ -1458,7 +1480,9 @@
   <div class="flex flex-col">
     {#if sendStatus}
       <section class="border-b border-white/8 bg-white/[0.025] p-4 sm:p-5">
-        <p class={['text-sm font-semibold', sendStatusClass(sendStatus)]}>[{sendStatus}]</p>
+        <p class={['text-sm font-semibold', sendStatusClass(sendStatus)]}>
+          {sendStatusLabel(sendStatus, openedAt)}
+        </p>
         <p class="mt-1 text-sm text-zinc-400">{sendStatusDescription(sendStatus)}</p>
       </section>
     {/if}

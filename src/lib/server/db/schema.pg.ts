@@ -202,6 +202,19 @@ export const smtpJob = pgTable(
     messageId: text('message_id'),
     trackingToken: text('tracking_token'),
     openedAt: timestamp('opened_at', { withTimezone: true, mode: 'date' }),
+    readNotificationSentAt: timestamp('read_notification_sent_at', {
+      withTimezone: true,
+      mode: 'date'
+    }),
+    readNotificationAttemptCount: integer('read_notification_attempt_count').notNull().default(0),
+    readNotificationAvailableAt: timestamp('read_notification_available_at', {
+      withTimezone: true,
+      mode: 'date'
+    }),
+    readNotificationClaimedAt: timestamp('read_notification_claimed_at', {
+      withTimezone: true,
+      mode: 'date'
+    }),
     sentMailbox: text('sent_mailbox'),
     placeholderActive: boolean('placeholder_active').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
@@ -214,6 +227,10 @@ export const smtpJob = pgTable(
     index('smtp_job_status_available_at_idx').on(table.status, table.availableAt),
     index('smtp_job_message_id_idx').on(table.messageId),
     uniqueIndex('smtp_job_tracking_token_idx').on(table.trackingToken),
+    index('smtp_job_read_notification_pending_idx').on(
+      table.readNotificationSentAt,
+      table.readNotificationAvailableAt
+    ),
     index('smtp_job_placeholder_mailbox_status_created_at_idx').on(
       table.placeholderActive,
       table.sentMailbox,
