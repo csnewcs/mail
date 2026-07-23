@@ -8,6 +8,7 @@ import {
 } from '$lib/server/mail'
 import { payloadBytes, perfLog, perfMs, perfNow } from '$lib/server/perf'
 import { getStoredPreferences } from '$lib/server/preferences'
+import { serializeDate } from '$lib/serialize-date'
 
 const PAGE_SIZE = 50
 
@@ -33,7 +34,7 @@ function serializeMessage(message: ListRow) {
     important: 'important' in message ? (message.important ?? false) : false,
     sendStatus: message.sendStatus ?? null,
     smtpJobId: message.smtpJobId ?? null,
-    openedAt: 'openedAt' in message ? (message.openedAt?.toISOString() ?? null) : null,
+    openedAt: 'openedAt' in message ? serializeDate(message.openedAt) : null,
     ...('threadCount' in message ? { threadCount: message.threadCount } : {}),
     ...('hasUnread' in message ? { hasUnread: message.hasUnread } : {}),
     ...('hasImportantUnread' in message ? { hasImportantUnread: message.hasImportantUnread } : {}),

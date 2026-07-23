@@ -228,7 +228,7 @@ export type MailListRow = {
   important?: boolean
   sendStatus?: SendStatus | null
   smtpJobId?: number | null
-  openedAt?: Date | null
+  openedAt?: Date | string | null
 }
 
 // Joined row returned by detail queries

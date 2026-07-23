@@ -20,6 +20,7 @@ import {
 import { getStoredPreferences } from '$lib/server/preferences'
 import { getThreadNote, serializeThreadNote } from '$lib/server/thread-notes'
 import { unreadMessageRows } from '$lib/read-state'
+import { serializeDate } from '$lib/serialize-date'
 
 function serializeMessage(
   message: Awaited<ReturnType<typeof getMessagesInMailboxesThread>>[number]
@@ -54,7 +55,7 @@ function serializeMessage(
     rawSourceAvailable: message.rawSourceAvailable ?? isDemoModeEnabled(),
     sendStatus: message.sendStatus ?? null,
     smtpJobId: message.smtpJobId ?? null,
-    openedAt: message.openedAt?.toISOString() ?? null,
+    openedAt: serializeDate(message.openedAt),
     flags,
     receivedAt: message.receivedAt?.toISOString() ?? null,
     snoozedUntil: message.snoozedUntil?.toISOString() ?? null,

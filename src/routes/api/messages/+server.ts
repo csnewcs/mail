@@ -12,6 +12,7 @@ import {
   type ThreadRow
 } from '$lib/server/mail'
 import { payloadBytes, perfLog, perfMs, perfNow } from '$lib/server/perf'
+import { serializeDate } from '$lib/serialize-date'
 
 const DEFAULT_LIMIT = 50
 const MAX_LIMIT = 100
@@ -39,7 +40,7 @@ function serializeMessage(message: MailListRow | ThreadRow, includeMailbox = fal
     important: message.important ?? false,
     sendStatus: message.sendStatus ?? null,
     smtpJobId: message.smtpJobId ?? null,
-    openedAt: message.openedAt?.toISOString() ?? null,
+    openedAt: serializeDate(message.openedAt),
     ...('hasThreadNote' in message ? { hasThreadNote: Boolean(message.hasThreadNote) } : {}),
     ...('threadCount' in message ? { threadCount: message.threadCount } : {}),
     ...('hasUnread' in message ? { hasUnread: message.hasUnread } : {}),

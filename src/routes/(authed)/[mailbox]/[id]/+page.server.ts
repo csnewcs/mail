@@ -8,6 +8,7 @@ import { eq } from 'drizzle-orm'
 import { isDemoModeEnabled, listDemoAttachmentsForMessage } from '$lib/server/demo'
 import { getStoredPreferences } from '$lib/server/preferences'
 import { countHtmlTracingCodes } from '$lib/tracing-detector'
+import { serializeDate } from '$lib/serialize-date'
 
 function serializeMessage(
   message: NonNullable<Awaited<ReturnType<typeof getStoredMessageById>>>,
@@ -45,7 +46,7 @@ function serializeMessage(
     rawSourceAvailable: message.rawSourceAvailable ?? isDemoModeEnabled(),
     sendStatus: message.sendStatus ?? null,
     smtpJobId: message.smtpJobId ?? null,
-    openedAt: message.openedAt?.toISOString() ?? null,
+    openedAt: serializeDate(message.openedAt),
     flags: seen && !flags.includes('\\Seen') ? [...flags, '\\Seen'] : flags,
     receivedAt: message.receivedAt?.toISOString() ?? null,
     snoozedUntil: message.snoozedUntil?.toISOString() ?? null
