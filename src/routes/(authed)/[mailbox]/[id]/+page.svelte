@@ -52,6 +52,7 @@
   import { saveOfflineMessage } from '$lib/offline-cache'
   import { interceptMailContentLinks } from '$lib/mail-content-links'
   import { toast } from 'svelte-sonner'
+  import { shareContent } from '$lib/web-share'
 
   type DensityPreference = 'comfortable' | 'compact' | 'condensed'
 
@@ -397,12 +398,22 @@
       }
 
       const { url } = await res.json()
-      await navigator.clipboard.writeText(url)
-      shareCopied = true
-      toast('Share link copied')
-      setTimeout(() => {
-        shareCopied = false
-      }, 2000)
+      const result = await shareContent(
+        {
+          title: data.message.subject || 'Shared message',
+          text: data.message.preview || undefined,
+          url
+        },
+        navigator
+      )
+      if (result === 'shared') toast('Message shared')
+      if (result === 'copied') {
+        shareCopied = true
+        toast('Share link copied')
+        setTimeout(() => {
+          shareCopied = false
+        }, 2000)
+      }
     } catch (error) {
       errorDialogMessage = errorMessageFromUnknown(error, 'Failed to create share link.')
     } finally {

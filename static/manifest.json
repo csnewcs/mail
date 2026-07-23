@@ -16,6 +16,15 @@
       "url": "/inbox?mailto=%s"
     }
   ],
+  "share_target": {
+    "action": "/inbox",
+    "method": "GET",
+    "params": {
+      "title": "share-title",
+      "text": "share-text",
+      "url": "share-url"
+    }
+  },
   "icons": [
     {
       "src": "/icon-192.png",

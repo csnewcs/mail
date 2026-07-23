@@ -38,6 +38,7 @@
   import ShortcutHelpOverlay from '$lib/components/ShortcutHelpOverlay.svelte'
   import { openCompose, openDraft, type DraftRow } from '$lib/composer.svelte'
   import { parseMailtoUrl } from '$lib/mailto'
+  import { parseShareTarget } from '$lib/web-share'
   import { errorMessageFromUnknown, readErrorMessage } from '$lib/http'
   import { afterNavigate, goto, invalidateAll, replaceState } from '$app/navigation'
   import { keyboard } from '$lib/keyboard.svelte'
@@ -749,9 +750,10 @@
     const url = to?.url
     if (!url) return
     const mailto = url.searchParams.get('mailto')
-    if (!mailto) return
+    const sharedFields = parseShareTarget(url)
+    if (!mailto && !sharedFields) return
 
-    const fields = parseMailtoUrl(mailto)
+    const fields = mailto ? parseMailtoUrl(mailto) : sharedFields
     if (fields) void openCompose(fields)
     queueMicrotask(() => replaceState(resolve('/inbox'), page.state))
   })
