@@ -2887,7 +2887,7 @@
       id="message-list-pane"
       style:--list-basis={listBasis}
       class={[
-        'app-themed-content mail-list-pane flex flex-col overflow-x-hidden bg-[#0d0d10] md:border-r',
+        'app-themed-content mail-list-pane flex flex-col overflow-x-hidden md:border-r',
         'md:border-white/8',
         isMailboxRoot ? 'flex min-w-0 flex-1 md:flex-none' : 'hidden md:flex'
       ]}
@@ -3652,7 +3652,7 @@
 
     <section
       class={[
-        'app-themed-content min-w-0 overflow-hidden bg-[#0b0b0e]',
+        'app-themed-content min-w-0 overflow-hidden',
         isMailboxRoot ? 'hidden flex-1 md:block' : 'flex-1'
       ]}
     >
