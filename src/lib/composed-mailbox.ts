@@ -1,5 +1,15 @@
 export const COMPOSED_MAILBOX_SLUG_PREFIX = 'composed-'
 
+export const COMPOSED_MAILBOX_ICONS = [
+  'layers',
+  'inbox',
+  'folder',
+  'archive',
+  'bookmark',
+  'briefcase'
+] as const
+export type ComposedMailboxIcon = (typeof COMPOSED_MAILBOX_ICONS)[number]
+
 export type ComposableMailRow = {
   messageId: string
   uid: number
@@ -27,6 +37,12 @@ export function normalizeComposedMailboxPaths(value: unknown) {
         .filter(Boolean)
     )
   )
+}
+
+export function normalizeComposedMailboxIcon(value: unknown): ComposedMailboxIcon {
+  return typeof value === 'string' && COMPOSED_MAILBOX_ICONS.includes(value as ComposedMailboxIcon)
+    ? (value as ComposedMailboxIcon)
+    : 'layers'
 }
 
 export function composedMailboxSlug(name: string) {

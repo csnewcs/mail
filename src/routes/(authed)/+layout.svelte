@@ -13,6 +13,7 @@
     ArchiveX,
     Archive,
     Folder,
+    Briefcase,
     Pencil,
     Settings,
     BookOpen,
@@ -44,9 +45,17 @@
   import { SvelteMap, SvelteSet } from 'svelte/reactivity'
   import { toast } from 'svelte-sonner'
   import { pushNotifications } from '$lib/push-notifications.svelte'
+  import type { ComposedMailboxIcon } from '$lib/composed-mailbox'
 
   type ImapMailbox = { path: string; name: string; delimiter: string }
-  type ComposedMailbox = { id: number; name: string; slug: string; mailboxPaths: string[] }
+  type SidebarMailbox = ImapMailbox & { icon?: typeof Folder }
+  type ComposedMailbox = {
+    id: number
+    name: string
+    slug: string
+    icon: ComposedMailboxIcon
+    mailboxPaths: string[]
+  }
   type SavedSearch = { id: number; name: string; query: string }
   type SyncStatus = {
     syncing: boolean
@@ -134,6 +143,15 @@
     return Folder
   }
 
+  const composedMailboxIcons: Record<ComposedMailboxIcon, typeof Folder> = {
+    layers: Layers,
+    inbox: Inbox,
+    folder: Folder,
+    archive: Archive,
+    bookmark: Bookmark,
+    briefcase: Briefcase
+  }
+
   let imapMailboxes = $state<ImapMailbox[]>([])
   let composedMailboxes = $state<ComposedMailbox[]>([])
   let unreadCounts = $state<Record<string, number>>({})
@@ -147,7 +165,7 @@
     return path.split(delimiter).filter(Boolean)
   }
 
-  function buildMailboxTree(mailboxes: ImapMailbox[]) {
+  function buildMailboxTree(mailboxes: SidebarMailbox[]) {
     const roots: MailboxTreeNode[] = []
     const nodes = new SvelteMap<string, MailboxTreeNode>()
     const secondaryNamesLower = (data.secondaryNames || []).map((name) => name.toLowerCase())
@@ -208,7 +226,7 @@
           node.label = mailbox.name || segment
           node.slug = pathToSlug(mailbox.path)
           node.path = mailbox.path
-          node.icon = iconForMailbox(mailbox.name || segment)
+          node.icon = mailbox.icon ?? iconForMailbox(mailbox.name || segment)
           node.selectable = true
         }
 
@@ -221,7 +239,7 @@
 
   function collectDefaultExpandedKeys(
     tree: ReturnType<typeof buildMailboxTree>,
-    mailboxes: ImapMailbox[],
+    mailboxes: SidebarMailbox[],
     activeMailboxSlug: string | null
   ) {
     const defaults = new SvelteSet<string>()
@@ -246,7 +264,7 @@
   }
 
   function collectActiveMailboxAncestorKeys(
-    mailboxes: ImapMailbox[],
+    mailboxes: SidebarMailbox[],
     activeMailboxSlug: string | null
   ) {
     if (!activeMailboxSlug) return []
@@ -288,22 +306,41 @@
     return rows
   }
 
-  const mailboxTree = $derived(buildMailboxTree(imapMailboxes))
+  let mailboxOrder = $state(untrack(() => [...data.mailboxPreferences.order]))
+  const sidebarMailboxes = $derived.by(() => {
+    const hidden = new SvelteSet(data.mailboxPreferences.hidden)
+    const order = new SvelteMap(mailboxOrder.map((key, index) => [key, index]))
+    return [
+      ...imapMailboxes,
+      ...composedMailboxes
+        .filter((item) => !hidden.has(item.slug))
+        .map((item) => ({
+          path: item.slug,
+          name: item.name,
+          delimiter: '/',
+          icon: composedMailboxIcons[item.icon]
+        }))
+    ].sort((left, right) => {
+      const leftOrder = order.get(left.path) ?? Number.MAX_SAFE_INTEGER
+      const rightOrder = order.get(right.path) ?? Number.MAX_SAFE_INTEGER
+      return leftOrder - rightOrder
+    })
+  })
+  const mailboxTree = $derived(buildMailboxTree(sidebarMailboxes))
   const defaultExpandedMailboxKeys = $derived(
-    collectDefaultExpandedKeys(mailboxTree, imapMailboxes, mailbox)
+    collectDefaultExpandedKeys(mailboxTree, sidebarMailboxes, mailbox)
   )
   const visibleMailboxRows = $derived(
     flattenMailboxTree(mailboxTree.roots, new SvelteSet(expandedMailboxKeys))
   )
   const selectableMailboxRows = $derived(visibleMailboxRows.filter((row) => row.slug !== null))
-  const mailboxes = $derived([
-    ...composedMailboxes.map((item) => ({ label: item.name, slug: item.slug, icon: Layers })),
-    ...selectableMailboxRows.map((row) => ({
+  const mailboxes = $derived(
+    selectableMailboxRows.map((row) => ({
       label: row.label,
       slug: row.slug ?? '',
       icon: row.icon
     }))
-  ])
+  )
 
   let sidebarWidth = $state(data.sidebarWidth)
   let resizing = $state(false)
@@ -401,7 +438,7 @@
     const merged = new SvelteSet(validExpandedKeys)
 
     if (mailbox !== mailboxExpandedForSlug) {
-      for (const key of collectActiveMailboxAncestorKeys(imapMailboxes, mailbox)) {
+      for (const key of collectActiveMailboxAncestorKeys(sidebarMailboxes, mailbox)) {
         if (validKeys.has(key)) merged.add(key)
       }
       mailboxExpandedForSlug = mailbox
@@ -891,7 +928,7 @@
   async function handleMailboxDrop(targetPath: string) {
     if (!draggingMailboxPath || draggingMailboxPath === targetPath) return
 
-    const paths = imapMailboxes.map((mb) => mb.path)
+    const paths = sidebarMailboxes.map((mb) => mb.path)
     const dragIdx = paths.indexOf(draggingMailboxPath)
     const dropIdx = paths.indexOf(targetPath)
 
@@ -904,7 +941,7 @@
     }
     filteredPaths.splice(insertIdx, 0, draggingMailboxPath)
 
-    const currentOrder = data.mailboxPreferences?.order || []
+    const currentOrder = mailboxOrder
     const basePaths = Array.from(new Set([...currentOrder, ...paths]))
     const filteredBase = basePaths.filter((p) => p !== draggingMailboxPath)
     let insertIdxBase = filteredBase.indexOf(targetPath)
@@ -928,17 +965,7 @@
         throw new Error(await readErrorMessage(res, 'Failed to save order.'))
       }
 
-      if (data.mailboxPreferences) {
-        data.mailboxPreferences.order = filteredBase
-      }
-      const sorted = [...imapMailboxes].sort((left, right) => {
-        const leftIdx = filteredBase.indexOf(left.path)
-        const rightIdx = filteredBase.indexOf(right.path)
-        const leftVal = leftIdx === -1 ? Number.MAX_SAFE_INTEGER : leftIdx
-        const rightVal = rightIdx === -1 ? Number.MAX_SAFE_INTEGER : rightIdx
-        return leftVal - rightVal
-      })
-      imapMailboxes = sorted
+      mailboxOrder = filteredBase
       toast.success('Mailbox order updated')
     } catch (err) {
       toast.error('Failed to update mailbox order')
@@ -1109,40 +1136,6 @@
       </div>
 
       <nav bind:this={mailboxNavEl} class="min-h-0 flex-1 space-y-1.5 overflow-y-auto">
-        {#if composedMailboxes.length > 0}
-          <div class="pb-2">
-            <p class="px-3 pb-1 text-[10px] font-bold tracking-wider text-zinc-500 uppercase">
-              Combined
-            </p>
-            {#each composedMailboxes as composedMailbox (composedMailbox.id)}
-              <a
-                href={resolve(`/${composedMailbox.slug}`)}
-                data-mailbox-item
-                onclick={() => {
-                  mobileNavOpen = false
-                  keyboard.panel = 'list'
-                }}
-                class={[
-                  'flex min-w-0 items-center gap-2.5 rounded-xl px-3 py-2 text-sm transition',
-                  mailbox === composedMailbox.slug
-                    ? 'bg-white/8 font-medium text-white'
-                    : 'text-zinc-400 hover:bg-white/4 hover:text-zinc-200'
-                ]}
-              >
-                <Layers size={15} class="shrink-0" />
-                <span class="truncate">{composedMailbox.name}</span>
-                {#if (unreadCounts[composedMailbox.slug] ?? 0) > 0}
-                  <span
-                    class="ml-auto shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-medium text-zinc-200"
-                  >
-                    {unreadCounts[composedMailbox.slug]}
-                  </span>
-                {/if}
-              </a>
-            {/each}
-          </div>
-        {/if}
-
         {#each visibleMailboxRows as row, index (row.key)}
           {@const selectableIndex = row.slug
             ? mailboxes.findIndex((mb) => mb.slug === row.slug)

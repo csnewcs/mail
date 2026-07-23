@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   composedMailboxSlug,
   mergeComposedRows,
+  normalizeComposedMailboxIcon,
   normalizeComposedMailboxName,
   normalizeComposedMailboxPaths
 } from './composed-mailbox.ts'
@@ -38,6 +39,12 @@ test('normalizes composed mailbox definitions and creates stable URL slugs', () 
   ])
   assert.equal(composedMailboxSlug('Équipe + Personal'), 'composed-equipe-personal')
   assert.equal(composedMailboxSlug('郵件'), 'composed-mailbox')
+})
+
+test('normalizes composed mailbox icons', () => {
+  assert.equal(normalizeComposedMailboxIcon('archive'), 'archive')
+  assert.equal(normalizeComposedMailboxIcon('unknown'), 'layers')
+  assert.equal(normalizeComposedMailboxIcon(null), 'layers')
 })
 
 test('deduplicates copies and orders the combined message view globally', () => {

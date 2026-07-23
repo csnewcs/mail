@@ -135,6 +135,7 @@ export const composedMailbox = pgTable(
     id: serial('id').primaryKey(),
     name: text('name').notNull(),
     slug: text('slug').notNull(),
+    icon: text('icon').notNull().default('layers'),
     mailboxPaths: jsonb('mailbox_paths').$type<string[]>().notNull(),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' })

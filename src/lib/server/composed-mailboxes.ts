@@ -4,11 +4,14 @@ import { composedMailbox, mailMessage, mailMessageMailbox } from './db/schema'
 import {
   COMPOSED_MAILBOX_SLUG_PREFIX,
   composedMailboxSlug,
+  normalizeComposedMailboxIcon,
   normalizeComposedMailboxPaths
 } from '../composed-mailbox'
+import type { ComposedMailboxIcon } from '../composed-mailbox'
 
 export {
   composedMailboxSlug,
+  normalizeComposedMailboxIcon,
   normalizeComposedMailboxName,
   normalizeComposedMailboxPaths
 } from '../composed-mailbox'
@@ -17,6 +20,7 @@ export type ComposedMailbox = {
   id: number
   name: string
   slug: string
+  icon: ComposedMailboxIcon
   mailboxPaths: string[]
 }
 
@@ -34,6 +38,7 @@ function serialize(row: typeof composedMailbox.$inferSelect): ComposedMailbox {
     id: row.id,
     name: row.name,
     slug: row.slug,
+    icon: normalizeComposedMailboxIcon(row.icon),
     mailboxPaths: normalizeComposedMailboxPaths(row.mailboxPaths)
   }
 }
@@ -90,7 +95,8 @@ async function uniqueSlug(name: string, reservedSlugs: Set<string>) {
 export async function createComposedMailbox(
   name: string,
   mailboxPaths: string[],
-  reservedSlugs = new Set<string>()
+  reservedSlugs = new Set<string>(),
+  icon: ComposedMailboxIcon = 'layers'
 ) {
   const [sameName] = await db
     .select({ id: composedMailbox.id })
@@ -101,12 +107,17 @@ export async function createComposedMailbox(
 
   const [row] = await db
     .insert(composedMailbox)
-    .values({ name, slug: await uniqueSlug(name, reservedSlugs), mailboxPaths })
+    .values({ name, slug: await uniqueSlug(name, reservedSlugs), icon, mailboxPaths })
     .returning()
   return serialize(row)
 }
 
-export async function updateComposedMailbox(id: number, name: string, mailboxPaths: string[]) {
+export async function updateComposedMailbox(
+  id: number,
+  name: string,
+  mailboxPaths: string[],
+  icon: ComposedMailboxIcon = 'layers'
+) {
   const [sameName] = await db
     .select({ id: composedMailbox.id })
     .from(composedMailbox)
@@ -118,7 +129,7 @@ export async function updateComposedMailbox(id: number, name: string, mailboxPat
 
   const [row] = await db
     .update(composedMailbox)
-    .set({ name, mailboxPaths, updatedAt: new Date() })
+    .set({ name, icon, mailboxPaths, updatedAt: new Date() })
     .where(eq(composedMailbox.id, id))
     .returning()
   return row ? serialize(row) : null

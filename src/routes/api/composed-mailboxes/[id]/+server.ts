@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types'
 import {
   deleteComposedMailbox,
   isComposedMailboxConflict,
+  normalizeComposedMailboxIcon,
   normalizeComposedMailboxName,
   normalizeComposedMailboxPaths,
   updateComposedMailbox
@@ -20,13 +21,14 @@ async function parseDefinition(request: Request) {
   const body = await request.json().catch(() => error(400, 'Invalid JSON body'))
   const name = normalizeComposedMailboxName(body?.name)
   const mailboxPaths = normalizeComposedMailboxPaths(body?.mailboxPaths)
+  const icon = normalizeComposedMailboxIcon(body?.icon)
   if (!name) error(400, 'name is required')
   if (mailboxPaths.length < 2) error(400, 'Select at least two mailboxes')
 
   const availablePaths = new Set((await getImapMailboxes()).map((mailbox) => mailbox.path))
   const missing = mailboxPaths.filter((path) => !availablePaths.has(path))
   if (missing.length > 0) error(400, `Unknown mailbox: ${missing[0]}`)
-  return { name, mailboxPaths }
+  return { name, icon, mailboxPaths }
 }
 
 export const PUT: RequestHandler = async ({ params, request }) => {
@@ -37,7 +39,8 @@ export const PUT: RequestHandler = async ({ params, request }) => {
     const composedMailbox = await updateComposedMailbox(
       id,
       definition.name,
-      definition.mailboxPaths
+      definition.mailboxPaths,
+      definition.icon
     )
     if (!composedMailbox) error(404, 'Composed mailbox not found')
     return json({ composedMailbox })

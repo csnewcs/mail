@@ -267,6 +267,13 @@
       "when": 1784764200000,
       "tag": "0024_composed_mailboxes",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1784769000000,
+      "tag": "0025_composed_mailbox_icons",
+      "breakpoints": true
     }
   ]
 }

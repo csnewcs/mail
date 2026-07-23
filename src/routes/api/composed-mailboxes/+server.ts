@@ -4,6 +4,7 @@ import {
   createComposedMailbox,
   isComposedMailboxConflict,
   listComposedMailboxes,
+  normalizeComposedMailboxIcon,
   normalizeComposedMailboxName,
   normalizeComposedMailboxPaths
 } from '$lib/server/composed-mailboxes'
@@ -15,6 +16,7 @@ async function parseDefinition(request: Request) {
   const body = await request.json().catch(() => error(400, 'Invalid JSON body'))
   const name = normalizeComposedMailboxName(body?.name)
   const mailboxPaths = normalizeComposedMailboxPaths(body?.mailboxPaths)
+  const icon = normalizeComposedMailboxIcon(body?.icon)
   if (!name) error(400, 'name is required')
   if (mailboxPaths.length < 2) error(400, 'Select at least two mailboxes')
 
@@ -24,6 +26,7 @@ async function parseDefinition(request: Request) {
   if (missing.length > 0) error(400, `Unknown mailbox: ${missing[0]}`)
   return {
     name,
+    icon,
     mailboxPaths,
     physicalSlugs: new Set(mailboxes.map((mailbox) => pathToSlug(mailbox.path)))
   }
@@ -41,7 +44,8 @@ export const POST: RequestHandler = async ({ request }) => {
     const composedMailbox = await createComposedMailbox(
       definition.name,
       definition.mailboxPaths,
-      definition.physicalSlugs
+      definition.physicalSlugs,
+      definition.icon
     )
     return json({ composedMailbox }, { status: 201 })
   } catch (cause) {

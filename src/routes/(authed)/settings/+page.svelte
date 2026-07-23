@@ -12,6 +12,7 @@
   import { invalidateSignatureCache } from '$lib/composer.svelte'
   import { errorMessageFromUnknown, readErrorMessage } from '$lib/http'
   import { normalizeAllowedSenders } from '$lib/remote-content'
+  import type { ComposedMailboxIcon } from '$lib/composed-mailbox'
   import { pushNotifications } from '$lib/push-notifications.svelte'
   import {
     applyThemeStyle,
@@ -108,6 +109,14 @@
     { value: 10, label: '10 seconds' },
     { value: 20, label: '20 seconds' },
     { value: 30, label: '30 seconds' }
+  ]
+  const composedMailboxIconOptions: SelectOption[] = [
+    { value: 'layers', label: 'Layers' },
+    { value: 'inbox', label: 'Inbox' },
+    { value: 'folder', label: 'Folder' },
+    { value: 'archive', label: 'Archive' },
+    { value: 'bookmark', label: 'Bookmark' },
+    { value: 'briefcase', label: 'Briefcase' }
   ]
   const themeOptions: SelectOption[] = [
     { value: 'system', label: 'System' },
@@ -224,7 +233,13 @@
 
   type ThemePreference = 'light' | 'dark' | 'system'
   type ImapMailbox = { path: string; name: string; delimiter: string }
-  type ComposedMailbox = { id: number; name: string; slug: string; mailboxPaths: string[] }
+  type ComposedMailbox = {
+    id: number
+    name: string
+    slug: string
+    icon: ComposedMailboxIcon
+    mailboxPaths: string[]
+  }
   type MailboxPreferences = { order: string[]; hidden: string[]; collapsedAccounts: string[] }
 
   type ImapForm = Props['data']['config']['imap'] & { password: string }
@@ -650,6 +665,7 @@
   let composedMailboxes = $state<ComposedMailbox[]>(untrack(() => data.composedMailboxes))
   let composedMailboxId = $state<number | null>(null)
   let composedMailboxName = $state('')
+  let composedMailboxIcon = $state<ComposedMailboxIcon>('layers')
   let composedMailboxPaths = $state<string[]>([])
   let savingComposedMailbox = $state(false)
   let deletingComposedMailboxId = $state<number | null>(null)
@@ -1648,25 +1664,35 @@
   }
 
   const mailboxPreferenceRows = $derived.by(() => {
-    const byPath = new Map(data.imapMailboxes.map((mailbox) => [mailbox.path, mailbox]))
-    const orderedPaths = [
-      ...mailboxPreferences.order.filter((path) => byPath.has(path)),
-      ...data.imapMailboxes
-        .map((mailbox) => mailbox.path)
-        .filter((path) => !mailboxPreferences.order.includes(path))
+    const rows = [
+      ...data.imapMailboxes.map((mailbox) => ({
+        key: mailbox.path,
+        name: mailbox.name || mailbox.path,
+        detail: mailbox.path
+      })),
+      ...composedMailboxes.map((mailbox) => ({
+        key: mailbox.slug,
+        name: mailbox.name,
+        detail: 'Combined mailbox'
+      }))
+    ]
+    const byKey = new Map(rows.map((row) => [row.key, row]))
+    const orderedKeys = [
+      ...mailboxPreferences.order.filter((key) => byKey.has(key)),
+      ...rows.map((row) => row.key).filter((key) => !mailboxPreferences.order.includes(key))
     ]
     const seen: string[] = []
 
-    return orderedPaths.flatMap((path) => {
-      if (seen.includes(path)) return []
-      seen.push(path)
-      const mailbox = byPath.get(path)
-      return mailbox ? [mailbox] : []
+    return orderedKeys.flatMap((key) => {
+      if (seen.includes(key)) return []
+      seen.push(key)
+      const row = byKey.get(key)
+      return row ? [row] : []
     })
   })
 
-  function mailboxVisible(path: string) {
-    return !mailboxPreferences.hidden.includes(path)
+  function mailboxVisible(key: string) {
+    return !mailboxPreferences.hidden.includes(key)
   }
 
   function setMailboxPreferenceOrder(paths: string[]) {
@@ -1677,9 +1703,9 @@
     scheduleAutosave(0)
   }
 
-  function moveMailboxPreference(path: string, direction: -1 | 1) {
-    const paths = mailboxPreferenceRows.map((mailbox) => mailbox.path)
-    const index = paths.indexOf(path)
+  function moveMailboxPreference(key: string, direction: -1 | 1) {
+    const paths = mailboxPreferenceRows.map((mailbox) => mailbox.key)
+    const index = paths.indexOf(key)
     const nextIndex = index + direction
     if (index < 0 || nextIndex < 0 || nextIndex >= paths.length) return
 
@@ -1689,10 +1715,10 @@
     setMailboxPreferenceOrder(next)
   }
 
-  function setMailboxVisible(path: string, visible: boolean) {
+  function setMailboxVisible(key: string, visible: boolean) {
     const hidden = visible
-      ? mailboxPreferences.hidden.filter((candidate) => candidate !== path)
-      : [...mailboxPreferences.hidden, path].filter(
+      ? mailboxPreferences.hidden.filter((candidate) => candidate !== key)
+      : [...mailboxPreferences.hidden, key].filter(
           (candidate, index, values) => values.indexOf(candidate) === index
         )
 
@@ -1719,12 +1745,14 @@
   function editComposedMailbox(mailbox: ComposedMailbox) {
     composedMailboxId = mailbox.id
     composedMailboxName = mailbox.name
+    composedMailboxIcon = mailbox.icon
     composedMailboxPaths = [...mailbox.mailboxPaths]
   }
 
   function resetComposedMailboxForm() {
     composedMailboxId = null
     composedMailboxName = ''
+    composedMailboxIcon = 'layers'
     composedMailboxPaths = []
   }
 
@@ -1742,6 +1770,7 @@
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             name: composedMailboxName,
+            icon: composedMailboxIcon,
             mailboxPaths: composedMailboxPaths
           })
         }
@@ -3172,24 +3201,24 @@
             </div>
           {:else}
             <div class="overflow-hidden rounded-xl border border-white/8 bg-white/3">
-              {#each mailboxPreferenceRows as mailbox, index (mailbox.path)}
+              {#each mailboxPreferenceRows as mailbox, index (mailbox.key)}
                 <div
                   class="flex flex-col gap-3 border-b border-white/6 p-4 last:border-b-0 sm:flex-row sm:items-center"
                 >
                   <label class="flex min-w-0 flex-1 items-start gap-3">
                     <input
                       type="checkbox"
-                      checked={mailboxVisible(mailbox.path)}
+                      checked={mailboxVisible(mailbox.key)}
                       onchange={(event) =>
-                        setMailboxVisible(mailbox.path, event.currentTarget.checked)}
+                        setMailboxVisible(mailbox.key, event.currentTarget.checked)}
                       class="mt-1 h-4 w-4 rounded border-white/20 bg-white/5 text-blue-600 focus:ring-blue-500"
                     />
                     <span class="min-w-0">
                       <span class="block truncate text-sm font-medium text-zinc-200">
-                        {mailbox.name || mailbox.path}
+                        {mailbox.name}
                       </span>
                       <span class="mt-0.5 block truncate font-mono text-xs text-zinc-600">
-                        {mailbox.path}
+                        {mailbox.detail}
                       </span>
                     </span>
                   </label>
@@ -3198,7 +3227,7 @@
                     <button
                       type="button"
                       disabled={index === 0}
-                      onclick={() => moveMailboxPreference(mailbox.path, -1)}
+                      onclick={() => moveMailboxPreference(mailbox.key, -1)}
                       class="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-zinc-300 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       Up
@@ -3206,7 +3235,7 @@
                     <button
                       type="button"
                       disabled={index === mailboxPreferenceRows.length - 1}
-                      onclick={() => moveMailboxPreference(mailbox.path, 1)}
+                      onclick={() => moveMailboxPreference(mailbox.key, 1)}
                       class="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-zinc-300 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       Down
@@ -3274,6 +3303,20 @@
                   maxlength="80"
                   placeholder="Work and personal"
                   class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label for="composed-mailbox-icon" class="mb-1 block text-xs text-zinc-400"
+                  >Icon</label
+                >
+                <CustomSelect
+                  id="composed-mailbox-icon"
+                  value={composedMailboxIcon}
+                  options={composedMailboxIconOptions}
+                  onchange={(value) => (composedMailboxIcon = value as ComposedMailboxIcon)}
+                  ariaLabel="Combined mailbox icon"
+                  class="w-full"
+                  buttonClass="px-3 py-2 text-sm"
                 />
               </div>
               <fieldset>
