@@ -1420,13 +1420,21 @@
             {/if}
           </div>
           <div class="mt-2">
-            <div class="flex flex-wrap gap-2">
+            <div class="flex flex-wrap items-center gap-1.5">
               <MailAuthenticationIndicators
                 spfStatus={message.spfStatus}
                 dkimStatus={message.dkimStatus}
                 dmarcStatus={message.dmarcStatus}
                 authenticationTrusted={message.authenticationTrusted}
               />
+              {#if message.tracingCodeCount > 0}
+                <span
+                  class="inline-flex items-center rounded-full border border-rose-400/20 bg-rose-400/10 px-2 py-0.5 text-[10px] font-medium text-rose-300 uppercase"
+                  title={`${message.tracingCodeCount} tracing code${message.tracingCodeCount === 1 ? '' : 's'} found in this email's HTML content.`}
+                >
+                  Tracing code detected
+                </span>
+              {/if}
               <OpenPgpIndicator
                 signed={message.openPgpSigned}
                 signatureStatus={message.openPgpSignatureStatus}
@@ -1488,21 +1496,6 @@
         {:else if translationText || translatedHtmlSegments}
           <p class="mt-3 text-sm text-zinc-500">Translated content is shown in the email body.</p>
         {/if}
-      </section>
-    {/if}
-
-    {#if message.tracingCodeCount > 0}
-      <section class="border-b border-rose-500/20 bg-rose-500/10 p-4 sm:p-5">
-        <div class="flex items-start gap-3">
-          <ShieldAlert size={18} class="mt-0.5 shrink-0 text-rose-200" />
-          <div>
-            <p class="text-sm font-semibold text-rose-100">Tracing code detected</p>
-            <p class="mt-1 text-sm text-rose-100/70">
-              {message.tracingCodeCount} tracing code{message.tracingCodeCount === 1 ? '' : 's'} found
-              in this email's HTML content.
-            </p>
-          </div>
-        </div>
       </section>
     {/if}
 
