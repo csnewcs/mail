@@ -94,7 +94,8 @@ function parsePayload(job: SmtpJobRow): SmtpSendOperationPayload {
       ? payload.openPgpSigning
       : 'none') as OpenPgpSigningMethod,
     openPgpEncrypt: payload.openPgpEncrypt === true,
-    attachPublicKey: payload.attachPublicKey === true
+    attachPublicKey: payload.attachPublicKey === true,
+    trackingOrigin: typeof payload.trackingOrigin === 'string' ? payload.trackingOrigin : null
   }
 }
 
@@ -218,7 +219,9 @@ async function buildRawMessage(
   }
 
   const body = outgoingMessageBody(payload.html)
-  const trackingPixelUrl = emailTrackingPixelUrl(env.ORIGIN, job.trackingToken)
+  const trackingPixelUrl =
+    emailTrackingPixelUrl(payload.trackingOrigin ?? undefined, job.trackingToken) ??
+    emailTrackingPixelUrl(env.ORIGIN, job.trackingToken)
   if (body.html && trackingPixelUrl) {
     body.html = addEmailTrackingPixel(body.html, trackingPixelUrl)
   }

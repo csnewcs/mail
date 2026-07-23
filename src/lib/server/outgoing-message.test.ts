@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import nodemailer from 'nodemailer'
+import { simpleParser } from 'mailparser'
+import { addEmailTrackingPixel } from './email-tracking.ts'
 import {
   outgoingListHeaders,
   outgoingMessageBody,
@@ -64,4 +66,26 @@ test('does not mistake comments or script content for an HTML document element',
 
 test('keeps a plain-text MIME alternative for HTML without visible text', () => {
   assert.equal(outgoingMessageBody('<div></div>').text, ' ')
+})
+
+test('includes a tracking image in the delivered HTML MIME content', async () => {
+  const body = outgoingMessageBody('<p>Tracked message</p>')
+  body.html = addEmailTrackingPixel(
+    body.html ?? '',
+    'https://mail.example.com/email-open/822dcd01-802c-4bbf-a60a-33bf82290ea0/pixel.gif'
+  )
+  const transport = nodemailer.createTransport({ streamTransport: true, buffer: true })
+  const delivered = await transport.sendMail({
+    from: 'sender@example.com',
+    to: 'recipient@example.com',
+    subject: 'Tracking test',
+    ...body
+  })
+  const parsed = await simpleParser(delivered.message)
+
+  assert.match(parsed.html || '', /<p>Tracked message<\/p>/)
+  assert.match(
+    parsed.html || '',
+    /<img src="https:\/\/mail\.example\.com\/email-open\/822dcd01-802c-4bbf-a60a-33bf82290ea0\/pixel\.gif"/
+  )
 })

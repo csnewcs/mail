@@ -1,4 +1,5 @@
 import type { ComposerAttachment } from '$lib/mail-attachments'
+import { env } from '$env/dynamic/private'
 import { randomUUID } from 'node:crypto'
 import type { OpenPgpSigningMethod } from './openpgp-message'
 import { getImapConfigs, getSmtpConfig, getSmtpConfigs } from './config'
@@ -19,6 +20,7 @@ export type SmtpSendOperationPayload = {
   openPgpSigning?: OpenPgpSigningMethod
   openPgpEncrypt?: boolean
   attachPublicKey?: boolean
+  trackingOrigin?: string | null
 }
 
 export async function sentMailboxForPayload(payload: SmtpSendOperationPayload) {
@@ -51,7 +53,7 @@ export async function scheduleSmtpSend(
   const [job] = await db
     .insert(smtpJob)
     .values({
-      payload: JSON.stringify(payload),
+      payload: JSON.stringify({ ...payload, trackingOrigin: env.ORIGIN ?? null }),
       status: 'pending',
       attemptCount: 0,
       availableAt,
