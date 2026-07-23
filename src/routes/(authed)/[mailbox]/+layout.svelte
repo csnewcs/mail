@@ -42,6 +42,7 @@
   import { readOfflineList, saveOfflineList, type OfflineListCache } from '$lib/offline-cache'
   import { DEFAULT_LIST_RATIO, MIN_LIST_PX, MIN_DETAIL_PX } from '$lib/list-width'
   import { hasExplicitSearchFilter } from '$lib/mail-search'
+  import type { ComposedMailboxIcon } from '$lib/composed-mailbox'
 
   type DensityPreference = 'comfortable' | 'compact' | 'condensed'
 
@@ -125,7 +126,13 @@
       compactMode: boolean
       threadModeOnPageLoad: boolean
       listRatio: number
-      composedMailbox: { id: number; name: string; slug: string; mailboxPaths: string[] } | null
+      composedMailbox: {
+        id: number
+        name: string
+        slug: string
+        icon: ComposedMailboxIcon
+        mailboxPaths: string[]
+      } | null
       mailboxPaths: string[]
       user?: { name: string; email: string } | null
     }
@@ -157,6 +164,9 @@
   const mailbox = $derived(page.params.mailbox ?? 'inbox')
   const isComposedMailbox = $derived(Boolean(data.composedMailbox))
   const currentMailboxRole = $derived(isComposedMailbox ? null : inferMailboxRole(mailbox))
+  const showRecipients = $derived(
+    currentMailboxRole === 'sent' || data.composedMailbox?.icon === 'sent'
+  )
   const offlineUserKey = $derived(data.user?.email ?? null)
   const simplifiedViewEnabled = $derived(data.simplifiedView)
   const density = $derived(data.density ?? (data.compactMode ? 'compact' : 'comfortable'))
@@ -785,14 +795,15 @@
     )
   }
 
-  function senderLabel(from: string | null | undefined) {
-    if (!from) return 'Unknown sender'
-    return from
+  function addressName(address: string | null | undefined, fallback: string) {
+    const label = address || fallback
+    return label.split('<')[0]?.trim() || label
   }
 
-  function senderName(from: string | null | undefined) {
-    const label = senderLabel(from)
-    return label.split('<')[0]?.trim() || label
+  function messageParticipantName(message: Message) {
+    return showRecipients
+      ? addressName(message.to, 'Unknown recipient')
+      : addressName(message.from, 'Unknown sender')
   }
 
   function normalizedSender(from: string | null | undefined) {
@@ -1548,6 +1559,7 @@
     if (/\b(archive|all[\s._-]?mail)\b/.test(value)) return 'archive'
     if (/\b(trash|deleted[\s._-]?(items|messages)?)\b/.test(value)) return 'trash'
     if (/\b(spam|junk([\s._-]?email)?)\b/.test(value)) return 'spam'
+    if (/\bsent\b/.test(value)) return 'sent'
     return null
   }
 
@@ -2755,7 +2767,7 @@
                     <div class="min-w-0 flex-1">
                       <div class="flex items-center gap-2">
                         <p class="truncate text-sm font-medium text-zinc-300">
-                          {senderName(message.from)}
+                          {messageParticipantName(message)}
                         </p>
                         {#if isUnread(message.flags, message.hasUnread)}
                           <span
@@ -3357,7 +3369,7 @@
                                 : 'text-zinc-300'
                             ]}
                           >
-                            {senderName(message.from)}
+                            {messageParticipantName(message)}
                           </p>
                           {#if isUnread(message.flags, message.hasUnread)}
                             <span
@@ -3535,7 +3547,7 @@
                               : 'text-zinc-300'
                           ]}
                         >
-                          {senderName(message.from)}
+                          {messageParticipantName(message)}
                         </p>
                         {#if isUnread(message.flags, message.hasUnread)}
                           <span
