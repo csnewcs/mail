@@ -2,11 +2,11 @@ import { json } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
 import {
   countSearchMessages,
-  countStoredMessages,
-  countStoredThreads,
-  listStoredMessages,
-  listStoredThreads,
-  resolveMailboxPath,
+  countStoredMessagesInMailboxes,
+  countStoredThreadsInMailboxes,
+  listStoredMessagesInMailboxes,
+  listStoredThreadsInMailboxes,
+  resolveMailboxScope,
   searchMessages,
   type MailListRow,
   type ThreadRow
@@ -95,23 +95,25 @@ export const GET: RequestHandler = async ({ url }) => {
         ? 'pinned'
         : undefined
 
-  const mailboxPath = await resolveMailboxPath(mailboxSlug)
+  const scope = await resolveMailboxScope(mailboxSlug)
 
   if (threaded) {
     const [threads, total] = await Promise.all([
-      listStoredThreads(mailboxPath, limit + 1, offset, unreadOnly, metadataFilter),
-      countStoredThreads(mailboxPath, unreadOnly, metadataFilter)
+      listStoredThreadsInMailboxes(scope.paths, limit + 1, offset, unreadOnly, metadataFilter),
+      countStoredThreadsInMailboxes(scope.paths, unreadOnly, metadataFilter)
     ])
     const hasMore = threads.length > limit
     const body = {
-      messages: threads.slice(0, limit).map((m) => serializeMessage(m)),
+      messages: threads
+        .slice(0, limit)
+        .map((m) => serializeMessage(m, Boolean(scope.composedMailbox))),
       hasMore,
       total
     }
 
     perfLog('api.messages.GET', {
       mode: 'threaded',
-      mailbox: mailboxPath,
+      mailbox: scope.path,
       offset,
       limit,
       unreadOnly,
@@ -125,19 +127,21 @@ export const GET: RequestHandler = async ({ url }) => {
   }
 
   const [messages, total] = await Promise.all([
-    listStoredMessages(mailboxPath, limit + 1, offset, unreadOnly, metadataFilter),
-    countStoredMessages(mailboxPath, unreadOnly, metadataFilter)
+    listStoredMessagesInMailboxes(scope.paths, limit + 1, offset, unreadOnly, metadataFilter),
+    countStoredMessagesInMailboxes(scope.paths, unreadOnly, metadataFilter)
   ])
   const hasMore = messages.length > limit
   const body = {
-    messages: messages.slice(0, limit).map((m) => serializeMessage(m)),
+    messages: messages
+      .slice(0, limit)
+      .map((m) => serializeMessage(m, Boolean(scope.composedMailbox))),
     hasMore,
     total
   }
 
   perfLog('api.messages.GET', {
     mode: 'list',
-    mailbox: mailboxPath,
+    mailbox: scope.path,
     offset,
     limit,
     rows: body.messages.length,

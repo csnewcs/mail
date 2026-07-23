@@ -5,19 +5,22 @@ import { env } from '$env/dynamic/private'
 import { getImapMailboxes } from '$lib/server/mail'
 import { getLoginMethods } from '$lib/server/auth-methods'
 import { isDemoModeEnabled } from '$lib/server/demo'
+import { listComposedMailboxes } from '$lib/server/composed-mailboxes'
 
 export const load: PageServerLoad = async () => {
   const config = await getDisplayConfig()
-  const [imapMailboxes, loginMethods, preferences] = await Promise.all([
+  const [imapMailboxes, loginMethods, preferences, composedMailboxes] = await Promise.all([
     getImapMailboxes(),
     getLoginMethods(),
-    getStoredPreferences()
+    getStoredPreferences(),
+    isDemoModeEnabled() ? Promise.resolve([]) : listComposedMailboxes()
   ])
   return {
     config,
     demoMode: isDemoModeEnabled(),
     loginMethods,
     imapMailboxes,
+    composedMailboxes,
     origin: env.ORIGIN ?? '',
     ...preferences,
     compactMode: preferences.density !== 'comfortable'

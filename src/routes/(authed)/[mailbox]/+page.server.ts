@@ -1,10 +1,10 @@
 import type { PageServerLoad } from './$types'
 import {
-  countStoredThreads,
-  countStoredMessages,
-  listStoredMessages,
-  listStoredThreads,
-  resolveMailboxPath
+  countStoredThreadsInMailboxes,
+  countStoredMessagesInMailboxes,
+  listStoredMessagesInMailboxes,
+  listStoredThreadsInMailboxes,
+  resolveMailboxScope
 } from '$lib/server/mail'
 import { payloadBytes, perfLog, perfMs, perfNow } from '$lib/server/perf'
 import { getStoredPreferences } from '$lib/server/preferences'
@@ -12,8 +12,8 @@ import { getStoredPreferences } from '$lib/server/preferences'
 const PAGE_SIZE = 50
 
 type ListRow =
-  | Awaited<ReturnType<typeof listStoredThreads>>[number]
-  | Awaited<ReturnType<typeof listStoredMessages>>[number]
+  | Awaited<ReturnType<typeof listStoredThreadsInMailboxes>>[number]
+  | Awaited<ReturnType<typeof listStoredMessagesInMailboxes>>[number]
 
 function serializeMessage(message: ListRow) {
   return {
@@ -44,12 +44,18 @@ function serializeMessage(message: ListRow) {
 export const load: PageServerLoad = async ({ params, parent }) => {
   const startedAt = perfNow()
   const { imapMailboxes } = await parent()
-  const mailboxPath = await resolveMailboxPath(params.mailbox, imapMailboxes)
+  const scope = await resolveMailboxScope(params.mailbox, imapMailboxes)
   const threaded = (await getStoredPreferences()).threadModeOnPageLoad
   const [rawMessages, total] = await Promise.all(
     threaded
-      ? [listStoredThreads(mailboxPath, PAGE_SIZE + 1, 0), countStoredThreads(mailboxPath)]
-      : [listStoredMessages(mailboxPath, PAGE_SIZE + 1, 0), countStoredMessages(mailboxPath)]
+      ? [
+          listStoredThreadsInMailboxes(scope.paths, PAGE_SIZE + 1, 0),
+          countStoredThreadsInMailboxes(scope.paths)
+        ]
+      : [
+          listStoredMessagesInMailboxes(scope.paths, PAGE_SIZE + 1, 0),
+          countStoredMessagesInMailboxes(scope.paths)
+        ]
   )
   const hasMore = rawMessages.length > PAGE_SIZE
 
@@ -62,7 +68,7 @@ export const load: PageServerLoad = async ({ params, parent }) => {
   }
 
   perfLog('load.mailboxPage', {
-    mailbox: mailboxPath,
+    mailbox: scope.path,
     rows: body.messages.length,
     hasMore,
     payloadBytes: payloadBytes(body),

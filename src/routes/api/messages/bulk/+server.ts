@@ -7,7 +7,7 @@ import {
   getStoredMessageById,
   markMessagesSeen,
   moveMessage,
-  resolveMailboxPath,
+  resolveMailboxScope,
   snoozeMessages,
   type MessageAction
 } from '$lib/server/mail'
@@ -24,7 +24,7 @@ function parseSnoozedUntil(value: unknown) {
   return date
 }
 
-async function expandThreadIds(ids: number[], mailbox: string) {
+async function expandThreadIds(ids: number[], mailboxes: string[]) {
   const selected = await db
     .select({ threadKey: mailMessage.threadKey })
     .from(mailMessageMailbox)
@@ -37,7 +37,32 @@ async function expandThreadIds(ids: number[], mailbox: string) {
     .select({ id: mailMessageMailbox.id })
     .from(mailMessageMailbox)
     .innerJoin(mailMessage, eq(mailMessageMailbox.messageId, mailMessage.messageId))
-    .where(and(eq(mailMessageMailbox.mailbox, mailbox), inArray(mailMessage.threadKey, threadKeys)))
+    .where(
+      and(
+        inArray(mailMessageMailbox.mailbox, mailboxes),
+        inArray(mailMessage.threadKey, threadKeys)
+      )
+    )
+    .then((rows) => rows.map((row) => row.id))
+}
+
+async function expandMessageCopyIds(ids: number[], mailboxes: string[]) {
+  const selected = await db
+    .select({ messageId: mailMessageMailbox.messageId })
+    .from(mailMessageMailbox)
+    .where(inArray(mailMessageMailbox.id, ids))
+  const messageIds = [...new Set(selected.map((row) => row.messageId))]
+  if (messageIds.length === 0) return []
+
+  return db
+    .select({ id: mailMessageMailbox.id })
+    .from(mailMessageMailbox)
+    .where(
+      and(
+        inArray(mailMessageMailbox.mailbox, mailboxes),
+        inArray(mailMessageMailbox.messageId, messageIds)
+      )
+    )
     .then((rows) => rows.map((row) => row.id))
 }
 
@@ -53,11 +78,15 @@ export const POST: RequestHandler = async ({ request }) => {
     return error(409, 'Sending placeholders cannot be modified')
   }
 
-  if (body.threaded === true) {
-    if (typeof body.mailbox !== 'string' || !body.mailbox.trim()) {
-      return error(400, 'mailbox is required for threaded actions')
+  if (body.threaded === true && (typeof body.mailbox !== 'string' || !body.mailbox.trim())) {
+    return error(400, 'mailbox is required for threaded actions')
+  }
+  if (typeof body.mailbox === 'string' && body.mailbox.trim()) {
+    const scope = await resolveMailboxScope(body.mailbox)
+    if (body.threaded === true) ids = await expandThreadIds(ids, scope.paths)
+    else if (scope.composedMailbox && body.composed === true) {
+      ids = await expandMessageCopyIds(ids, scope.paths)
     }
-    ids = await expandThreadIds(ids, await resolveMailboxPath(body.mailbox))
   }
 
   if (action === 'mark_read' || action === 'mark_unread') {

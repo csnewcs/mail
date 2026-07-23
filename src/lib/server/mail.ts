@@ -3,6 +3,7 @@ import {
   and,
   asc,
   count,
+  countDistinct,
   desc,
   eq,
   gte,
@@ -97,6 +98,10 @@ import {
   type SentPlaceholderJob
 } from './sent-placeholder'
 import type { SendStatus } from '../send-status'
+import { getComposedMailboxBySlug, type ComposedMailbox } from './composed-mailboxes'
+import { mergeComposedRows } from '../composed-mailbox'
+
+export { mergeComposedRows } from '../composed-mailbox'
 
 const INITIAL_SYNC_FAILURE_RETRY_MS = 10 * 60 * 1000
 const FULL_RECONCILE_INTERVAL_MS = 5 * 60 * 1000
@@ -216,6 +221,7 @@ export type MailListRow = {
   receivedAt: Date | null
   snoozedUntil?: Date | null
   threadId: string | null
+  hasUnread?: boolean
   threadStarred?: boolean
   threadPinned?: boolean
   hasThreadNote?: boolean
@@ -2059,6 +2065,29 @@ export async function resolveMailboxPath(
   return slugToPath(mailboxSlug, knownMailboxes)
 }
 
+export type MailboxScope = {
+  path: string
+  paths: string[]
+  composedMailbox: ComposedMailbox | null
+}
+
+export async function resolveMailboxScope(
+  mailboxSlug: string,
+  mailboxes: { path: string }[] = []
+): Promise<MailboxScope> {
+  const composedMailbox = await getComposedMailboxBySlug(mailboxSlug)
+  if (composedMailbox) {
+    return {
+      path: composedMailbox.slug,
+      paths: composedMailbox.mailboxPaths,
+      composedMailbox
+    }
+  }
+
+  const path = await resolveMailboxPath(mailboxSlug, mailboxes)
+  return { path, paths: [path], composedMailbox: null }
+}
+
 const listSelect = {
   id: mailMessageMailbox.id,
   messageId: mailMessage.messageId,
@@ -2197,6 +2226,19 @@ function mergeSentPlaceholders<T extends MailListRow>(
 ) {
   if (placeholders.length === 0) return rows
   return sortSentRows([...rows, ...(placeholders as T[])]).slice(offset, offset + limit)
+}
+
+function scopeMetadataWhere(paths: string[], filter?: ThreadMetadataFilter) {
+  if (!filter) return inArray(mailMessageMailbox.mailbox, paths)
+  return and(
+    inArray(mailMessageMailbox.mailbox, paths),
+    sql`exists (
+      select 1 from mail_thread_metadata
+      where mail_thread_metadata.mailbox = ${mailMessageMailbox.mailbox}
+      and mail_thread_metadata.thread_key = ${mailMessage.threadKey}
+      and ${filter === 'starred' ? sql`mail_thread_metadata.starred = true` : sql`mail_thread_metadata.pinned = true`}
+    )`
+  )
 }
 
 function threadMetadataWhere(mailboxPath: string, filter?: ThreadMetadataFilter) {
@@ -2579,6 +2621,69 @@ export async function countStoredMessages(
   return Number(row?.value ?? 0) + placeholders
 }
 
+export async function listStoredMessagesInMailboxes(
+  mailboxPaths: string[],
+  limit = 100,
+  offset = 0,
+  unreadOnly = false,
+  metadataFilter?: ThreadMetadataFilter
+) {
+  if (mailboxPaths.length === 1) {
+    return listStoredMessages(mailboxPaths[0], limit, offset, unreadOnly, metadataFilter)
+  }
+  const fetchLimit = limit + offset
+  const rows: MailListRow[][] = await Promise.all(
+    mailboxPaths.map(async (path) =>
+      (await listStoredMessages(path, fetchLimit, 0, unreadOnly, metadataFilter)).map((row) => ({
+        ...row,
+        hasUnread: !isSeenFlags(row.flags)
+      }))
+    )
+  )
+  return mergeComposedRows(rows, limit, offset)
+}
+
+export async function countStoredMessagesInMailboxes(
+  mailboxPaths: string[],
+  unreadOnly = false,
+  metadataFilter?: ThreadMetadataFilter
+) {
+  if (mailboxPaths.length === 1) {
+    return countStoredMessages(mailboxPaths[0], unreadOnly, metadataFilter)
+  }
+  if (isDemoModeEnabled()) {
+    const rows = await listStoredMessagesInMailboxes(
+      mailboxPaths,
+      Number.MAX_SAFE_INTEGER,
+      0,
+      unreadOnly,
+      metadataFilter
+    )
+    return rows.length
+  }
+
+  const [row] = await db
+    .select({ value: countDistinct(mailMessage.messageId) })
+    .from(mailMessageMailbox)
+    .innerJoin(mailMessage, eq(mailMessageMailbox.messageId, mailMessage.messageId))
+    .where(
+      and(
+        activeSnoozeCondition(),
+        noPendingMoveCondition(),
+        scopeMetadataWhere(mailboxPaths, metadataFilter),
+        unreadOnly ? notLike(mailMessageMailbox.flags, '%\\\\Seen%') : undefined
+      )
+    )
+  const placeholders =
+    metadataFilter || unreadOnly
+      ? 0
+      : (await Promise.all(mailboxPaths.map(countSentPlaceholders))).reduce(
+          (sum, value) => sum + value,
+          0
+        )
+  return Number(row?.value ?? 0) + placeholders
+}
+
 function senderWhereClause(mailboxPath: string, normalizedSender: string) {
   return and(
     eq(mailMessageMailbox.mailbox, mailboxPath),
@@ -2840,6 +2945,86 @@ export async function countStoredThreads(
   return Number(row?.value ?? 0) + placeholders
 }
 
+export async function listStoredThreadsInMailboxes(
+  mailboxPaths: string[],
+  limit = 100,
+  offset = 0,
+  unreadOnly = false,
+  metadataFilter?: ThreadMetadataFilter
+): Promise<ThreadRow[]> {
+  if (mailboxPaths.length === 1) {
+    return listStoredThreads(mailboxPaths[0], limit, offset, unreadOnly, metadataFilter)
+  }
+  const fetchLimit = limit + offset
+  const rowSets = await Promise.all(
+    mailboxPaths.map((path) => listStoredThreads(path, fetchLimit, 0, unreadOnly, metadataFilter))
+  )
+  const rows = mergeComposedRows(rowSets, limit, offset) as ThreadRow[]
+  if (isDemoModeEnabled() || rows.length === 0) return rows
+
+  const threadKeys = rows.flatMap((row) => (row.threadId ? [row.threadId] : []))
+  const counts = await db
+    .select({ threadKey: mailMessage.threadKey, value: countDistinct(mailMessage.messageId) })
+    .from(mailMessageMailbox)
+    .innerJoin(mailMessage, eq(mailMessageMailbox.messageId, mailMessage.messageId))
+    .where(
+      and(
+        inArray(mailMessageMailbox.mailbox, mailboxPaths),
+        inArray(mailMessage.threadKey, threadKeys),
+        noPendingMoveCondition()
+      )
+    )
+    .groupBy(mailMessage.threadKey)
+  const countByThread = new Map(counts.map((row) => [row.threadKey, Number(row.value)]))
+  return rows.map((row) => ({
+    ...row,
+    threadCount: row.threadId
+      ? (countByThread.get(row.threadId) ?? row.threadCount)
+      : row.threadCount
+  }))
+}
+
+export async function countStoredThreadsInMailboxes(
+  mailboxPaths: string[],
+  unreadOnly = false,
+  metadataFilter?: ThreadMetadataFilter
+) {
+  if (mailboxPaths.length === 1) {
+    return countStoredThreads(mailboxPaths[0], unreadOnly, metadataFilter)
+  }
+  if (isDemoModeEnabled()) {
+    const rows = await listStoredThreadsInMailboxes(
+      mailboxPaths,
+      Number.MAX_SAFE_INTEGER,
+      0,
+      unreadOnly,
+      metadataFilter
+    )
+    return rows.length
+  }
+
+  const [row] = await db
+    .select({ value: countDistinct(mailMessage.threadKey) })
+    .from(mailMessageMailbox)
+    .innerJoin(mailMessage, eq(mailMessageMailbox.messageId, mailMessage.messageId))
+    .where(
+      and(
+        activeSnoozeCondition(),
+        noPendingMoveCondition(),
+        scopeMetadataWhere(mailboxPaths, metadataFilter),
+        unreadOnly ? notLike(mailMessageMailbox.flags, '%\\\\Seen%') : undefined
+      )
+    )
+  const placeholders =
+    metadataFilter || unreadOnly
+      ? 0
+      : (await Promise.all(mailboxPaths.map(countSentPlaceholders))).reduce(
+          (sum, value) => sum + value,
+          0
+        )
+  return Number(row?.value ?? 0) + placeholders
+}
+
 // Returns all messages belonging to a thread, ordered oldest-first.
 export async function getMessagesInThread(
   threadKey: string,
@@ -2882,6 +3067,41 @@ export async function getMessagesInThread(
     })
     throw error
   }
+}
+
+export async function getMessagesInMailboxesThread(
+  threadKey: string,
+  mailboxPaths: string[]
+): Promise<MailRow[]> {
+  if (mailboxPaths.length === 1) return getMessagesInThread(threadKey, mailboxPaths[0])
+  if (isDemoModeEnabled()) {
+    const rows = await Promise.all(
+      mailboxPaths.map((path) => getDemoMessagesInThread(threadKey, path))
+    )
+    return orderThread(Array.from(new Map(rows.flat().map((row) => [row.messageId, row])).values()))
+  }
+
+  const rows = await db
+    .select(detailSelect)
+    .from(mailMessage)
+    .innerJoin(mailMessageMailbox, eq(mailMessageMailbox.messageId, mailMessage.messageId))
+    .where(
+      and(
+        inArray(mailMessageMailbox.mailbox, mailboxPaths),
+        eq(mailMessage.threadKey, threadKey),
+        noPendingMoveCondition()
+      )
+    )
+    .orderBy(asc(mailMessage.receivedAt), asc(mailMessageMailbox.uid))
+  const unique = Array.from(
+    new Map(
+      rows.map((row) => {
+        const normalized = withAuthenticationTrust(normalizeMailRowFlags(row))
+        return [normalized.messageId, normalized]
+      })
+    ).values()
+  )
+  return orderThread(unique)
 }
 
 export async function searchMessages(query: string, limit: number, offset: number) {

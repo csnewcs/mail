@@ -129,6 +129,25 @@ export const mailboxCatalog = pgTable('mailbox_catalog', {
   updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull()
 })
 
+export const composedMailbox = pgTable(
+  'composed_mailbox',
+  {
+    id: serial('id').primaryKey(),
+    name: text('name').notNull(),
+    slug: text('slug').notNull(),
+    mailboxPaths: jsonb('mailbox_paths').$type<string[]>().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' })
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull()
+  },
+  (table) => [
+    uniqueIndex('composed_mailbox_name_idx').on(table.name),
+    uniqueIndex('composed_mailbox_slug_idx').on(table.slug)
+  ]
+)
+
 export const syncRuntime = pgTable('sync_runtime', {
   id: integer('id').primaryKey().default(1),
   isSyncing: boolean('is_syncing').notNull().default(false),

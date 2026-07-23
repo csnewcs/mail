@@ -1,6 +1,10 @@
 import { error, json } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
-import { getMessagesInThread, markMessagesSeen, resolveMailboxPath } from '$lib/server/mail'
+import {
+  getMessagesInMailboxesThread,
+  markMessagesSeen,
+  resolveMailboxScope
+} from '$lib/server/mail'
 import { unreadMessageRows } from '$lib/read-state'
 import { decodeThreadId } from '$lib/thread-url'
 import { isDemoModeEnabled, markDemoMessagesSeen } from '$lib/server/demo'
@@ -16,14 +20,14 @@ export const POST: RequestHandler = async ({ params, request }) => {
     return error(400, 'mailbox must be a string')
   }
 
-  const mailboxPath = await resolveMailboxPath(body.mailbox ?? 'inbox')
+  const scope = await resolveMailboxScope(body.mailbox ?? 'inbox')
   const threadId = decodeThreadId(params.threadId)
 
   if (!threadId) {
     return error(400, 'threadId is required')
   }
 
-  const messages = await getMessagesInThread(threadId, mailboxPath)
+  const messages = await getMessagesInMailboxesThread(threadId, scope.paths)
   const unreadMessages = unreadMessageRows(messages)
 
   const ids = unreadMessages.map((message) => message.id)

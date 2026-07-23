@@ -198,6 +198,7 @@
       }
       demoMode: boolean
       imapMailboxes: ImapMailbox[]
+      composedMailboxes: ComposedMailbox[]
       loginMethods: {
         password: boolean
         passkey: boolean
@@ -223,6 +224,7 @@
 
   type ThemePreference = 'light' | 'dark' | 'system'
   type ImapMailbox = { path: string; name: string; delimiter: string }
+  type ComposedMailbox = { id: number; name: string; slug: string; mailboxPaths: string[] }
   type MailboxPreferences = { order: string[]; hidden: string[] }
 
   type ImapForm = Props['data']['config']['imap'] & { password: string }
@@ -640,6 +642,12 @@
     minAgeDays: 90
   })
   let newSenderRule = $state({ type: 'block' as 'block' | 'allow', sender: '' })
+  let composedMailboxes = $state<ComposedMailbox[]>(untrack(() => data.composedMailboxes))
+  let composedMailboxId = $state<number | null>(null)
+  let composedMailboxName = $state('')
+  let composedMailboxPaths = $state<string[]>([])
+  let savingComposedMailbox = $state(false)
+  let deletingComposedMailboxId = $state<number | null>(null)
 
   function createImapServer(index = imapServers.length): ImapServerForm {
     const ordinal = index + 2
@@ -1229,7 +1237,10 @@
         body: JSON.stringify(newCleanupRule)
       })
       if (!res.ok) throw new Error(await readErrorMessage(res, 'Failed to preview cleanup rule.'))
-      const payload = (await res.json()) as { matches: FilterPreviewMatch[]; warning?: string | null }
+      const payload = (await res.json()) as {
+        matches: FilterPreviewMatch[]
+        warning?: string | null
+      }
       cleanupPreview = payload.matches
       cleanupPreviewWarning = payload.warning ?? null
     } catch (error) {
@@ -1690,6 +1701,91 @@
   function resetMailboxPreferences() {
     form.mailboxPreferences = { order: [], hidden: [] }
     scheduleAutosave(0)
+  }
+
+  function toggleComposedMailboxPath(path: string, selected: boolean) {
+    composedMailboxPaths = selected
+      ? [...composedMailboxPaths, path].filter(
+          (candidate, index, values) => values.indexOf(candidate) === index
+        )
+      : composedMailboxPaths.filter((candidate) => candidate !== path)
+  }
+
+  function editComposedMailbox(mailbox: ComposedMailbox) {
+    composedMailboxId = mailbox.id
+    composedMailboxName = mailbox.name
+    composedMailboxPaths = [...mailbox.mailboxPaths]
+  }
+
+  function resetComposedMailboxForm() {
+    composedMailboxId = null
+    composedMailboxName = ''
+    composedMailboxPaths = []
+  }
+
+  async function saveComposedMailbox(event: SubmitEvent) {
+    event.preventDefault()
+    if (savingComposedMailbox) return
+    savingComposedMailbox = true
+    try {
+      const response = await fetch(
+        composedMailboxId
+          ? `/api/composed-mailboxes/${composedMailboxId}`
+          : '/api/composed-mailboxes',
+        {
+          method: composedMailboxId ? 'PUT' : 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            name: composedMailboxName,
+            mailboxPaths: composedMailboxPaths
+          })
+        }
+      )
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, 'Failed to save composed mailbox.'))
+      }
+      const payload = (await response.json()) as { composedMailbox: ComposedMailbox }
+      composedMailboxes = composedMailboxId
+        ? composedMailboxes.map((mailbox) =>
+            mailbox.id === payload.composedMailbox.id ? payload.composedMailbox : mailbox
+          )
+        : [...composedMailboxes, payload.composedMailbox].sort((left, right) =>
+            left.name.localeCompare(right.name)
+          )
+      resetComposedMailboxForm()
+      await invalidateAll()
+      toast('Composed mailbox saved')
+    } catch (cause) {
+      errorDialogMessage = errorMessageFromUnknown(cause, 'Failed to save composed mailbox.')
+    } finally {
+      savingComposedMailbox = false
+    }
+  }
+
+  async function removeComposedMailbox(mailbox: ComposedMailbox) {
+    if (deletingComposedMailboxId !== null) return
+    const confirmed = await requestConfirm({
+      title: 'Delete composed mailbox',
+      message: `Delete composed mailbox "${mailbox.name}"?`,
+      confirmLabel: 'Delete',
+      tone: 'danger'
+    })
+    if (!confirmed) return
+    deletingComposedMailboxId = mailbox.id
+    try {
+      const response = await fetch(`/api/composed-mailboxes/${mailbox.id}`, { method: 'DELETE' })
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, 'Failed to delete composed mailbox.'))
+      }
+      composedMailboxes = composedMailboxes.filter((candidate) => candidate.id !== mailbox.id)
+      if (composedMailboxId === mailbox.id) resetComposedMailboxForm()
+      await invalidateAll()
+      toast('Composed mailbox deleted')
+    } catch (cause) {
+      errorDialogMessage = errorMessageFromUnknown(cause, 'Failed to delete composed mailbox.')
+    } finally {
+      deletingComposedMailboxId = null
+    }
   }
 
   const filteredTranslationLanguages = $derived.by(() => {
@@ -3115,6 +3211,117 @@
               {/each}
             </div>
           {/if}
+
+          <div class="border-t border-white/8 pt-5">
+            <div>
+              <h3 class="text-sm font-medium text-zinc-200">Composed mailboxes</h3>
+              <p class="mt-1 text-sm text-zinc-500">
+                Combine two or more synchronized mailboxes into one deduplicated view.
+              </p>
+            </div>
+
+            {#if composedMailboxes.length > 0}
+              <div class="mt-4 overflow-hidden rounded-xl border border-white/8 bg-white/3">
+                {#each composedMailboxes as mailbox (mailbox.id)}
+                  <div
+                    class="flex flex-col gap-3 border-b border-white/6 p-4 last:border-b-0 sm:flex-row sm:items-center"
+                  >
+                    <div class="min-w-0 flex-1">
+                      <p class="truncate text-sm font-medium text-zinc-200">{mailbox.name}</p>
+                      <p class="mt-1 truncate text-xs text-zinc-500">
+                        {mailbox.mailboxPaths.join(' + ')}
+                      </p>
+                    </div>
+                    <div class="flex gap-2 self-end sm:self-auto">
+                      <button
+                        type="button"
+                        onclick={() => editComposedMailbox(mailbox)}
+                        class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-zinc-300 transition hover:bg-white/10"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        disabled={deletingComposedMailboxId === mailbox.id}
+                        onclick={() => void removeComposedMailbox(mailbox)}
+                        class="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-1.5 text-xs text-red-300 transition hover:bg-red-500/20 disabled:opacity-50"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+
+            <form
+              class="mt-4 space-y-4 rounded-xl border border-white/8 bg-white/3 p-4"
+              onsubmit={saveComposedMailbox}
+            >
+              <div>
+                <label for="composed-mailbox-name" class="mb-1 block text-xs text-zinc-400"
+                  >Name</label
+                >
+                <input
+                  id="composed-mailbox-name"
+                  bind:value={composedMailboxName}
+                  required
+                  maxlength="80"
+                  placeholder="Work and personal"
+                  class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+              <fieldset>
+                <legend class="mb-2 text-xs text-zinc-400">Source mailboxes</legend>
+                <div class="grid gap-2 sm:grid-cols-2">
+                  {#each data.imapMailboxes as mailbox (mailbox.path)}
+                    <label
+                      class="flex items-center gap-2 rounded-lg border border-white/8 bg-white/3 px-3 py-2 text-sm text-zinc-300"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={composedMailboxPaths.includes(mailbox.path)}
+                        onchange={(event) =>
+                          toggleComposedMailboxPath(mailbox.path, event.currentTarget.checked)}
+                        class="h-4 w-4 rounded border-white/20 bg-white/5 text-blue-600 focus:ring-blue-500"
+                      />
+                      <span class="truncate">{mailbox.name || mailbox.path}</span>
+                    </label>
+                  {/each}
+                </div>
+              </fieldset>
+              <div class="flex justify-end gap-2">
+                {#if composedMailboxId !== null}
+                  <button
+                    type="button"
+                    onclick={resetComposedMailboxForm}
+                    class="rounded-lg border border-white/10 px-3 py-2 text-sm text-zinc-400 transition hover:bg-white/5"
+                  >
+                    Cancel
+                  </button>
+                {/if}
+                <button
+                  type="submit"
+                  disabled={data.demoMode ||
+                    savingComposedMailbox ||
+                    !composedMailboxName.trim() ||
+                    composedMailboxPaths.length < 2}
+                  class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {savingComposedMailbox
+                    ? 'Saving…'
+                    : composedMailboxId === null
+                      ? 'Create composed mailbox'
+                      : 'Save composed mailbox'}
+                </button>
+              </div>
+              {#if data.demoMode}
+                <p class="text-xs text-zinc-500">
+                  Composed mailboxes are unavailable in demo mode.
+                </p>
+              {/if}
+            </form>
+          </div>
         </section>
 
         <div class="border-t border-white/8"></div>
@@ -4483,17 +4690,21 @@
                 </button>
               </div>
               {#if cleanupPreviewWarning}
-                <div class="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-200">
+                <div
+                  class="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-200"
+                >
                   <div class="flex items-center gap-1.5 font-medium">
                     <AlertTriangle size={14} class="shrink-0 text-amber-400" />
                     <span>청소 규칙 적용 안내 (Notice)</span>
                   </div>
-                  <p class="mt-1.5 text-amber-300/90 leading-relaxed">{cleanupPreviewWarning}</p>
+                  <p class="mt-1.5 leading-relaxed text-amber-300/90">{cleanupPreviewWarning}</p>
                 </div>
               {/if}
               {#if cleanupPreview.length > 0}
                 <div class="rounded-lg border border-white/8 bg-black/20 p-3">
-                  <p class="mb-2 text-xs font-medium text-zinc-400">Dry-run preview ({cleanupPreview.length} items matched)</p>
+                  <p class="mb-2 text-xs font-medium text-zinc-400">
+                    Dry-run preview ({cleanupPreview.length} items matched)
+                  </p>
                   <div class="space-y-2">
                     {#each cleanupPreview as match (match.id)}
                       <div class="text-xs text-zinc-400">

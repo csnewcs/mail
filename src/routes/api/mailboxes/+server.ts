@@ -8,6 +8,10 @@ import { payloadBytes, perfLog, perfMs, perfNow } from '$lib/server/perf'
 import { eq, notLike, sql } from 'drizzle-orm'
 import { getDemoUnreadCounts, isDemoModeEnabled } from '$lib/server/demo'
 import { applyMailboxPreferences, getStoredPreferences } from '$lib/server/preferences'
+import {
+  getComposedMailboxUnreadCounts,
+  listComposedMailboxes
+} from '$lib/server/composed-mailboxes'
 
 export const GET: RequestHandler = async () => {
   const startedAt = perfNow()
@@ -28,7 +32,7 @@ export const GET: RequestHandler = async () => {
     return json(body)
   }
 
-  const [mailboxes, unreadRows] = await Promise.all([
+  const [mailboxes, unreadRows, composedMailboxes] = await Promise.all([
     getImapMailboxes(),
     db
       .select({
@@ -38,14 +42,20 @@ export const GET: RequestHandler = async () => {
       .from(mailMessageMailbox)
       .innerJoin(mailMessage, eq(mailMessageMailbox.messageId, mailMessage.messageId))
       .where(notLike(mailMessageMailbox.flags, '%\\\\Seen%'))
-      .groupBy(mailMessageMailbox.mailbox)
+      .groupBy(mailMessageMailbox.mailbox),
+    listComposedMailboxes()
   ])
   const unreadCounts = Object.fromEntries(
     unreadRows
       .filter((row) => !isAlwaysReadMailbox(row.mailbox))
       .map((row) => [row.mailbox, Number(row.count ?? 0)])
   ) as Record<string, number>
-  const body = { mailboxes: applyMailboxPreferences(mailboxes, mailboxPreferences), unreadCounts }
+  Object.assign(unreadCounts, await getComposedMailboxUnreadCounts(composedMailboxes))
+  const body = {
+    mailboxes: applyMailboxPreferences(mailboxes, mailboxPreferences),
+    composedMailboxes,
+    unreadCounts
+  }
 
   perfLog('api.mailboxes.GET', {
     rows: mailboxes.length,

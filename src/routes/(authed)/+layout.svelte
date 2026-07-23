@@ -46,6 +46,7 @@
   import { pushNotifications } from '$lib/push-notifications.svelte'
 
   type ImapMailbox = { path: string; name: string; delimiter: string }
+  type ComposedMailbox = { id: number; name: string; slug: string; mailboxPaths: string[] }
   type SavedSearch = { id: number; name: string; query: string }
   type SyncStatus = {
     syncing: boolean
@@ -58,6 +59,7 @@
   type Props = {
     data: {
       imapMailboxes: ImapMailbox[]
+      composedMailboxes: ComposedMailbox[]
       unreadCounts: Record<string, number>
       savedSearches: SavedSearch[]
       user: { name: string; email: string } | null
@@ -133,6 +135,7 @@
   }
 
   let imapMailboxes = $state<ImapMailbox[]>([])
+  let composedMailboxes = $state<ComposedMailbox[]>([])
   let unreadCounts = $state<Record<string, number>>({})
   let expandedMailboxKeys = $state<string[]>([])
   let mailboxExpansionInitialized = $state(false)
@@ -293,13 +296,14 @@
     flattenMailboxTree(mailboxTree.roots, new SvelteSet(expandedMailboxKeys))
   )
   const selectableMailboxRows = $derived(visibleMailboxRows.filter((row) => row.slug !== null))
-  const mailboxes = $derived(
-    selectableMailboxRows.map((row) => ({
+  const mailboxes = $derived([
+    ...composedMailboxes.map((item) => ({ label: item.name, slug: item.slug, icon: Layers })),
+    ...selectableMailboxRows.map((row) => ({
       label: row.label,
       slug: row.slug ?? '',
       icon: row.icon
     }))
-  )
+  ])
 
   let sidebarWidth = $state(data.sidebarWidth)
   let resizing = $state(false)
@@ -336,7 +340,9 @@
 
   const isMobile = $derived(viewportWidth < 768)
   const activeMailboxLabel = $derived(
-    imapMailboxes.find((candidate) => pathToSlug(candidate.path) === mailbox)?.name ?? 'Mail'
+    composedMailboxes.find((candidate) => candidate.slug === mailbox)?.name ??
+      imapMailboxes.find((candidate) => pathToSlug(candidate.path) === mailbox)?.name ??
+      'Mail'
   )
   const utilityNavActive = $derived(
     page.url.pathname.startsWith('/settings') ||
@@ -355,6 +361,10 @@
 
   $effect(() => {
     imapMailboxes = data.imapMailboxes
+  })
+
+  $effect(() => {
+    composedMailboxes = data.composedMailboxes
   })
 
   $effect(() => {
@@ -606,11 +616,13 @@
 
       const payload = (await res.json()) as {
         mailboxes: ImapMailbox[]
+        composedMailboxes: ComposedMailbox[]
         unreadCounts: Record<string, number>
       }
       if (payload.mailboxes.length > 0) {
         imapMailboxes = payload.mailboxes
       }
+      composedMailboxes = payload.composedMailboxes ?? []
       unreadCounts = payload.unreadCounts
     } catch {
       // ignore
@@ -1078,6 +1090,40 @@
         Mail
       </p>
       <nav bind:this={mailboxNavEl} class="min-h-0 flex-1 space-y-1.5 overflow-y-auto">
+        {#if composedMailboxes.length > 0}
+          <div class="pb-2">
+            <p class="px-3 pb-1 text-[10px] font-bold tracking-wider text-zinc-500 uppercase">
+              Combined
+            </p>
+            {#each composedMailboxes as composedMailbox (composedMailbox.id)}
+              <a
+                href={resolve(`/${composedMailbox.slug}`)}
+                data-mailbox-item
+                onclick={() => {
+                  mobileNavOpen = false
+                  keyboard.panel = 'list'
+                }}
+                class={[
+                  'flex min-w-0 items-center gap-2.5 rounded-xl px-3 py-2 text-sm transition',
+                  mailbox === composedMailbox.slug
+                    ? 'bg-white/8 font-medium text-white'
+                    : 'text-zinc-400 hover:bg-white/4 hover:text-zinc-200'
+                ]}
+              >
+                <Layers size={15} class="shrink-0" />
+                <span class="truncate">{composedMailbox.name}</span>
+                {#if (unreadCounts[composedMailbox.slug] ?? 0) > 0}
+                  <span
+                    class="ml-auto shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-medium text-zinc-200"
+                  >
+                    {unreadCounts[composedMailbox.slug]}
+                  </span>
+                {/if}
+              </a>
+            {/each}
+          </div>
+        {/if}
+
         {#each visibleMailboxRows as row, index (row.key)}
           {@const selectableIndex = row.slug
             ? mailboxes.findIndex((mb) => mb.slug === row.slug)

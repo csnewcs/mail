@@ -123,6 +123,8 @@
       compactMode: boolean
       threadModeOnPageLoad: boolean
       listRatio: number
+      composedMailbox: { id: number; name: string; slug: string; mailboxPaths: string[] } | null
+      mailboxPaths: string[]
       user?: { name: string; email: string } | null
     }
     children: import('svelte').Snippet
@@ -151,7 +153,8 @@
 
   const sync = $derived(data.sync)
   const mailbox = $derived(page.params.mailbox ?? 'inbox')
-  const currentMailboxRole = $derived(inferMailboxRole(mailbox))
+  const isComposedMailbox = $derived(Boolean(data.composedMailbox))
+  const currentMailboxRole = $derived(isComposedMailbox ? null : inferMailboxRole(mailbox))
   const offlineUserKey = $derived(data.user?.email ?? null)
   const simplifiedViewEnabled = $derived(data.simplifiedView)
   const density = $derived(data.density ?? (data.compactMode ? 'compact' : 'comfortable'))
@@ -314,6 +317,7 @@
   const relativeFormatter = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
 
   const folderDisplayName = $derived.by(() => {
+    if (data.composedMailbox) return data.composedMailbox.name
     const match = data.imapMailboxes.find((mb) => pathToSlug(mb.path) === mailbox)
     return match?.name ?? mailbox
   })
@@ -1070,7 +1074,12 @@
       : fetch('/api/messages/bulk', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ ids: [message.id], action: 'mark_read' })
+          body: JSON.stringify({
+            ids: [message.id],
+            action: 'mark_read',
+            mailbox,
+            composed: isComposedMailbox && !isSearchMode
+          })
         })
 
     void request
@@ -1090,7 +1099,11 @@
   function selectMessage(message: Message) {
     closeContextMenu()
     markMessageRowRead(message)
-    const targetMailbox = message.mailbox ? pathToSlug(message.mailbox) : mailbox
+    const targetMailbox = isComposedMailbox
+      ? mailbox
+      : message.mailbox
+        ? pathToSlug(message.mailbox)
+        : mailbox
     if (threadedMode && message.threadId && (message.threadCount ?? 0) > 1) {
       goto(resolve(`/${targetMailbox}/thread/${encodeThreadId(message.threadId)}`), {
         noScroll: true,
@@ -1629,7 +1642,7 @@
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          mailbox: message.mailbox ?? mailbox,
+          mailbox: isComposedMailbox ? mailbox : (message.mailbox ?? mailbox),
           [field === 'threadStarred' ? 'starred' : 'pinned']: nextValue
         })
       })
@@ -1677,6 +1690,7 @@
             action,
             threaded: threadedMode && !isSearchMode,
             mailbox,
+            composed: isComposedMailbox && !isSearchMode,
             ...(snoozedUntil ? { snoozedUntil: snoozedUntil.toISOString() } : {})
           })
         })
@@ -1880,7 +1894,8 @@
             ids: [id],
             action: 'archive',
             threaded: threadedMode && !isSearchMode,
-            mailbox
+            mailbox,
+            composed: isComposedMailbox && !isSearchMode
           })
         })
 
@@ -1909,7 +1924,8 @@
             ids: [id],
             action: 'trash',
             threaded: threadedMode && !isSearchMode,
-            mailbox
+            mailbox,
+            composed: isComposedMailbox && !isSearchMode
           })
         })
 
@@ -1938,7 +1954,8 @@
             ids: [id],
             action,
             threaded: threadedMode && !isSearchMode,
-            mailbox
+            mailbox,
+            composed: isComposedMailbox && !isSearchMode
           })
         })
 
@@ -2035,7 +2052,8 @@
             ids: [id],
             action: 'mark_read',
             threaded: threadedMode && !isSearchMode,
-            mailbox
+            mailbox,
+            composed: isComposedMailbox && !isSearchMode
           })
         })
 
@@ -2066,7 +2084,8 @@
             ids: [id],
             action: 'mark_unread',
             threaded: threadedMode && !isSearchMode,
-            mailbox
+            mailbox,
+            composed: isComposedMailbox && !isSearchMode
           })
         })
 
@@ -2125,10 +2144,16 @@
 
     try {
       await trackAppLoading(async () => {
-        const response = await fetch(`/api/messages/${id}`, {
+        const response = await fetch('/api/messages/bulk', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ action: 'snooze', snoozedUntil: snoozedUntil.toISOString() })
+          body: JSON.stringify({
+            ids: [id],
+            action: 'snooze',
+            snoozedUntil: snoozedUntil.toISOString(),
+            mailbox,
+            composed: isComposedMailbox && !isSearchMode
+          })
         })
 
         if (!response.ok) {

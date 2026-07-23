@@ -99,6 +99,7 @@
   type Props = {
     data: {
       message: Message
+      composedMailbox: { id: number; name: string; slug: string; mailboxPaths: string[] } | null
       mailboxRole: 'inbox' | 'archive' | 'trash' | 'spam' | null
       attachments: Attachment[]
       density: DensityPreference
@@ -410,7 +411,12 @@
         fetch('/api/messages/bulk', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ ids: [data.message.id], action: 'mark_unread' })
+          body: JSON.stringify({
+            ids: [data.message.id],
+            action: 'mark_unread',
+            mailbox: page.params.mailbox,
+            composed: Boolean(data.composedMailbox)
+          })
         })
       )
       if (!res.ok) {
@@ -472,10 +478,16 @@
     acting = true
     try {
       const res = await trackAppLoading(() =>
-        fetch(`/api/messages/${data.message.id}`, {
+        fetch('/api/messages/bulk', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ action: 'snooze', snoozedUntil: snoozedUntil.toISOString() })
+          body: JSON.stringify({
+            ids: [data.message.id],
+            action: 'snooze',
+            snoozedUntil: snoozedUntil.toISOString(),
+            mailbox: page.params.mailbox,
+            composed: Boolean(data.composedMailbox)
+          })
         })
       )
       if (!res.ok) {
@@ -606,10 +618,15 @@
     acting = true
     try {
       const res = await trackAppLoading(() =>
-        fetch(`/api/messages/${data.message.id}`, {
+        fetch('/api/messages/bulk', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action })
+          body: JSON.stringify({
+            ids: [data.message.id],
+            action,
+            mailbox: page.params.mailbox,
+            composed: Boolean(data.composedMailbox)
+          })
         })
       )
       if (!res.ok) {

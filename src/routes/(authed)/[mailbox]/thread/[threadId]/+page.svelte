@@ -112,6 +112,8 @@
     data: {
       threadId: string
       mailbox: string
+      mailboxPaths: string[]
+      composedMailbox: { id: number; name: string; slug: string; mailboxPaths: string[] } | null
       messages: Message[]
       attachments: Attachment[]
       threadNote: ThreadNote | null
@@ -196,7 +198,7 @@
         void fetch('/api/messages/bulk', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ ids: [message.id], action: 'mark_read' })
+          body: JSON.stringify({ ids: [message.id], action: 'mark_read', mailbox: data.mailbox })
         }).then(() => notifyMailboxStateChanged('thread-message-opened'))
       }
     }
@@ -210,12 +212,12 @@
     if (acting) return
     acting = true
     try {
-      const ids = messages.filter((m) => m.mailbox === data.mailbox).map((m) => m.id)
+      const ids = messages.filter((m) => data.mailboxPaths.includes(m.mailbox)).map((m) => m.id)
       await trackAppLoading(async () => {
         const response = await fetch('/api/messages/bulk', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ ids, action })
+          body: JSON.stringify({ ids, action, mailbox: data.mailbox, threaded: true })
         })
 
         if (!response.ok) {
@@ -241,7 +243,12 @@
         const response = await fetch('/api/messages/bulk', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ ids, action: 'mark_unread' })
+          body: JSON.stringify({
+            ids,
+            action: 'mark_unread',
+            mailbox: data.mailbox,
+            threaded: true
+          })
         })
 
         if (!response.ok) {
@@ -302,12 +309,18 @@
 
     acting = true
     try {
-      const ids = messages.filter((m) => m.mailbox === data.mailbox).map((m) => m.id)
+      const ids = messages.filter((m) => data.mailboxPaths.includes(m.mailbox)).map((m) => m.id)
       await trackAppLoading(async () => {
         const response = await fetch('/api/messages/bulk', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ ids, action: 'snooze', snoozedUntil: snoozedUntil.toISOString() })
+          body: JSON.stringify({
+            ids,
+            action: 'snooze',
+            snoozedUntil: snoozedUntil.toISOString(),
+            mailbox: data.mailbox,
+            threaded: true
+          })
         })
 
         if (!response.ok) {
@@ -338,11 +351,11 @@
         throw new Error(await readErrorMessage(response, 'Failed to block sender.'))
       }
 
-      const ids = messages.filter((m) => m.mailbox === data.mailbox).map((m) => m.id)
+      const ids = messages.filter((m) => data.mailboxPaths.includes(m.mailbox)).map((m) => m.id)
       const trashResponse = await fetch('/api/messages/bulk', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ids, action: 'trash' })
+        body: JSON.stringify({ ids, action: 'trash', mailbox: data.mailbox, threaded: true })
       })
 
       if (!trashResponse.ok) {

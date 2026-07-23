@@ -1,11 +1,11 @@
 import { error, redirect } from '@sveltejs/kit'
 import type { PageServerLoad } from './$types'
 import {
-  getMessagesInThread,
+  getMessagesInMailboxesThread,
   getThreadMetadata,
   markMessagesSeen,
   getMailboxRole,
-  resolveMailboxPath
+  resolveMailboxScope
 } from '$lib/server/mail'
 import { decodeThreadId } from '$lib/thread-url'
 import { db } from '$lib/server/db'
@@ -21,7 +21,9 @@ import { getStoredPreferences } from '$lib/server/preferences'
 import { getThreadNote, serializeThreadNote } from '$lib/server/thread-notes'
 import { unreadMessageRows } from '$lib/read-state'
 
-function serializeMessage(message: Awaited<ReturnType<typeof getMessagesInThread>>[number]) {
+function serializeMessage(
+  message: Awaited<ReturnType<typeof getMessagesInMailboxesThread>>[number]
+) {
   const flags = JSON.parse(message.flags) as string[]
 
   return {
@@ -63,8 +65,8 @@ function serializeMessage(message: Awaited<ReturnType<typeof getMessagesInThread
 export const load: PageServerLoad = async ({ params }) => {
   const startedAt = perfNow()
   const threadId = decodeThreadId(params.threadId)
-  const mailboxPath = await resolveMailboxPath(params.mailbox)
-  const messages = await getMessagesInThread(threadId, mailboxPath)
+  const scope = await resolveMailboxScope(params.mailbox)
+  const messages = await getMessagesInMailboxesThread(threadId, scope.paths)
 
   if (messages.length === 0) {
     error(404, 'Thread not found')
@@ -105,15 +107,20 @@ export const load: PageServerLoad = async ({ params }) => {
       : []
 
   const [mailboxRole, metadata, threadNote] = await Promise.all([
-    Promise.resolve(getMailboxRole(mailboxPath)),
-    getThreadMetadata(mailboxPath, threadId),
+    Promise.resolve(scope.composedMailbox ? null : getMailboxRole(scope.path)),
+    Promise.all(scope.paths.map((path) => getThreadMetadata(path, threadId))).then((rows) => ({
+      starred: rows.some((row) => row.starred),
+      pinned: rows.some((row) => row.pinned)
+    })),
     getThreadNote(threadId)
   ])
 
   const preferences = await getStoredPreferences()
   const body = {
     threadId,
-    mailbox: mailboxPath,
+    mailbox: scope.path,
+    mailboxPaths: scope.paths,
+    composedMailbox: scope.composedMailbox,
     messages: messages.map(serializeMessage),
     attachments,
     mailboxRole,
@@ -123,7 +130,7 @@ export const load: PageServerLoad = async ({ params }) => {
   }
 
   perfLog('load.threadPage', {
-    mailbox: mailboxPath,
+    mailbox: scope.path,
     threadId,
     messages: body.messages.length,
     attachments: attachments.length,

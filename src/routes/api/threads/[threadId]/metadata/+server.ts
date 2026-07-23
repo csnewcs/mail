@@ -1,6 +1,6 @@
 import { error, json } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
-import { getThreadMetadata, resolveMailboxPath, setThreadMetadata } from '$lib/server/mail'
+import { getThreadMetadata, resolveMailboxScope, setThreadMetadata } from '$lib/server/mail'
 import { decodeThreadId } from '$lib/thread-url'
 
 function parseBooleanPatch(value: unknown, name: string) {
@@ -10,9 +10,15 @@ function parseBooleanPatch(value: unknown, name: string) {
 }
 
 export const GET: RequestHandler = async ({ params, url }) => {
-  const mailbox = await resolveMailboxPath(url.searchParams.get('mailbox') ?? 'inbox')
+  const scope = await resolveMailboxScope(url.searchParams.get('mailbox') ?? 'inbox')
   const threadKey = decodeThreadId(params.threadId)
-  const metadata = await getThreadMetadata(mailbox, threadKey)
+  const rows = await Promise.all(
+    scope.paths.map((mailbox) => getThreadMetadata(mailbox, threadKey))
+  )
+  const metadata = {
+    starred: rows.some((row) => row.starred),
+    pinned: rows.some((row) => row.pinned)
+  }
 
   return json({ metadata })
 }
@@ -28,9 +34,15 @@ export const POST: RequestHandler = async ({ params, request }) => {
   const pinned = parseBooleanPatch((body as { pinned?: unknown }).pinned, 'pinned')
   if (starred === undefined && pinned === undefined) error(400, 'No metadata fields provided')
 
-  const mailbox = await resolveMailboxPath(mailboxParam)
+  const scope = await resolveMailboxScope(mailboxParam)
   const threadKey = decodeThreadId(params.threadId)
-  const metadata = await setThreadMetadata(mailbox, threadKey, { starred, pinned })
+  const rows = await Promise.all(
+    scope.paths.map((mailbox) => setThreadMetadata(mailbox, threadKey, { starred, pinned }))
+  )
+  const metadata = {
+    starred: rows.some((row) => row.starred),
+    pinned: rows.some((row) => row.pinned)
+  }
 
   return json({ ok: true, metadata })
 }
