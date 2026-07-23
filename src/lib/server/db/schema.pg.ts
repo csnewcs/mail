@@ -398,8 +398,9 @@ export const publicAttachment = pgTable('public_attachment', {
   filename: text('filename').notNull(),
   contentType: text('content_type').notNull().default('application/octet-stream'),
   size: integer('size').notNull(),
-  content: bytea('content').notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull()
+  content: bytea('content'),
+  createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
+  committedAt: timestamp('committed_at', { withTimezone: true, mode: 'date' })
 })
 
 export const mailAttachmentSummary = pgTable('mail_attachment_summary', {

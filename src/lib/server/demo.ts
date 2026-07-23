@@ -1764,7 +1764,13 @@ export async function sendDemoMessage(payload: {
 
 const demoPublicAttachments = new Map<
   string,
-  { filename: string; contentType: string; size: number; content: Buffer }
+  {
+    filename: string
+    contentType: string
+    size: number
+    content: Buffer | null
+    committedAt: Date | null
+  }
 >()
 
 export function storeDemoPublicAttachments(
@@ -1776,7 +1782,8 @@ export function storeDemoPublicAttachments(
       filename: attachment.name,
       contentType: attachment.contentType,
       size: attachment.size,
-      content: Buffer.from(attachment.contentBase64, 'base64')
+      content: Buffer.from(attachment.contentBase64, 'base64'),
+      committedAt: null
     })
   }
 }
@@ -1785,8 +1792,40 @@ export function getDemoPublicAttachment(token: string) {
   return demoPublicAttachments.get(token) ?? null
 }
 
+export function registerDemoPublicAttachment(
+  token: string,
+  attachment: { filename: string; contentType: string; size: number }
+) {
+  demoPublicAttachments.set(token, { ...attachment, content: null, committedAt: null })
+}
+
+export function commitDemoPublicAttachments(tokens: string[]) {
+  const committedAt = new Date()
+  const committed: string[] = []
+  for (const token of tokens) {
+    const attachment = demoPublicAttachments.get(token)
+    if (attachment && !attachment.committedAt) {
+      attachment.committedAt = committedAt
+      committed.push(token)
+    }
+  }
+  return committed
+}
+
+export function uncommitDemoPublicAttachments(tokens: string[]) {
+  for (const token of tokens) {
+    const attachment = demoPublicAttachments.get(token)
+    if (attachment) attachment.committedAt = null
+  }
+}
+
 export function deleteDemoPublicAttachments(tokens: string[]) {
-  for (const token of tokens) demoPublicAttachments.delete(token)
+  const deleted: string[] = []
+  for (const token of tokens) {
+    if (demoPublicAttachments.get(token)?.committedAt) continue
+    if (demoPublicAttachments.delete(token)) deleted.push(token)
+  }
+  return deleted
 }
 
 export function getDemoVapidPublicKey() {

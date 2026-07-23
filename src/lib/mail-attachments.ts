@@ -1,10 +1,14 @@
-export type ComposerAttachment = {
+type ComposerAttachmentMetadata = {
   name: string
   contentType: string
   size: number
-  contentBase64: string
-  deliveryMode: AttachmentDeliveryMode
 }
+
+export type ComposerAttachment = ComposerAttachmentMetadata &
+  (
+    | { deliveryMode: 'mail'; contentBase64: string; token?: never }
+    | { deliveryMode: 'public'; contentBase64?: string; token?: string }
+  )
 
 export type AttachmentDeliveryMode = 'mail' | 'public'
 
@@ -160,7 +164,7 @@ export function attachmentSignature(attachments: ComposerAttachment[]): string {
         attachment.name,
         attachment.contentType,
         String(attachment.size),
-        attachment.contentBase64,
+        attachment.contentBase64 ?? attachment.token ?? '',
         attachment.deliveryMode
       ].join(':')
     )
@@ -225,6 +229,7 @@ export function parseComposerAttachments(
     const sizeNumber = typeof size === 'number' ? size : Number.NaN
     const contentBase64 =
       typeof record.contentBase64 === 'string' ? record.contentBase64.replace(/\s+/g, '') : ''
+    const token = typeof record.token === 'string' ? record.token.trim() : ''
     const contentType =
       typeof record.contentType === 'string' && record.contentType.trim()
         ? record.contentType.trim()
@@ -240,6 +245,10 @@ export function parseComposerAttachments(
       deliveryMode = record.deliveryMode
     } else {
       return { ok: false, error: `Invalid delivery mode for attachment ${name}` }
+    }
+    if (deliveryMode === 'public' && token) {
+      attachments.push({ name, contentType, size: sizeNumber, token, deliveryMode })
+      continue
     }
     if (!contentBase64) {
       return { ok: false, error: `Attachment content is required for ${name}` }

@@ -8,6 +8,7 @@ node_modules
 /.svelte-kit
 /build
 /build-worker
+/data
 
 # OS
 .DS_Store
@@ -27,3 +28,4 @@ vite.config.ts.timestamp-*
 # Local tooling
 .opencode/
 .omx/
+/.playwright-mcp/

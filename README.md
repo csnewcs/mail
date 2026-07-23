@@ -76,12 +76,17 @@ by any non-empty value except `false`.
 
 These settings apply to `node server.js` and the prebuilt web container.
 
-| Variable          | Description                                                                                                                                     | Default                        | Example      |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ | ------------ |
-| `HOST`            | Address on which the HTTP server listens.                                                                                                       | `0.0.0.0`                      | `127.0.0.1`  |
-| `PORT`            | HTTP server port.                                                                                                                               | `3000`                         | `8080`       |
-| `BODY_SIZE_LIMIT` | Maximum request-body size accepted by the SvelteKit handler. Use `Infinity` for no limit, or a number with an optional `K`, `M`, or `G` suffix. | `Infinity`                     | `32M`        |
-| `NODE_ENV`        | Set to `production` to disable development performance logs. The runtime Docker image sets this automatically.                                  | unset (`production` in Docker) | `production` |
+| Variable                | Description                                                                                                                                     | Default                        | Example                 |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ | ----------------------- |
+| `HOST`                  | Address on which the HTTP server listens.                                                                                                       | `0.0.0.0`                      | `127.0.0.1`             |
+| `PORT`                  | HTTP server port.                                                                                                                               | `3000`                         | `8080`                  |
+| `BODY_SIZE_LIMIT`       | Maximum request-body size accepted by the SvelteKit handler. Use `Infinity` for no limit, or a number with an optional `K`, `M`, or `G` suffix. | `Infinity`                     | `32M`                   |
+| `PUBLIC_ATTACHMENT_DIR` | Persistent file storage for public-link attachments. Back it up with PostgreSQL and use shared storage when running multiple web instances.     | `data/public-attachments`      | `/srv/mail/attachments` |
+| `NODE_ENV`              | Set to `production` to disable development performance logs. The runtime Docker image sets this automatically.                                  | unset (`production` in Docker) | `production`            |
+
+Public-link uploads can be as large as 1 GiB. Configure every reverse proxy in front of the web
+process to accept request bodies of at least that size. Docker Compose uses a named volume at
+`/app/data/public-attachments` regardless of the host `.env` value.
 
 ### Authentication providers
 

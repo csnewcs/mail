@@ -179,6 +179,8 @@ async function buildRawMessage(
     content: Buffer | string
     size?: number
   }> = payload.attachments.map((attachment) => {
+    if (!attachment.contentBase64)
+      throw new Error(`Attachment content is missing for ${attachment.name}`)
     const content = Buffer.from(attachment.contentBase64, 'base64')
     if (content.byteLength !== attachment.size) {
       throw new Error(`Attachment size mismatch for ${attachment.name}`)

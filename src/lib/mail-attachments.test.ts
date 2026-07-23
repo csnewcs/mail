@@ -34,6 +34,46 @@ test('preserves an explicit public-link delivery mode', () => {
   if (result.ok) assert.equal(result.attachments[0].deliveryMode, 'public')
 })
 
+test('accepts a streamed public-link attachment reference without inline content', () => {
+  const result = parseComposerAttachments([
+    {
+      name: 'one-gib.bin',
+      contentType: 'application/octet-stream',
+      size: 1024 ** 3,
+      token: '67c5a06e-7ff2-49e4-9fa4-c182b4dc9161',
+      deliveryMode: 'public'
+    }
+  ])
+
+  assert.deepEqual(result, {
+    ok: true,
+    attachments: [
+      {
+        name: 'one-gib.bin',
+        contentType: 'application/octet-stream',
+        size: 1024 ** 3,
+        token: '67c5a06e-7ff2-49e4-9fa4-c182b4dc9161',
+        deliveryMode: 'public'
+      }
+    ]
+  })
+})
+
+test('requires inline content for a mail attachment', () => {
+  const result = parseComposerAttachments([
+    {
+      name: 'mail.bin',
+      contentType: 'application/octet-stream',
+      size: 1,
+      token: 'not-valid-for-mail',
+      deliveryMode: 'mail'
+    }
+  ])
+
+  assert.equal(result.ok, false)
+  if (!result.ok) assert.match(result.error, /content is required/)
+})
+
 test('rejects an unknown attachment delivery mode', () => {
   const result = parseComposerAttachments([
     {

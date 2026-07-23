@@ -5,6 +5,8 @@ import { db } from '$lib/server/db'
 import { publicAttachment } from '$lib/server/db/schema'
 import { getDemoPublicAttachment, isDemoModeEnabled } from '$lib/server/demo'
 import { eq } from 'drizzle-orm'
+import { Readable } from 'node:stream'
+import { publicAttachmentFile } from '$lib/server/public-attachment-files'
 
 export const GET: RequestHandler = async ({ params }) => {
   const attachment = isDemoModeEnabled()
@@ -19,16 +21,22 @@ export const GET: RequestHandler = async ({ params }) => {
 
   if (!attachment) return error(404, 'Attachment not found')
 
-  const body =
-    attachment.content instanceof Buffer
-      ? attachment.content.buffer.slice(
-          attachment.content.byteOffset,
-          attachment.content.byteOffset + attachment.content.byteLength
-        )
-      : attachment.content
   const filename = 'filename' in attachment ? attachment.filename : ''
+  let body: BodyInit
+  if (attachment.content) {
+    body = new Uint8Array(attachment.content)
+  } else {
+    try {
+      const stored = await publicAttachmentFile(params.token, attachment.size)
+      body = Readable.toWeb(stored.stream) as ReadableStream<Uint8Array>
+    } catch (fileError) {
+      const code = (fileError as NodeJS.ErrnoException).code
+      if (code === 'ENOENT') return error(404, 'Attachment file not found')
+      throw fileError
+    }
+  }
 
-  return new Response(body as ArrayBuffer, {
+  return new Response(body, {
     headers: {
       'Content-Type': attachment.contentType,
       'Content-Disposition': attachmentContentDisposition(filename),

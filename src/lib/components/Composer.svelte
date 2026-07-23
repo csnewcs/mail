@@ -86,6 +86,8 @@
   let aiPreviewQuotedHtml = $state('')
   let errorDialogMessage = $state<string | null>(null)
   let attachmentError = $state<string | null>(null)
+  let processingAttachmentCount = $state(0)
+  let uploadingPublicAttachmentCount = $state(0)
   let attachmentDragDepth = $state(0)
   let sendLaterAt = $state('')
   let showSendLaterMenu = $state(false)
@@ -154,7 +156,10 @@
     })
   )
   const canSend = $derived(
-    !sending && !!composer.subject && recipientValidation.errors.length === 0
+    !sending &&
+      processingAttachmentCount === 0 &&
+      !!composer.subject &&
+      recipientValidation.errors.length === 0
   )
   const selectedSmtpServer = $derived(
     composer.smtpServers.find((server) => server.id === composer.selectedSmtpServerId) ??
@@ -641,6 +646,10 @@
 
   async function send() {
     if (!editor || sending) return
+    if (processingAttachmentCount > 0) {
+      showAttachmentError('Wait for attachments to finish uploading before sending.')
+      return
+    }
     const validation = validateRecipientFields({
       to: composer.to,
       cc: isAdvancedLayout ? composer.cc : '',
@@ -785,6 +794,10 @@
   }
 
   function discard() {
+    if (processingAttachmentCount > 0) {
+      showAttachmentError('Wait for attachments to finish uploading before closing this message.')
+      return
+    }
     pendingSendWarnings = []
     discardDialogWasMinimized = composer.minimized
 
@@ -796,6 +809,8 @@
   }
 
   async function discardAndDelete() {
+    if (processingAttachmentCount > 0) return
+    await deleteUploadedPublicAttachments(composer.attachments)
     await deleteDraft()
     discardDialogWasMinimized = false
     showDiscardDialog = false
@@ -804,7 +819,12 @@
   }
 
   async function saveDraftAndClose() {
+    if (processingAttachmentCount > 0) return
     const saved = await saveDraft()
+    if (!saved) {
+      errorDialogMessage = 'Failed to save draft.'
+      return
+    }
     discardDialogWasMinimized = false
     showDiscardDialog = false
     closeComposer()
@@ -881,6 +901,32 @@
     file: File,
     deliveryMode: AttachmentDeliveryMode
   ): Promise<ComposerAttachment> {
+    if (deliveryMode === 'public') {
+      const response = await fetch('/api/public-attachments', {
+        method: 'POST',
+        headers: {
+          'Content-Type': file.type || 'application/octet-stream',
+          'X-Attachment-Name': encodeURIComponent(file.name),
+          'X-Attachment-Size': String(file.size)
+        },
+        body: file
+      })
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, `Failed to upload ${file.name}.`))
+      }
+      const uploaded = (await response.json()) as { token?: unknown }
+      if (typeof uploaded.token !== 'string' || !uploaded.token) {
+        throw new Error(`Failed to upload ${file.name}.`)
+      }
+      return {
+        name: file.name,
+        contentType: file.type || 'application/octet-stream',
+        size: file.size,
+        token: uploaded.token,
+        deliveryMode
+      }
+    }
+
     const buffer = await file.arrayBuffer()
 
     return {
@@ -914,15 +960,22 @@
       return
     }
 
+    const attachments: ComposerAttachment[] = []
+    processingAttachmentCount += files.length
+    if (deliveryMode === 'public') uploadingPublicAttachmentCount += files.length
     try {
-      const attachments = await Promise.all(
-        files.map((file) => fileToAttachment(file, deliveryMode))
-      )
+      for (const file of files) attachments.push(await fileToAttachment(file, deliveryMode))
       composer.attachments = [...composer.attachments, ...attachments]
       attachmentError = null
       await saveDraft()
     } catch (error) {
+      await deleteUploadedPublicAttachments(attachments)
       showAttachmentError(errorMessageFromUnknown(error, 'Failed to attach file.'))
+    } finally {
+      processingAttachmentCount = Math.max(0, processingAttachmentCount - files.length)
+      if (deliveryMode === 'public') {
+        uploadingPublicAttachmentCount = Math.max(0, uploadingPublicAttachmentCount - files.length)
+      }
     }
   }
 
@@ -987,10 +1040,46 @@
   }
 
   async function removeAttachment(index: number) {
+    const attachment = composer.attachments[index]
+    if (!attachment) return
+    const previousAttachments = composer.attachments
     composer.attachments = composer.attachments.filter(
       (_attachment: ComposerAttachment, attachmentIndex: number) => attachmentIndex !== index
     )
-    await saveDraft()
+    if (!(await saveDraft())) {
+      composer.attachments = previousAttachments
+      showAttachmentError(`Failed to remove ${attachment.name}.`)
+      return
+    }
+    if (attachment.deliveryMode === 'public' && attachment.token) {
+      try {
+        const response = await fetch(
+          `/api/public-attachments/${encodeURIComponent(attachment.token)}`,
+          {
+            method: 'DELETE'
+          }
+        )
+        if (!response.ok) {
+          throw new Error(await readErrorMessage(response, `Failed to remove ${attachment.name}.`))
+        }
+      } catch (error) {
+        showAttachmentError(errorMessageFromUnknown(error, `Failed to remove ${attachment.name}.`))
+      }
+    }
+  }
+
+  async function deleteUploadedPublicAttachments(attachments: ComposerAttachment[]) {
+    await Promise.all(
+      attachments.flatMap((attachment) =>
+        attachment.deliveryMode === 'public' && attachment.token
+          ? [
+              fetch(`/api/public-attachments/${encodeURIComponent(attachment.token)}`, {
+                method: 'DELETE'
+              }).catch(() => undefined)
+            ]
+          : []
+      )
+    )
   }
 </script>
 
@@ -1511,6 +1600,13 @@
     {#if attachmentError}
       <div class="border-t border-rose-400/20 bg-rose-500/10 px-4 py-2 text-xs text-rose-200">
         {attachmentError}
+      </div>
+    {/if}
+
+    {#if uploadingPublicAttachmentCount > 0}
+      <div class="border-t border-blue-400/20 bg-blue-500/10 px-4 py-2 text-xs text-blue-200">
+        Uploading {uploadingPublicAttachmentCount} public-link
+        {uploadingPublicAttachmentCount === 1 ? 'attachment' : 'attachments'}…
       </div>
     {/if}
 

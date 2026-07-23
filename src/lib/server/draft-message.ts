@@ -47,11 +47,13 @@ export async function buildDraftMessage(
       'X-Pmail-OpenPGP-Encrypt': draft.openPgpEncrypt ? 'yes' : 'no',
       'X-Pmail-Attach-Public-Key': draft.attachPublicKey ? 'yes' : 'no'
     },
-    attachments: attachments.map((attachment) => ({
-      filename: attachment.name,
-      contentType: attachment.contentType,
-      content: Buffer.from(attachment.contentBase64, 'base64')
-    }))
+    attachments: attachments
+      .filter((attachment) => attachment.deliveryMode === 'mail')
+      .map((attachment) => ({
+        filename: attachment.name,
+        contentType: attachment.contentType,
+        content: Buffer.from(attachment.contentBase64, 'base64')
+      }))
   })
   if (!Buffer.isBuffer(info.message)) throw new Error('Failed to build buffered draft message')
   return info.message

@@ -35,3 +35,30 @@ test('builds a complete draft MIME message with stable headers and attachments',
   assert.match(raw, /Content-Type: text\/html/i)
   assert.match(raw, /<!doctype html><html>/i)
 })
+
+test('does not embed public-link attachment content in the IMAP draft', async () => {
+  const message = await buildDraftMessage(
+    {
+      id: 43,
+      updatedAt: new Date('2026-07-23T12:00:00.000Z'),
+      toAddr: 'receiver@example.com',
+      cc: '',
+      bcc: '',
+      subject: 'Large file',
+      html: '<p>Download the file after sending.</p>',
+      inReplyTo: null
+    },
+    'sender@example.com',
+    [
+      {
+        name: 'one-gib.bin',
+        contentType: 'application/octet-stream',
+        size: 1024 ** 3,
+        token: '67c5a06e-7ff2-49e4-9fa4-c182b4dc9161',
+        deliveryMode: 'public'
+      }
+    ]
+  )
+
+  assert.doesNotMatch(message.toString(), /one-gib\.bin/)
+})

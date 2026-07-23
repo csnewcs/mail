@@ -10,7 +10,12 @@ import type { OpenPgpSigningMethod } from '$lib/server/openpgp-message'
 import { getEncryptionKeysForAddresses, getOpenPgpKeyForAddress } from '$lib/server/openpgp-keys'
 import { outgoingSenderAddress } from '$lib/server/outgoing-message'
 import { parseAddressFields } from '$lib/server/contacts'
-import { deletePublicAttachments, storePublicAttachments } from '$lib/server/public-attachments'
+import {
+  commitPublicAttachments,
+  deletePublicAttachments,
+  storePublicAttachments,
+  uncommitPublicAttachments
+} from '$lib/server/public-attachments'
 
 const OPENPGP_SIGNING_METHODS = new Set<OpenPgpSigningMethod>([
   'none',
@@ -109,7 +114,12 @@ export const POST: RequestHandler = async ({ request, url }) => {
   }
 
   const publicAttachments = await storePublicAttachments(linkedAttachments)
+  const newlyStoredPublicAttachmentTokens = publicAttachments
+    .filter((_attachment, index) => !linkedAttachments[index].token)
+    .map((attachment) => attachment.token)
   const deliveryHtml = appendPublicAttachmentLinks(html, url.origin, publicAttachments)
+  const publicAttachmentTokens = publicAttachments.map((attachment) => attachment.token)
+  const newlyCommittedPublicAttachmentTokens = await commitPublicAttachments(publicAttachmentTokens)
 
   if (isDemoModeEnabled()) {
     try {
@@ -124,7 +134,8 @@ export const POST: RequestHandler = async ({ request, url }) => {
         attachments: inlineAttachments
       })
     } catch (sendError) {
-      await deletePublicAttachments(publicAttachments.map((attachment) => attachment.token))
+      await uncommitPublicAttachments(newlyCommittedPublicAttachmentTokens)
+      await deletePublicAttachments(newlyStoredPublicAttachmentTokens)
       throw sendError
     }
     return json({
@@ -154,7 +165,8 @@ export const POST: RequestHandler = async ({ request, url }) => {
       availableAt
     )
   } catch (sendError) {
-    await deletePublicAttachments(publicAttachments.map((attachment) => attachment.token))
+    await uncommitPublicAttachments(newlyCommittedPublicAttachmentTokens)
+    await deletePublicAttachments(newlyStoredPublicAttachmentTokens)
     throw sendError
   }
 
