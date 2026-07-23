@@ -57,6 +57,22 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+:root.pwa-install-notice-visible {
+  --pwa-install-notice-height: calc(3rem + env(safe-area-inset-top, 0px));
+}
+
+:root.pwa-install-notice-visible body {
+  padding-top: var(--pwa-install-notice-height);
+}
+
+:root.pwa-install-notice-visible .app-shell {
+  height: calc(100vh - var(--pwa-install-notice-height));
+}
+
+:root.pwa-install-notice-visible .min-h-screen {
+  min-height: calc(100vh - var(--pwa-install-notice-height));
+}
+
 html,
 body {
   min-height: 100%;
