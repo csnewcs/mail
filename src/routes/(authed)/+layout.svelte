@@ -37,8 +37,9 @@
   import ErrorDialog from '$lib/components/ErrorDialog.svelte'
   import ShortcutHelpOverlay from '$lib/components/ShortcutHelpOverlay.svelte'
   import { openCompose, openDraft, type DraftRow } from '$lib/composer.svelte'
+  import { parseMailtoUrl } from '$lib/mailto'
   import { errorMessageFromUnknown, readErrorMessage } from '$lib/http'
-  import { afterNavigate, goto, invalidateAll } from '$app/navigation'
+  import { afterNavigate, goto, invalidateAll, replaceState } from '$app/navigation'
   import { keyboard } from '$lib/keyboard.svelte'
   import { MAILBOX_STATE_CHANGED_EVENT } from '$lib/mailbox-state'
   import { clearOfflineCache } from '$lib/offline-cache'
@@ -741,9 +742,18 @@
 
   let mailboxNavEl = $state<HTMLElement | null>(null)
 
-  afterNavigate(() => {
+  afterNavigate(({ to }) => {
     mobileNavOpen = false
     utilityNavOpen = false
+
+    const url = to?.url
+    if (!url) return
+    const mailto = url.searchParams.get('mailto')
+    if (!mailto) return
+
+    const fields = parseMailtoUrl(mailto)
+    if (fields) void openCompose(fields)
+    queueMicrotask(() => replaceState(resolve('/inbox'), page.state))
   })
 
   $effect(() => {

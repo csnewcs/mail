@@ -2,6 +2,13 @@ import type { ComposerAttachment } from '$lib/mail-attachments'
 
 export type ComposerMode = 'compose' | 'reply' | 'reply-all' | 'forward'
 export type OpenPgpSigningMethod = 'none' | 'cleartext' | 'detached' | 'pgp-mime'
+export type ComposeFields = {
+  to?: string
+  cc?: string
+  bcc?: string
+  subject?: string
+  body?: string
+}
 
 export type ComposerMessage = {
   id: number
@@ -148,6 +155,17 @@ function defaultSignature(profiles: SignatureProfile[]) {
   return profiles.find((profile) => profile.isDefault) ?? profiles[0] ?? null
 }
 
+function plainTextToHtml(value: string) {
+  const escaped = value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;')
+
+  return `<p>${escaped.replaceAll(/\r?\n/g, '<br>')}</p>`
+}
+
 function extractEmail(addr: string | null): string {
   if (!addr) return ''
   const match = addr.match(/<([^>]+)>/)
@@ -203,15 +221,16 @@ function buildForwardBody(msg: ComposerMessage): string {
 ${body}`
 }
 
-export async function openCompose() {
+export async function openCompose(fields: ComposeFields = {}) {
   const { signatures, smtpServers } = await fetchComposerSettings()
   const signature = defaultSignature(signatures)
+  const body = fields.body ? plainTextToHtml(fields.body) : ''
   composer.mode = 'compose'
-  composer.to = ''
-  composer.cc = ''
-  composer.bcc = ''
-  composer.subject = ''
-  composer.initialHtml = signature?.html ? `<p></p>${signature.html}` : ''
+  composer.to = fields.to ?? ''
+  composer.cc = fields.cc ?? ''
+  composer.bcc = fields.bcc ?? ''
+  composer.subject = fields.subject ?? ''
+  composer.initialHtml = `${body}${signature?.html ? `<p></p>${signature.html}` : ''}`
   composer.attachments = []
   composer.inReplyTo = null
   composer.draftId = null

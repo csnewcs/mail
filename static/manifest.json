@@ -10,6 +10,12 @@
   "orientation": "portrait",
   "background_color": "#0d0d10",
   "theme_color": "#0d0d10",
+  "protocol_handlers": [
+    {
+      "protocol": "mailto",
+      "url": "/inbox?mailto=%s"
+    }
+  ],
   "icons": [
     {
       "src": "/icon-192.png",
