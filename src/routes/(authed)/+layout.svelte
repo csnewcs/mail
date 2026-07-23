@@ -37,7 +37,7 @@
   import ErrorDialog from '$lib/components/ErrorDialog.svelte'
   import ShortcutHelpOverlay from '$lib/components/ShortcutHelpOverlay.svelte'
   import { openCompose, openDraft, type DraftRow } from '$lib/composer.svelte'
-  import { parseMailtoUrl } from '$lib/mailto'
+  import { parseMailtoUrl, registerMailtoProtocolHandler } from '$lib/mailto'
   import { parseShareTarget } from '$lib/web-share'
   import { errorMessageFromUnknown, readErrorMessage } from '$lib/http'
   import { afterNavigate, goto, invalidateAll, replaceState } from '$app/navigation'
@@ -828,6 +828,11 @@
   }
 
   onMount(() => {
+    registerMailtoProtocolHandler(
+      navigator,
+      `${window.location.origin}${resolve('/inbox')}?mailto=%s`
+    )
+
     logPerf('shell hydrated', { mailbox, ms: Math.round(now() - shellInitAt) })
     logPerf('mount background fetch kick-off', { mailbox })
     void refreshMailboxState('mount')

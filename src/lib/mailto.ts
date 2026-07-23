@@ -6,6 +6,24 @@ export type MailtoComposeFields = {
   body: string
 }
 
+type ProtocolHandlerNavigator = {
+  registerProtocolHandler?: (scheme: string, url: string | URL) => void
+}
+
+export function registerMailtoProtocolHandler(
+  navigator: ProtocolHandlerNavigator,
+  handlerUrl: string
+) {
+  if (!navigator.registerProtocolHandler) return false
+
+  try {
+    navigator.registerProtocolHandler('mailto', handlerUrl)
+    return true
+  } catch {
+    return false
+  }
+}
+
 function headerValues(url: URL, name: string) {
   return Array.from(url.searchParams.entries())
     .filter(([key]) => key.toLowerCase() === name)

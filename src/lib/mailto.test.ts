@@ -1,6 +1,36 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { parseMailtoUrl } from './mailto.ts'
+import { parseMailtoUrl, registerMailtoProtocolHandler } from './mailto.ts'
+
+test('registers the compose route as a mailto protocol handler', () => {
+  const registrations: Array<[string, string | URL]> = []
+
+  assert.equal(
+    registerMailtoProtocolHandler(
+      {
+        registerProtocolHandler: (scheme, url) => registrations.push([scheme, url])
+      },
+      'https://mail.example/inbox?mailto=%s'
+    ),
+    true
+  )
+  assert.deepEqual(registrations, [['mailto', 'https://mail.example/inbox?mailto=%s']])
+})
+
+test('tolerates unavailable and rejected protocol registration', () => {
+  assert.equal(registerMailtoProtocolHandler({}, 'https://mail.example/inbox?mailto=%s'), false)
+  assert.equal(
+    registerMailtoProtocolHandler(
+      {
+        registerProtocolHandler: () => {
+          throw new DOMException('Registration denied', 'SecurityError')
+        }
+      },
+      'https://mail.example/inbox?mailto=%s'
+    ),
+    false
+  )
+})
 
 test('parses mailto recipients and compose fields', () => {
   assert.deepEqual(
