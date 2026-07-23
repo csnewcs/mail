@@ -3,6 +3,11 @@ import { mailConfig } from '$lib/server/db/schema'
 import { isDemoModeEnabled } from '$lib/server/demo'
 import { DEFAULT_LIST_RATIO, clampRatio } from '$lib/list-width'
 import { normalizeThemeStyle, type ThemeStyle } from '$lib/theme'
+import {
+  mergeMailboxPreferences,
+  normalizeMailboxPreferences,
+  type MailboxPreferences
+} from '$lib/mailbox-preferences'
 import { sql } from 'drizzle-orm'
 
 const DEFAULT_TRANSLATION_TARGET_LANGUAGE = 'Korean'
@@ -10,10 +15,7 @@ export const DENSITY_VALUES = ['comfortable', 'compact', 'condensed'] as const
 export type DensityPreference = (typeof DENSITY_VALUES)[number]
 
 export type ThemePreference = 'light' | 'dark' | 'system'
-export type MailboxPreferences = {
-  order: string[]
-  hidden: string[]
-}
+export type { MailboxPreferences } from '$lib/mailbox-preferences'
 
 export type Preferences = {
   simplifiedView: boolean
@@ -29,27 +31,6 @@ export type Preferences = {
 }
 
 let demoPreferences: Preferences | undefined
-
-function normalizeMailboxPathList(value: unknown) {
-  if (!Array.isArray(value)) return []
-  return Array.from(
-    new Set(
-      value
-        .filter((item): item is string => typeof item === 'string')
-        .map((item) => item.trim())
-        .filter(Boolean)
-    )
-  )
-}
-
-export function normalizeMailboxPreferences(value: unknown): MailboxPreferences {
-  if (!value || typeof value !== 'object') return { order: [], hidden: [] }
-  const record = value as Record<string, unknown>
-  return {
-    order: normalizeMailboxPathList(record.order),
-    hidden: normalizeMailboxPathList(record.hidden)
-  }
-}
 
 export function normalizeThemePreference(value: unknown): ThemePreference {
   return value === 'light' || value === 'dark' || value === 'system' ? value : 'system'
@@ -116,6 +97,10 @@ export async function updateStoredPreferences(value: unknown): Promise<Preferenc
       patch.remoteContent && typeof patch.remoteContent === 'object'
         ? (patch.remoteContent as Record<string, unknown>)
         : {}
+    const mailboxPreferences = mergeMailboxPreferences(
+      current.mailboxPreferences,
+      patch.mailboxPreferences
+    )
     return normalizePreferences({
       ...current,
       ...patch,
@@ -126,7 +111,8 @@ export async function updateStoredPreferences(value: unknown): Promise<Preferenc
             ? 'compact'
             : 'comfortable'
           : current.density),
-      remoteContent: { ...current.remoteContent, ...remoteContent }
+      remoteContent: { ...current.remoteContent, ...remoteContent },
+      mailboxPreferences
     })
   }
 

@@ -225,7 +225,7 @@
   type ThemePreference = 'light' | 'dark' | 'system'
   type ImapMailbox = { path: string; name: string; delimiter: string }
   type ComposedMailbox = { id: number; name: string; slug: string; mailboxPaths: string[] }
-  type MailboxPreferences = { order: string[]; hidden: string[] }
+  type MailboxPreferences = { order: string[]; hidden: string[]; collapsedAccounts: string[] }
 
   type ImapForm = Props['data']['config']['imap'] & { password: string }
   type SmtpForm = Props['data']['config']['smtp'] & { password: string; undoSendSeconds: number }
@@ -284,7 +284,11 @@
     translationTargetLanguage = $state('Korean')
     blockRemoteContent = $state(true)
     remoteContentAllowedSenders = $state('')
-    mailboxPreferences = $state<MailboxPreferences>({ order: [], hidden: [] })
+    mailboxPreferences = $state<MailboxPreferences>({
+      order: [],
+      hidden: [],
+      collapsedAccounts: []
+    })
     quietHours = $state({ enabled: false, start: '22:00', end: '07:00', timezone: 'UTC' })
 
     constructor(
@@ -343,7 +347,8 @@
       this.remoteContentAllowedSenders = remoteContent.allowedSenders.join('\n')
       this.mailboxPreferences = {
         order: [...mailboxPreferences.order],
-        hidden: [...mailboxPreferences.hidden]
+        hidden: [...mailboxPreferences.hidden],
+        collapsedAccounts: [...mailboxPreferences.collapsedAccounts]
       }
       this.quietHours = { ...config.quietHours }
     }
@@ -1699,7 +1704,7 @@
   }
 
   function resetMailboxPreferences() {
-    form.mailboxPreferences = { order: [], hidden: [] }
+    form.mailboxPreferences = { ...mailboxPreferences, order: [], hidden: [] }
     scheduleAutosave(0)
   }
 

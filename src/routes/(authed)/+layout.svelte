@@ -3,7 +3,7 @@
   import { dev } from '$app/environment'
   import { page } from '$app/state'
   import { setSimplifiedModeSidebarActionContext } from '$lib/simplified-mode-context'
-  import { onMount } from 'svelte'
+  import { onMount, untrack } from 'svelte'
   import ActionModal from '$lib/components/ActionModal.svelte'
   import {
     Inbox,
@@ -64,7 +64,7 @@
       savedSearches: SavedSearch[]
       user: { name: string; email: string } | null
       simplifiedView: boolean
-      mailboxPreferences: { order: string[]; hidden: string[] }
+      mailboxPreferences: { order: string[]; hidden: string[]; collapsedAccounts: string[] }
       secondaryNames: string[]
       sidebarWidth: number
       demoMode: boolean
@@ -834,14 +834,38 @@
     return 'Primary'
   }
 
-  let collapsedAccounts = $state(new SvelteSet<string>())
+  let collapsedAccounts = $state(
+    new SvelteSet(untrack(() => data.mailboxPreferences.collapsedAccounts))
+  )
+  let collapsedAccountsSave = Promise.resolve()
 
   function toggleAccountCollapsed(accountName: string) {
+    const previous = new SvelteSet(collapsedAccounts)
     if (collapsedAccounts.has(accountName)) {
       collapsedAccounts.delete(accountName)
     } else {
       collapsedAccounts.add(accountName)
     }
+
+    const next = Array.from(collapsedAccounts)
+    collapsedAccountsSave = collapsedAccountsSave.then(async () => {
+      try {
+        const response = await fetch('/api/settings/mailbox-preferences', {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ preferences: { collapsedAccounts: next } })
+        })
+        if (!response.ok) {
+          throw new Error(await readErrorMessage(response, 'Failed to save account state.'))
+        }
+      } catch (error) {
+        const current = Array.from(collapsedAccounts)
+        if (current.length === next.length && current.every((value) => next.includes(value))) {
+          collapsedAccounts = previous
+        }
+        toast.error(errorMessageFromUnknown(error, 'Failed to save account state.'))
+      }
+    })
   }
 
   let draggingMailboxPath = $state<string | null>(null)
@@ -1141,6 +1165,7 @@
             <button
               type="button"
               onclick={() => toggleAccountCollapsed(currentServer)}
+              aria-expanded={!collapsedAccounts.has(currentServer)}
               class="flex w-full items-center gap-1.5 px-3 pt-2 pb-1 text-left text-[10px] font-bold tracking-wider text-zinc-500 uppercase select-none hover:text-zinc-300"
             >
               {#if collapsedAccounts.has(currentServer)}

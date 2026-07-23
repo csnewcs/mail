@@ -73,7 +73,7 @@ export type SettingsBackup = {
     translationTargetLanguage?: string
     density?: 'comfortable' | 'compact' | 'condensed'
     remoteContent?: { blockRemoteContent?: boolean; allowedSenders?: string[] }
-    mailboxPreferences?: { order?: string[]; hidden?: string[] }
+    mailboxPreferences?: { order?: string[]; hidden?: string[]; collapsedAccounts?: string[] }
     listRatio?: number
     sidebarWidth?: number
   }
