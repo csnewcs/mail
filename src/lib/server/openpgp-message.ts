@@ -12,6 +12,7 @@ import {
   type PrivateKey,
   type PublicKey
 } from 'openpgp'
+import { openPgpKeyEmails } from './openpgp-keyservers.ts'
 
 export type OpenPgpSigningMethod = 'none' | 'cleartext' | 'detached' | 'pgp-mime'
 export type OpenPgpSignatureStatus =
@@ -173,9 +174,7 @@ function signerForKey(
     ? {
         signer: key.getUserIDs()[0] ?? null,
         fingerprint: key.getFingerprint().toLowerCase(),
-        emails: key
-          .getUserIDs()
-          .flatMap((userId) => userId.match(/<([^<>\s@]+@[^<>\s@]+)>/)?.[1]?.toLowerCase() ?? [])
+        emails: openPgpKeyEmails(key)
       }
     : { signer: null, fingerprint: null, emails: [] }
 }

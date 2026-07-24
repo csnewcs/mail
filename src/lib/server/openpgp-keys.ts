@@ -9,6 +9,7 @@ import {
 } from 'openpgp'
 import { db } from './db'
 import { mailMessageMailbox, openPgpKey } from './db/schema'
+import { lookupOpenPgpKeysByEmail, openPgpKeyEmails } from './openpgp-keyservers.ts'
 import { decryptSecret, encryptSecret, isSecretEncryptionConfigured } from './secrets'
 
 const EMAIL_RE = /<([^<>\s@]+@[^<>\s@]+)>/
@@ -27,8 +28,10 @@ export type OpenPgpKeySummary = {
 
 function identityFromUserIds(userIds: string[]) {
   const primary = userIds[0]?.trim() ?? ''
-  const email = primary.match(EMAIL_RE)?.[1]?.toLowerCase() ?? ''
-  const name = primary.replace(EMAIL_RE, '').trim()
+  const email =
+    primary.match(EMAIL_RE)?.[1]?.toLowerCase() ??
+    (/^[^<>\s@]+@[^<>\s@]+$/.test(primary) ? primary.toLowerCase() : '')
+  const name = email === primary.toLowerCase() ? '' : primary.replace(EMAIL_RE, '').trim()
   return { name, email }
 }
 
@@ -252,11 +255,7 @@ export async function getOpenPgpKeyForAddress(address: string): Promise<{
     if (!row.privateKey) continue
     try {
       const publicKey = await readKey({ armoredKey: row.publicKey })
-      if (
-        publicKey
-          .getUserIDs()
-          .some((userId) => identityFromUserIds([userId]).email === normalizedAddress)
-      ) {
+      if (openPgpKeyEmails(publicKey).includes(normalizedAddress)) {
         matching.push(row)
       }
     } catch {
@@ -303,13 +302,29 @@ export async function getOpenPgpPrivateKeys(): Promise<PrivateKey[]> {
 
 export async function getEncryptionKeysForAddresses(addresses: string[]) {
   const normalized = new Set(addresses.map((address) => address.trim().toLowerCase()))
-  const keys = await getOpenPgpPublicKeys()
   const matched = new Map<string, PublicKey>()
-  for (const key of keys) {
-    for (const userId of key.getUserIDs()) {
-      const email = identityFromUserIds([userId]).email
-      if (normalized.has(email) && !matched.has(email)) matched.set(email, key)
+  async function addUsableKeys(keys: PublicKey[]) {
+    for (const key of keys) {
+      try {
+        await key.getEncryptionKey()
+      } catch {
+        continue
+      }
+      for (const email of openPgpKeyEmails(key)) {
+        if (normalized.has(email) && !matched.has(email)) matched.set(email, key)
+      }
     }
+  }
+
+  await addUsableKeys(await getOpenPgpPublicKeys())
+  const missingAddresses = [...normalized].filter((address) => !matched.has(address))
+  for (let index = 0; index < missingAddresses.length; index += 8) {
+    const discovered = await Promise.all(
+      missingAddresses
+        .slice(index, index + 8)
+        .map((address) => lookupOpenPgpKeysByEmail(address, { requireEncryption: true }))
+    )
+    await addUsableKeys(discovered.flat())
   }
   return {
     keys: Array.from(new Set(matched.values())),

@@ -88,6 +88,7 @@ import {
 import { assignThreadKeys, orderThread, referenceCandidates } from './threading'
 import { processInboundOpenPgp, type OpenPgpSecurityResult } from './openpgp-message'
 import { getOpenPgpPrivateKeys, getOpenPgpPublicKeys } from './openpgp-keys'
+import { lookupOpenPgpKeysByEmail } from './openpgp-keyservers.ts'
 import {
   createSentPlaceholder,
   parseSentPlaceholderPayload,
@@ -164,7 +165,7 @@ async function parseIncomingSource(source: Buffer) {
     getOpenPgpPublicKeys(),
     attachedPublicKeys(initial.attachments)
   ])
-  const verificationKeys = [...storedVerificationKeys, ...messageVerificationKeys]
+  let verificationKeys = [...storedVerificationKeys, ...messageVerificationKeys]
   const trustedFingerprints = new Set(
     storedVerificationKeys.map((key) => key.getFingerprint().toLowerCase())
   )
@@ -176,7 +177,7 @@ async function parseIncomingSource(source: Buffer) {
     )
     .map((attachment) => attachment.content)
   const senderAddress = parseAddressFields([summarizeAddresses(initial.from)])[0]?.email
-  const openPgp = await processInboundOpenPgp({
+  let openPgp = await processInboundOpenPgp({
     raw: source,
     text: initial.text,
     detachedSignatures,
@@ -185,6 +186,24 @@ async function parseIncomingSource(source: Buffer) {
     trustedFingerprints,
     senderAddress
   })
+  let discoveredVerificationKeys: PublicKey[] = []
+  if (openPgp.signatureStatus === 'unknown' && senderAddress) {
+    discoveredVerificationKeys = await lookupOpenPgpKeysByEmail(senderAddress, {
+      allowMultiple: true
+    })
+    if (discoveredVerificationKeys.length > 0) {
+      verificationKeys = [...verificationKeys, ...discoveredVerificationKeys]
+      openPgp = await processInboundOpenPgp({
+        raw: source,
+        text: initial.text,
+        detachedSignatures,
+        privateKeys,
+        verificationKeys,
+        trustedFingerprints,
+        senderAddress
+      })
+    }
+  }
   const transformed = !openPgp.rawMessage.equals(source)
   if (!openPgp.decrypted && !transformed) return { parsed: initial, openPgp, replaceContent: false }
   const parsed = await simpleParser(openPgp.rawMessage)
@@ -196,7 +215,11 @@ async function parseIncomingSource(source: Buffer) {
     text: initial.text,
     detachedSignatures,
     privateKeys,
-    verificationKeys: [...storedVerificationKeys, ...decryptedPublicKeys],
+    verificationKeys: [
+      ...storedVerificationKeys,
+      ...decryptedPublicKeys,
+      ...discoveredVerificationKeys
+    ],
     trustedFingerprints,
     senderAddress
   })

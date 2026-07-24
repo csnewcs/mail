@@ -9,6 +9,7 @@ import {
   processInboundOpenPgp,
   signPgpMime
 } from './openpgp-message.ts'
+import { lookupOpenPgpKeysByEmail } from './openpgp-keyservers.ts'
 
 const RAW_MESSAGE = Buffer.from(
   'From: Alice <alice@example.com>\r\n' +
@@ -128,6 +129,24 @@ test('verifies PGP/MIME trust, identity, and tamper states', async () => {
     verificationKeys: [publicKey]
   })
   assert.equal(rejected.signatureStatus, 'invalid')
+})
+
+test('uses an automatically discovered certificate without trusting it', async () => {
+  const signed = await signPgpMime(RAW_MESSAGE, privateKey)
+  const fetchedKeys = await lookupOpenPgpKeysByEmail('alice@example.com', {
+    fetch: async () => new Response(publicKey.armor()),
+    cache: false
+  })
+  const result = await processInboundOpenPgp({
+    raw: signed,
+    privateKeys: [],
+    verificationKeys: fetchedKeys,
+    trustedFingerprints: new Set(),
+    senderAddress: 'alice@example.com'
+  })
+
+  assert.equal(result.signatureStatus, 'valid-untrusted')
+  assert.equal(result.fingerprint, publicKey.getFingerprint())
 })
 
 test('decrypts and verifies signed PGP/MIME messages', async () => {
