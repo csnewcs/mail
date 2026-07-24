@@ -1270,7 +1270,9 @@
       {/if}
 
       <!-- To -->
-      <div class="flex flex-wrap items-start gap-2 border-b border-white/8 px-4 py-2">
+      <div
+        class="flex max-h-24 flex-wrap items-start gap-2 overflow-y-auto border-b border-white/8 px-4 py-2"
+      >
         <AddressInput
           id="composer-to"
           label="To"
