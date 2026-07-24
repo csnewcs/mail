@@ -220,6 +220,25 @@ export async function deleteOpenPgpKey(id: number) {
   return Boolean(deleted)
 }
 
+export async function markOpenPgpKeyAsPrimarySigningKey(id: number) {
+  return db.transaction(async (tx) => {
+    const [key] = await tx
+      .select({ isOwn: openPgpKey.isOwn, privateKey: openPgpKey.privateKey })
+      .from(openPgpKey)
+      .where(eq(openPgpKey.id, id))
+      .limit(1)
+    if (!key) return 'not-found' as const
+    if (!key.isOwn || !key.privateKey) return 'not-signing-key' as const
+
+    await tx.update(openPgpKey).set({ isDefault: false }).where(eq(openPgpKey.isOwn, true))
+    await tx
+      .update(openPgpKey)
+      .set({ isDefault: true, updatedAt: new Date() })
+      .where(eq(openPgpKey.id, id))
+    return 'updated' as const
+  })
+}
+
 export async function getOpenPgpPublicKey(id: number) {
   const [row] = await db
     .select({ publicKey: openPgpKey.publicKey, fingerprint: openPgpKey.fingerprint })

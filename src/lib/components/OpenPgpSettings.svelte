@@ -102,6 +102,22 @@
     }
   }
 
+  async function markAsPrimarySigningKey(id: number) {
+    working = true
+    errorMessage = null
+    try {
+      const response = await fetch(`/api/openpgp/keys/${id}`, { method: 'PATCH' })
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, 'Unable to mark the primary signing key.'))
+      }
+      await loadKeys()
+    } catch (error) {
+      errorMessage = errorMessageFromUnknown(error, 'Unable to mark the primary signing key.')
+    } finally {
+      working = false
+    }
+  }
+
   onMount(() => void loadKeys())
 </script>
 
@@ -221,6 +237,13 @@
             </div>
           </div>
           <div class="flex shrink-0 gap-2">
+            {#if key.isOwn && key.hasPrivateKey && !key.isDefault}<button
+                type="button"
+                disabled={working}
+                onclick={() => void markAsPrimarySigningKey(key.id)}
+                class="rounded-lg border border-white/10 px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-white/8 hover:text-white disabled:opacity-50"
+                >Mark as primary signing key</button
+              >{/if}
             <a
               href={resolve('/api/openpgp/keys/[id]/public', { id: String(key.id) })}
               class="rounded-lg border border-white/10 p-2 text-zinc-400 hover:bg-white/8 hover:text-zinc-200"
