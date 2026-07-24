@@ -711,12 +711,10 @@
   })
 
   function remoteContentForMessage(msg: Message) {
-    return prepareRemoteContent(
-      msg.htmlContent ?? '',
-      msg.from,
-      remoteContentSettings,
-      showRemoteContentIds.has(msg.id)
-    )
+    return prepareRemoteContent(msg.htmlContent ?? '', msg.from, remoteContentSettings, {
+      messageId: msg.id,
+      allowedMessageIds: showRemoteContentIds
+    })
   }
 
   async function trustRemoteContentSender(msg: Message) {
@@ -741,7 +739,6 @@
       }
 
       allowedRemoteSenders = nextAllowedSenders
-      showRemoteContentIds.add(msg.id)
       toast('Sender trusted')
     } catch (error) {
       errorDialogMessage = errorMessageFromUnknown(error, 'Failed to trust sender.')

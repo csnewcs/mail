@@ -8,6 +8,11 @@ export type RemoteContentResult = {
   blockedCount: number
 }
 
+export type RemoteContentMessagePermission = {
+  messageId: number
+  allowedMessageIds: ReadonlySet<number>
+}
+
 const REMOTE_URL_PATTERN = /^(?:https?:)?\/\//i
 const URL_PATTERN = /url\((['"]?)(.*?)\1\)/gi
 const STYLE_BLOCK_PATTERN = /<style\b[^>]*>[\s\S]*?<\/style>/gi
@@ -137,9 +142,12 @@ export function prepareRemoteContent(
   html: string,
   sender: string | null | undefined,
   settings: RemoteContentSettings,
-  forceAllow = false
+  messagePermission?: RemoteContentMessagePermission
 ): RemoteContentResult {
-  if (forceAllow || isRemoteContentAllowedForSender(sender, settings)) {
+  if (
+    messagePermission?.allowedMessageIds.has(messagePermission.messageId) ||
+    isRemoteContentAllowedForSender(sender, settings)
+  ) {
     return { html, blockedCount: 0 }
   }
 

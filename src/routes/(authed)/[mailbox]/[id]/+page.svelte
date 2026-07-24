@@ -38,7 +38,7 @@
   import { errorMessageFromUnknown, readErrorMessage } from '$lib/http'
   import { trackAppLoading } from '$lib/loading.svelte'
   import { onMount } from 'svelte'
-  import { SvelteDate } from 'svelte/reactivity'
+  import { SvelteDate, SvelteSet } from 'svelte/reactivity'
   import { openReply, openReplyAll, openForward } from '$lib/composer.svelte'
   import { setupKeyboardHandler } from '$lib/keyboard.svelte'
   import { notifyMailboxStateChanged } from '$lib/mailbox-state'
@@ -170,7 +170,7 @@
     inputType?: string
     resolve: (value: string | boolean | null) => void
   } | null>(null)
-  let showRemoteContent = $state(false)
+  let showRemoteContentIds = $state(new SvelteSet<number>())
   let trustingRemoteSender = $state(false)
   let allowedRemoteSenders = $state<string[]>([])
   let translationResolvedCount = $state(0)
@@ -300,6 +300,7 @@
     if (data.message.id === activeMessageId) return
 
     activeMessageId = data.message.id
+    showRemoteContentIds = new SvelteSet<number>()
     resetMessageViewport()
     cancelTranslation()
   })
@@ -832,7 +833,10 @@
   const remoteContentBody = $derived.by(() => {
     const html = message.htmlContent
     if (!html) return { html: '', blockedCount: 0 }
-    return prepareRemoteContent(html, message.from, remoteContentSettings, showRemoteContent)
+    return prepareRemoteContent(html, message.from, remoteContentSettings, {
+      messageId: message.id,
+      allowedMessageIds: showRemoteContentIds
+    })
   })
 
   const srcdoc = $derived.by(() => {
@@ -867,7 +871,6 @@
       }
 
       allowedRemoteSenders = nextAllowedSenders
-      showRemoteContent = true
       toast('Sender trusted')
     } catch (error) {
       errorDialogMessage = errorMessageFromUnknown(error, 'Failed to trust sender.')
@@ -1556,7 +1559,7 @@
           <div class="flex flex-wrap gap-2">
             <button
               type="button"
-              onclick={() => (showRemoteContent = true)}
+              onclick={() => showRemoteContentIds.add(message.id)}
               class="rounded-lg border border-amber-300/20 bg-amber-300/10 px-3 py-1.5 text-sm font-medium text-amber-50 transition hover:bg-amber-300/20"
             >
               Show this time
