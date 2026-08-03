@@ -637,6 +637,7 @@ let demoMessageTemplates: DemoMessageTemplate[] = [
 let demoSenderRules: DemoSenderRule[] = []
 
 const demoShares = new Map<string, string>()
+const demoReadShares = new Set<string>()
 let nextMessageId = 112
 let nextAttachmentId = 203
 let nextContactId = 303
@@ -737,6 +738,7 @@ function resetDemoState() {
   }))
   demoSenderRules = initialDemoSenderRules.map((rule) => ({ ...rule }))
   demoShares.clear()
+  demoReadShares.clear()
 
   nextMessageId = initialNextMessageId
   nextAttachmentId = initialNextAttachmentId
@@ -1317,6 +1319,18 @@ export function getDemoMessageByShareToken(token: string) {
   const messageId = demoShares.get(token)
   if (!messageId) return null
   return demoMessages.find((message) => message.messageId === messageId) ?? null
+}
+
+export function markDemoShareTokenAsRead(token: string) {
+  if (demoShares.has(token)) demoReadShares.add(token)
+}
+
+export function countDemoSharedMessageReads(messageId: string) {
+  let count = 0
+  for (const token of demoReadShares) {
+    if (demoShares.get(token) === messageId) count += 1
+  }
+  return count
 }
 
 export function listDemoAttachmentsForMessage(messageId: string) {

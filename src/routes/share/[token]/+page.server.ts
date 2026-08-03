@@ -1,6 +1,6 @@
 import { error } from '@sveltejs/kit'
 import type { PageServerLoad } from './$types'
-import { getMessageByShareToken } from '$lib/server/mail'
+import { getMessageByShareToken, markShareTokenAsRead } from '$lib/server/mail'
 import { db } from '$lib/server/db'
 import { mailAttachment } from '$lib/server/db/schema'
 import { eq } from 'drizzle-orm'
@@ -12,6 +12,8 @@ export const load: PageServerLoad = async ({ params }) => {
   if (!message) {
     error(404, 'Shared message not found or link is invalid')
   }
+
+  await markShareTokenAsRead(params.token)
 
   const attachments = isDemoModeEnabled()
     ? listDemoAttachmentsForMessage(message.messageId)

@@ -109,6 +109,7 @@
       density: DensityPreference
       shareClickAction: ShareAction
       shareShiftClickAction: ShareAction
+      shareReadCount: number
       translationTargetLanguage: string
       remoteContent: {
         blockRemoteContent: boolean
@@ -1298,19 +1299,22 @@
         <div class="group relative inline-flex">
           <button
             type="button"
-            aria-label={shareCopied ? 'Copied' : 'Share'}
+            aria-label={`${shareCopied ? 'Copied. ' : ''}Share. ${data.shareReadCount} shared email${data.shareReadCount === 1 ? '' : 's'} read`}
             disabled={sharing}
             onclick={(event) => void shareMessage(event.shiftKey)}
-            class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-40 md:border-white/8"
+            class="inline-flex items-center gap-1.5 rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-40 md:border-white/8"
           >
             {#if shareCopied}
               <Check size={16} class="text-emerald-400" />
             {:else}
               <Share2 size={16} />
             {/if}
+            <span class="min-w-2 text-center text-xs leading-none font-medium tabular-nums">
+              {data.shareReadCount}
+            </span>
           </button>
           <span role="tooltip" class="mail-toolbox-label mail-toolbox-label-left">
-            {shareCopied ? 'Copied' : 'Share'}
+            {data.shareReadCount} shared email{data.shareReadCount === 1 ? '' : 's'} read
           </span>
         </div>
       </div>

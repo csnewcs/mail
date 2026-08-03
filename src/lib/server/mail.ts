@@ -66,6 +66,7 @@ import { parseMailAuthentication } from '../mail-authentication'
 import { env } from '$env/dynamic/private'
 import {
   countDemoSearchMessages,
+  countDemoSharedMessageReads,
   countDemoStoredMessages,
   countDemoStoredThreads,
   createDemoShareToken,
@@ -73,6 +74,7 @@ import {
   getDemoMailboxSyncStatus,
   getDemoMessageByShareToken,
   getDemoStoredMessageById,
+  markDemoShareTokenAsRead,
   getDemoSyncSummary,
   getDemoMessagesInThread,
   isDemoModeEnabled,
@@ -3553,6 +3555,29 @@ export async function getMessageByShareToken(token: string): Promise<MailRow | n
     .limit(1)
 
   return message ?? null
+}
+
+export async function markShareTokenAsRead(token: string): Promise<void> {
+  if (isDemoModeEnabled()) {
+    markDemoShareTokenAsRead(token)
+    return
+  }
+
+  await db
+    .update(mailShare)
+    .set({ readAt: new Date() })
+    .where(and(eq(mailShare.token, token), isNull(mailShare.readAt)))
+}
+
+export async function countSharedMessageReads(messageId: string): Promise<number> {
+  if (isDemoModeEnabled()) return countDemoSharedMessageReads(messageId)
+
+  const [row] = await db
+    .select({ value: count() })
+    .from(mailShare)
+    .where(and(eq(mailShare.messageId, messageId), isNotNull(mailShare.readAt)))
+
+  return row?.value ?? 0
 }
 
 export async function moveMessage(message: MailRow, action: MessageAction): Promise<string | null> {

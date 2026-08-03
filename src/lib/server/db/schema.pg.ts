@@ -374,11 +374,16 @@ export const mailThreadNote = pgTable(
   (table) => [index('mail_thread_note_updated_at_idx').on(table.updatedAt)]
 )
 
-export const mailShare = pgTable('mail_share', {
-  token: text('token').primaryKey(),
-  messageId: text('message_id').notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull()
-})
+export const mailShare = pgTable(
+  'mail_share',
+  {
+    token: text('token').primaryKey(),
+    messageId: text('message_id').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
+    readAt: timestamp('read_at', { withTimezone: true, mode: 'date' })
+  },
+  (table) => [index('mail_share_message_id_idx').on(table.messageId)]
+)
 
 export const mailAttachment = pgTable(
   'mail_attachment',

@@ -1,6 +1,11 @@
 import { error } from '@sveltejs/kit'
 import type { PageServerLoad } from './$types'
-import { getStoredMessageById, markMessageAsRead, getMailboxRole } from '$lib/server/mail'
+import {
+  countSharedMessageReads,
+  getStoredMessageById,
+  markMessageAsRead,
+  getMailboxRole
+} from '$lib/server/mail'
 import { db } from '$lib/server/db'
 import { mailAttachment } from '$lib/server/db/schema'
 import { payloadBytes, perfLog, perfMs, perfNow } from '$lib/server/perf'
@@ -77,12 +82,14 @@ export const load: PageServerLoad = async ({ params }) => {
         .where(eq(mailAttachment.messageId, message.messageId))
 
   const preferences = await getStoredPreferences()
+  const shareReadCount = await countSharedMessageReads(message.messageId)
   const body = {
     message: serializeMessage(message, true),
     mailboxRole: getMailboxRole(message.mailbox),
     density: preferences.density,
     shareClickAction: preferences.shareClickAction,
     shareShiftClickAction: preferences.shareShiftClickAction,
+    shareReadCount,
     attachments,
     remoteContent: preferences.remoteContent
   }
