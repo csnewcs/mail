@@ -4,6 +4,7 @@ import { ensureSeenFlag, isAlwaysReadMailbox } from '../mailbox'
 import { contactDisplay, normalizeEmail, parseAddressFields, type ContactInput } from './contacts'
 import { normalizeFilterConditions, type FilterConditionSet } from '$lib/filter-conditions'
 import { DEFAULT_QUIET_HOURS, type QuietHoursConfig } from './quiet-hours'
+import { SharedMessageReads } from './shared-message-reads'
 
 type DemoUser = {
   id: string
@@ -636,8 +637,7 @@ let demoMessageTemplates: DemoMessageTemplate[] = [
 ]
 let demoSenderRules: DemoSenderRule[] = []
 
-const demoShares = new Map<string, string>()
-const demoReadShares = new Set<string>()
+const demoShares = new SharedMessageReads()
 let nextMessageId = 112
 let nextAttachmentId = 203
 let nextContactId = 303
@@ -738,7 +738,6 @@ function resetDemoState() {
   }))
   demoSenderRules = initialDemoSenderRules.map((rule) => ({ ...rule }))
   demoShares.clear()
-  demoReadShares.clear()
 
   nextMessageId = initialNextMessageId
   nextAttachmentId = initialNextAttachmentId
@@ -1311,26 +1310,22 @@ export function createDemoShareToken(mailboxEntryId: number) {
   const message = getDemoStoredMessageById(mailboxEntryId)
   if (!message) return null
   const token = randomUUID()
-  demoShares.set(token, message.messageId)
+  demoShares.add(token, message.messageId)
   return token
 }
 
 export function getDemoMessageByShareToken(token: string) {
-  const messageId = demoShares.get(token)
+  const messageId = demoShares.getMessageId(token)
   if (!messageId) return null
   return demoMessages.find((message) => message.messageId === messageId) ?? null
 }
 
 export function markDemoShareTokenAsRead(token: string) {
-  if (demoShares.has(token)) demoReadShares.add(token)
+  demoShares.markRead(token)
 }
 
 export function countDemoSharedMessageReads(messageId: string) {
-  let count = 0
-  for (const token of demoReadShares) {
-    if (demoShares.get(token) === messageId) count += 1
-  }
-  return count
+  return demoShares.count(messageId)
 }
 
 export function listDemoAttachmentsForMessage(messageId: string) {
