@@ -76,7 +76,7 @@
   }
 
   const ogDescription = $derived(
-    data.messages[0]?.preview?.slice(0, 200) || 'Shared email thread'
+    data.messages[0]?.preview?.slice(0, 200) || 'Shared email'
   )
 
   const SCROLLBAR_STYLE = `<style>
@@ -175,142 +175,268 @@
 
 <div class="flex min-h-screen flex-col bg-zinc-950 text-zinc-100">
   <div class="mx-auto flex w-full max-w-3xl grow flex-col p-4 sm:p-6">
-    <!-- Header -->
-    <div class="border-b border-white/8 pb-6">
-      <h1 class="text-2xl font-semibold text-white">
-        {data.subject || '(no subject)'}
-      </h1>
-      {#if data.messages.length > 1}
+    {#if data.messages.length === 1}
+      {@const msg = data.messages[0]}
+      {@const srcdoc = msg.htmlContent ? injectScrollbarStyle(msg.htmlContent) : null}
+      {@const msgAtts = getMessageAttachments(msg.messageId)}
+
+      <!-- Single Message Header -->
+      <div class="border-b border-white/8 pb-6">
+        <h1 class="text-2xl font-semibold text-white">
+          {msg.subject || '(no subject)'}
+        </h1>
+
+        <div class="mt-4 flex flex-col items-start gap-3 sm:flex-row sm:items-center">
+          <div
+            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/8 text-sm font-semibold text-zinc-200"
+          >
+            {senderInitials(msg.from)}
+          </div>
+
+          <div class="min-w-0">
+            <p class="font-medium text-zinc-200">{senderName(msg.from)}</p>
+            <p class="text-sm text-zinc-500">{msg.from}</p>
+          </div>
+
+          <p class="text-sm text-zinc-500 sm:ml-auto sm:shrink-0 sm:text-right">
+            {formatFullDate(msg.receivedAt)}
+          </p>
+        </div>
+      </div>
+
+      <!-- Single Message Body -->
+      <div class="mt-6 flex-1">
+        {#if srcdoc}
+          <div class="flex min-h-[400px] grow overflow-hidden rounded border border-white/8 bg-white">
+            <iframe
+              title={`Email body for ${msg.subject}`}
+              sandbox="allow-popups allow-popups-to-escape-sandbox allow-scripts"
+              {srcdoc}
+              class="block w-full grow min-h-[400px]"
+            ></iframe>
+          </div>
+        {:else}
+          <div class="space-y-5 text-[15px] leading-8 text-zinc-200">
+            {#each (msg.textContent || msg.preview || 'No message body available.')
+              .split(/\n{2,}/)
+              .filter(Boolean) as paragraph, i (i)}
+              <p>{paragraph}</p>
+            {/each}
+          </div>
+        {/if}
+      </div>
+
+      <!-- Single Message Attachments -->
+      {#if msgAtts.length > 0}
+        <div class="mt-6 border-t border-white/8 pt-4">
+          <div class="mb-3 flex items-center gap-2">
+            <Paperclip size={14} class="text-zinc-500" />
+            <span class="text-xs font-semibold tracking-wide text-zinc-500 uppercase">
+              {msgAtts.length} attachment{msgAtts.length === 1 ? '' : 's'}
+            </span>
+          </div>
+
+          <div class="flex flex-wrap gap-3">
+            {#each msgAtts as att (att.id)}
+              {@const safety = attachmentSafety(att)}
+              <div
+                class="group relative flex w-full flex-col overflow-hidden rounded-xl border border-white/10 bg-white/3 transition hover:border-white/20 sm:w-40"
+              >
+                {#if isImage(att.contentType)}
+                  <a
+                    href={resolve(`/share/${data.token}/attachments/${att.id}?inline=1`)}
+                    target="_blank"
+                    rel="noreferrer"
+                    class="block h-40 w-full overflow-hidden bg-black/20 sm:h-32"
+                    title="Open image"
+                  >
+                    <img
+                      src={attachmentUrl(att.id, true)}
+                      alt={att.filename || 'Attachment'}
+                      class="h-full w-full object-contain object-center transition group-hover:scale-105"
+                    />
+                  </a>
+                {:else}
+                  {@const Icon = attachmentIcon(att.contentType)}
+                  <div
+                    class="flex h-40 w-full flex-col items-center justify-center gap-2 text-zinc-500 sm:h-32"
+                  >
+                    <Icon size={36} />
+                    {#if isPdf(att.contentType)}
+                      <span class="text-xs">PDF</span>
+                    {:else if isVideo(att.contentType)}
+                      <span class="text-xs">Video</span>
+                    {/if}
+                  </div>
+                {/if}
+
+                <div class="flex items-center gap-2 border-t border-white/8 px-2.5 py-2">
+                  <div class="min-w-0 flex-1">
+                    <p class="truncate text-xs font-medium text-zinc-200">
+                      {att.filename || 'Attachment'}
+                    </p>
+                    <p class="text-xs text-zinc-500">{formatBytes(att.size)}</p>
+                    {#if safety.level !== 'low'}
+                      <span
+                        class={`mt-1 inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${attachmentSafetyClass(safety)}`}
+                        title={safety.reasons.join('; ')}
+                      >
+                        <ShieldAlert size={10} />
+                        {safety.label}
+                      </span>
+                    {/if}
+                  </div>
+                  <a
+                    href={resolve(`/share/${data.token}/attachments/${att.id}`)}
+                    download={att.filename || 'attachment'}
+                    onclick={(event) => confirmHighRiskDownload(event, att)}
+                    class="shrink-0 text-zinc-500 hover:text-zinc-300"
+                    title="Download"
+                  >
+                    <Download size={13} />
+                  </a>
+                </div>
+              </div>
+            {/each}
+          </div>
+        </div>
+      {/if}
+    {:else}
+      <!-- Multi-message Thread Header -->
+      <div class="border-b border-white/8 pb-6">
+        <h1 class="text-2xl font-semibold text-white">
+          {data.subject || '(no subject)'}
+        </h1>
         <p class="mt-1 text-xs text-zinc-400">
           Shared Thread ({data.messages.length} messages)
         </p>
-      {/if}
-    </div>
+      </div>
 
-    <!-- Thread messages list -->
-    <div class="mt-6 space-y-8">
-      {#each data.messages as msg, index (msg.messageId)}
-        {@const messageAtts = getMessageAttachments(msg.messageId)}
-        {@const srcdoc = msg.htmlContent ? injectScrollbarStyle(msg.htmlContent) : null}
+      <!-- Multi-message Thread List -->
+      <div class="mt-6 space-y-8">
+        {#each data.messages as msg (msg.messageId)}
+          {@const messageAtts = getMessageAttachments(msg.messageId)}
+          {@const srcdoc = msg.htmlContent ? injectScrollbarStyle(msg.htmlContent) : null}
 
-        <div class="rounded-xl border border-white/8 bg-white/2 p-5 sm:p-6">
-          <div class="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
-            <div
-              class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/8 text-sm font-semibold text-zinc-200"
-            >
-              {senderInitials(msg.from)}
-            </div>
-
-            <div class="min-w-0">
-              <p class="font-medium text-zinc-200">{senderName(msg.from)}</p>
-              <p class="text-xs text-zinc-500">{msg.from}</p>
-            </div>
-
-            <p class="text-xs text-zinc-500 sm:ml-auto sm:shrink-0 sm:text-right">
-              {formatFullDate(msg.receivedAt)}
-            </p>
-          </div>
-
-          <!-- Message Body -->
-          <div class="mt-4">
-            {#if srcdoc}
-              <div class="flex h-96 overflow-hidden rounded border border-white/8 bg-white">
-                <iframe
-                  title={`Email body for ${msg.subject}`}
-                  sandbox="allow-popups allow-popups-to-escape-sandbox allow-scripts"
-                  {srcdoc}
-                  class="block h-full w-full"
-                ></iframe>
+          <div class="rounded-xl border border-white/8 bg-white/2 p-5 sm:p-6">
+            <div class="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
+              <div
+                class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/8 text-sm font-semibold text-zinc-200"
+              >
+                {senderInitials(msg.from)}
               </div>
-            {:else}
-              <div class="space-y-4 text-[15px] leading-7 text-zinc-200">
-                {#each (msg.textContent || msg.preview || 'No message body available.')
-                  .split(/\n{2,}/)
-                  .filter(Boolean) as paragraph, i (i)}
-                  <p>{paragraph}</p>
-                {/each}
+
+              <div class="min-w-0">
+                <p class="font-medium text-zinc-200">{senderName(msg.from)}</p>
+                <p class="text-xs text-zinc-500">{msg.from}</p>
+              </div>
+
+              <p class="text-xs text-zinc-500 sm:ml-auto sm:shrink-0 sm:text-right">
+                {formatFullDate(msg.receivedAt)}
+              </p>
+            </div>
+
+            <!-- Message Body -->
+            <div class="mt-4">
+              {#if srcdoc}
+                <div class="flex h-96 overflow-hidden rounded border border-white/8 bg-white">
+                  <iframe
+                    title={`Email body for ${msg.subject}`}
+                    sandbox="allow-popups allow-popups-to-escape-sandbox allow-scripts"
+                    {srcdoc}
+                    class="block h-full w-full"
+                  ></iframe>
+                </div>
+              {:else}
+                <div class="space-y-4 text-[15px] leading-7 text-zinc-200">
+                  {#each (msg.textContent || msg.preview || 'No message body available.')
+                    .split(/\n{2,}/)
+                    .filter(Boolean) as paragraph, i (i)}
+                    <p>{paragraph}</p>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+
+            <!-- Attachments -->
+            {#if messageAtts.length > 0}
+              <div class="mt-4 border-t border-white/8 pt-4">
+                <div class="mb-3 flex items-center gap-2">
+                  <Paperclip size={14} class="text-zinc-500" />
+                  <span class="text-xs font-semibold tracking-wide text-zinc-500 uppercase">
+                    {messageAtts.length} attachment{messageAtts.length === 1 ? '' : 's'}
+                  </span>
+                </div>
+
+                <div class="flex flex-wrap gap-3">
+                  {#each messageAtts as att (att.id)}
+                    {@const safety = attachmentSafety(att)}
+                    <div
+                      class="group relative flex w-full flex-col overflow-hidden rounded-xl border border-white/10 bg-white/3 transition hover:border-white/20 sm:w-40"
+                    >
+                      {#if isImage(att.contentType)}
+                        <a
+                          href={resolve(`/share/${data.token}/attachments/${att.id}?inline=1`)}
+                          target="_blank"
+                          rel="noreferrer"
+                          class="block h-40 w-full overflow-hidden bg-black/20 sm:h-32"
+                          title="Open image"
+                        >
+                          <img
+                            src={attachmentUrl(att.id, true)}
+                            alt={att.filename || 'Attachment'}
+                            class="h-full w-full object-contain object-center transition group-hover:scale-105"
+                          />
+                        </a>
+                      {:else}
+                        {@const Icon = attachmentIcon(att.contentType)}
+                        <div
+                          class="flex h-40 w-full flex-col items-center justify-center gap-2 text-zinc-500 sm:h-32"
+                        >
+                          <Icon size={36} />
+                          {#if isPdf(att.contentType)}
+                            <span class="text-xs">PDF</span>
+                          {:else if isVideo(att.contentType)}
+                            <span class="text-xs">Video</span>
+                          {/if}
+                        </div>
+                      {/if}
+
+                      <div class="flex items-center gap-2 border-t border-white/8 px-2.5 py-2">
+                        <div class="min-w-0 flex-1">
+                          <p class="truncate text-xs font-medium text-zinc-200">
+                            {att.filename || 'Attachment'}
+                          </p>
+                          <p class="text-xs text-zinc-500">{formatBytes(att.size)}</p>
+                          {#if safety.level !== 'low'}
+                            <span
+                              class={`mt-1 inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${attachmentSafetyClass(safety)}`}
+                              title={safety.reasons.join('; ')}
+                            >
+                              <ShieldAlert size={10} />
+                              {safety.label}
+                            </span>
+                          {/if}
+                        </div>
+                        <a
+                          href={resolve(`/share/${data.token}/attachments/${att.id}`)}
+                          download={att.filename || 'attachment'}
+                          onclick={(event) => confirmHighRiskDownload(event, att)}
+                          class="shrink-0 text-zinc-500 hover:text-zinc-300"
+                          title="Download"
+                        >
+                          <Download size={13} />
+                        </a>
+                      </div>
+                    </div>
+                  {/each}
+                </div>
               </div>
             {/if}
           </div>
-
-          <!-- Attachments -->
-          {#if messageAtts.length > 0}
-            <div class="mt-4 border-t border-white/8 pt-4">
-              <div class="mb-3 flex items-center gap-2">
-                <Paperclip size={14} class="text-zinc-500" />
-                <span class="text-xs font-semibold tracking-wide text-zinc-500 uppercase">
-                  {messageAtts.length} attachment{messageAtts.length === 1 ? '' : 's'}
-                </span>
-              </div>
-
-              <div class="flex flex-wrap gap-3">
-                {#each messageAtts as att (att.id)}
-                  {@const safety = attachmentSafety(att)}
-                  <div
-                    class="group relative flex w-full flex-col overflow-hidden rounded-xl border border-white/10 bg-white/3 transition hover:border-white/20 sm:w-40"
-                  >
-                    {#if isImage(att.contentType)}
-                      <a
-                        href={resolve(`/share/${data.token}/attachments/${att.id}?inline=1`)}
-                        target="_blank"
-                        rel="noreferrer"
-                        class="block h-40 w-full overflow-hidden bg-black/20 sm:h-32"
-                        title="Open image"
-                      >
-                        <img
-                          src={attachmentUrl(att.id, true)}
-                          alt={att.filename || 'Attachment'}
-                          class="h-full w-full object-contain object-center transition group-hover:scale-105"
-                        />
-                      </a>
-                    {:else}
-                      {@const Icon = attachmentIcon(att.contentType)}
-                      <div
-                        class="flex h-40 w-full flex-col items-center justify-center gap-2 text-zinc-500 sm:h-32"
-                      >
-                        <Icon size={36} />
-                        {#if isPdf(att.contentType)}
-                          <span class="text-xs">PDF</span>
-                        {:else if isVideo(att.contentType)}
-                          <span class="text-xs">Video</span>
-                        {/if}
-                      </div>
-                    {/if}
-
-                    <div class="flex items-center gap-2 border-t border-white/8 px-2.5 py-2">
-                      <div class="min-w-0 flex-1">
-                        <p class="truncate text-xs font-medium text-zinc-200">
-                          {att.filename || 'Attachment'}
-                        </p>
-                        <p class="text-xs text-zinc-500">{formatBytes(att.size)}</p>
-                        {#if safety.level !== 'low'}
-                          <span
-                            class={`mt-1 inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${attachmentSafetyClass(safety)}`}
-                            title={safety.reasons.join('; ')}
-                          >
-                            <ShieldAlert size={10} />
-                            {safety.label}
-                          </span>
-                        {/if}
-                      </div>
-                      <a
-                        href={resolve(`/share/${data.token}/attachments/${att.id}`)}
-                        download={att.filename || 'attachment'}
-                        onclick={(event) => confirmHighRiskDownload(event, att)}
-                        class="shrink-0 text-zinc-500 hover:text-zinc-300"
-                        title="Download"
-                      >
-                        <Download size={13} />
-                      </a>
-                    </div>
-                  </div>
-                {/each}
-              </div>
-            </div>
-          {/if}
-        </div>
-      {/each}
-    </div>
+        {/each}
+      </div>
+    {/if}
   </div>
 </div>
 
