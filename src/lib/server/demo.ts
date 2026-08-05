@@ -1380,10 +1380,11 @@ export function getDemoAttachment(id: number) {
 }
 
 export function getDemoSharedAttachment(token: string, id: number) {
-  const message = getDemoMessageByShareToken(token)
-  if (!message) return null
+  const sharedMessages = getDemoSharedMessagesByShareToken(token)
+  if (!sharedMessages || sharedMessages.length === 0) return null
+  const allowed = new Set(sharedMessages.map((m) => m.messageId))
   const attachment = getDemoAttachment(id)
-  if (!attachment || attachment.messageId !== message.messageId) return null
+  if (!attachment || !allowed.has(attachment.messageId)) return null
   return attachment
 }
 

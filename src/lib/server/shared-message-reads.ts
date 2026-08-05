@@ -42,7 +42,8 @@ export class SharedMessageReads {
   count(messageId: string) {
     let count = 0
     for (const token of this.readTokens) {
-      if (this.messageIds.get(token) === messageId) count += 1
+      const ids = this.getMessageIds(token)
+      if (ids && ids.includes(messageId)) count += 1
     }
     return count
   }

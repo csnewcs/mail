@@ -47,13 +47,25 @@ export const GET: RequestHandler = async ({ params, url }) => {
     .limit(1)
   if (!share) return error(404, 'Shared attachment not found')
 
+  let allowedMessageIds = [share.messageId]
+  if (share.messageIds) {
+    try {
+      const parsed = JSON.parse(share.messageIds)
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        allowedMessageIds = parsed.filter((m): m is string => typeof m === 'string')
+      }
+    } catch {
+      // fallback
+    }
+  }
+
   const [attachment] = await db
     .select()
     .from(mailAttachment)
     .where(eq(mailAttachment.id, id))
     .limit(1)
 
-  if (!attachment || attachment.messageId !== share.messageId) {
+  if (!attachment || !allowedMessageIds.includes(attachment.messageId)) {
     return error(404, 'Shared attachment not found')
   }
 

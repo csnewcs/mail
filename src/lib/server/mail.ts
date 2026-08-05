@@ -3704,12 +3704,30 @@ export async function markShareTokenAsRead(token: string): Promise<void> {
 export async function countSharedMessageReads(messageId: string): Promise<number> {
   if (isDemoModeEnabled()) return countDemoSharedMessageReads(messageId)
 
-  const [row] = await db
-    .select({ value: count() })
+  const shares = await db
+    .select({ messageId: mailShare.messageId, messageIds: mailShare.messageIds })
     .from(mailShare)
-    .where(and(eq(mailShare.messageId, messageId), isNotNull(mailShare.readAt)))
+    .where(isNotNull(mailShare.readAt))
 
-  return row?.value ?? 0
+  let total = 0
+  for (const share of shares) {
+    if (share.messageIds) {
+      try {
+        const parsed = JSON.parse(share.messageIds)
+        if (Array.isArray(parsed) && parsed.includes(messageId)) {
+          total += 1
+          continue
+        }
+      } catch {
+        // fallback
+      }
+    }
+    if (share.messageId === messageId) {
+      total += 1
+    }
+  }
+
+  return total
 }
 
 export async function moveMessage(message: MailRow, action: MessageAction): Promise<string | null> {
