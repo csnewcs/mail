@@ -1,13 +1,24 @@
 export class SharedMessageReads {
   private readonly messageIds = new Map<string, string>()
+  private readonly threadMessageIds = new Map<string, string[]>()
   private readonly readTokens = new Set<string>()
 
-  add(token: string, messageId: string) {
+  add(token: string, messageId: string, messageIds?: string[]) {
     this.messageIds.set(token, messageId)
+    if (messageIds && messageIds.length > 0) {
+      this.threadMessageIds.set(token, messageIds)
+    }
   }
 
   getMessageId(token: string) {
     return this.messageIds.get(token) ?? null
+  }
+
+  getMessageIds(token: string) {
+    return (
+      this.threadMessageIds.get(token) ??
+      (this.messageIds.has(token) ? [this.messageIds.get(token)!] : null)
+    )
   }
 
   markRead(token: string) {
@@ -24,6 +35,7 @@ export class SharedMessageReads {
 
   clear() {
     this.messageIds.clear()
+    this.threadMessageIds.clear()
     this.readTokens.clear()
   }
 }

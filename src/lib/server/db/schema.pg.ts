@@ -379,6 +379,7 @@ export const mailShare = pgTable(
   {
     token: text('token').primaryKey(),
     messageId: text('message_id').notNull(),
+    messageIds: text('message_ids'),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
     readAt: timestamp('read_at', { withTimezone: true, mode: 'date' })
   },

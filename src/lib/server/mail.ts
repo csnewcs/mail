@@ -70,9 +70,11 @@ import {
   countDemoStoredMessages,
   countDemoStoredThreads,
   createDemoShareToken,
+  createDemoThreadShareToken,
   getDemoImapMailboxes,
   getDemoMailboxSyncStatus,
   getDemoMessageByShareToken,
+  getDemoSharedMessagesByShareToken,
   getDemoStoredMessageById,
   markDemoShareTokenAsRead,
   getDemoSyncSummary,
@@ -3587,6 +3589,17 @@ export async function createShareToken(mailboxEntryId: number): Promise<string |
   return token
 }
 
+export async function createThreadShareToken(messageIds: string[]): Promise<string | null> {
+  if (isDemoModeEnabled()) return createDemoThreadShareToken(messageIds)
+  if (!messageIds || messageIds.length === 0) return null
+
+  const token = randomUUID()
+  await db
+    .insert(mailShare)
+    .values({ token, messageId: messageIds[0], messageIds: JSON.stringify(messageIds) })
+  return token
+}
+
 export async function getMessageByShareToken(token: string): Promise<MailRow | null> {
   if (isDemoModeEnabled()) return getDemoMessageByShareToken(token)
   const [share] = await db.select().from(mailShare).where(eq(mailShare.token, token)).limit(1)
@@ -3601,6 +3614,49 @@ export async function getMessageByShareToken(token: string): Promise<MailRow | n
     .limit(1)
 
   return message ?? null
+}
+
+export async function getSharedMessagesByShareToken(token: string): Promise<MailRow[]> {
+  if (isDemoModeEnabled()) return getDemoSharedMessagesByShareToken(token)
+
+  const [share] = await db.select().from(mailShare).where(eq(mailShare.token, token)).limit(1)
+  if (!share) return []
+
+  let targetIds: string[] = []
+  if (share.messageIds) {
+    try {
+      const parsed = JSON.parse(share.messageIds)
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        targetIds = parsed.filter((id): id is string => typeof id === 'string')
+      }
+    } catch {
+      targetIds = []
+    }
+  }
+
+  if (targetIds.length === 0 && share.messageId) {
+    targetIds = [share.messageId]
+  }
+
+  if (targetIds.length === 0) return []
+
+  const rows = await db
+    .select(detailSelect)
+    .from(mailMessageMailbox)
+    .innerJoin(mailMessage, eq(mailMessageMailbox.messageId, mailMessage.messageId))
+    .where(inArray(mailMessage.messageId, targetIds))
+    .orderBy(asc(mailMessage.receivedAt))
+
+  const seen = new Set<string>()
+  const result: MailRow[] = []
+  for (const row of rows) {
+    if (!seen.has(row.messageId)) {
+      seen.add(row.messageId)
+      result.push(row)
+    }
+  }
+
+  return result
 }
 
 export async function markShareTokenAsRead(token: string): Promise<void> {
