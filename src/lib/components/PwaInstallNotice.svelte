@@ -25,7 +25,7 @@
 
   function wasDismissed() {
     try {
-      return sessionStorage.getItem(dismissalKey) === 'true'
+      return localStorage.getItem(dismissalKey) === 'true'
     } catch {
       return false
     }
@@ -34,7 +34,7 @@
   function dismiss() {
     visible = false
     try {
-      sessionStorage.setItem(dismissalKey, 'true')
+      localStorage.setItem(dismissalKey, 'true')
     } catch {
       // The in-memory dismissal still applies when storage is unavailable.
     }
@@ -147,10 +147,10 @@
   .install-notice__content {
     display: flex;
     min-height: 3rem;
-    max-width: 72rem;
-    margin: 0 auto;
-    padding: 0.5rem max(0.75rem, env(safe-area-inset-right)) 0.5rem
-      max(0.75rem, env(safe-area-inset-left));
+    width: 100%;
+    margin: 0;
+    padding: 0.5rem max(1.25rem, env(safe-area-inset-right)) 0.5rem
+      max(1.25rem, env(safe-area-inset-left));
     align-items: center;
     gap: 0.75rem;
   }
