@@ -203,6 +203,19 @@
     generatedShareUrl = null
   }
 
+  const allShareMessagesSelected = $derived(
+    selectedShareMessageIds.length === messages.length && messages.length > 0
+  )
+
+  function toggleSelectAllShareMessages() {
+    if (allShareMessagesSelected) {
+      selectedShareMessageIds = []
+    } else {
+      selectedShareMessageIds = messages.map((m) => m.messageId)
+    }
+    generatedShareUrl = null
+  }
+
   function toggleShareMessage(messageId: string) {
     if (selectedShareMessageIds.includes(messageId)) {
       selectedShareMessageIds = selectedShareMessageIds.filter((id) => id !== messageId)
@@ -1694,29 +1707,19 @@
           Select messages from this thread to include in the public share link.
         </p>
 
-        <!-- Selection Controls: Select All / Deselect All -->
-        <div class="mt-4 flex items-center justify-between border-b border-white/8 pb-3">
-          <span class="text-xs font-medium text-zinc-400">
-            {selectedShareMessageIds.length} of {messages.length} messages selected
-          </span>
-          <div class="flex items-center gap-2">
-            <button
-              type="button"
-              onclick={selectAllShareMessages}
-              class="inline-flex items-center gap-1 rounded-md bg-white/5 px-2.5 py-1 text-xs font-medium text-zinc-300 transition hover:bg-white/10 hover:text-white"
-            >
-              <CheckSquare size={13} />
-              모두 선택
-            </button>
-            <button
-              type="button"
-              onclick={deselectAllShareMessages}
-              class="inline-flex items-center gap-1 rounded-md bg-white/5 px-2.5 py-1 text-xs font-medium text-zinc-400 transition hover:bg-white/10 hover:text-zinc-200"
-            >
-              <Square size={13} />
-              모두 해제
-            </button>
-          </div>
+        <!-- Selection Controls: Master Checkbox Header -->
+        <div class="mt-4 flex items-center justify-between border-b border-white/8 px-1 pb-3">
+          <label class="flex items-center gap-3 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={allShareMessagesSelected}
+              onchange={toggleSelectAllShareMessages}
+              class="h-4 w-4 rounded border-white/20 bg-white/5 text-sky-500 focus:ring-sky-500 cursor-pointer"
+            />
+            <span class="text-xs font-semibold text-zinc-200">
+              전체 선택 ({selectedShareMessageIds.length}/{messages.length})
+            </span>
+          </label>
         </div>
 
         <!-- Message List -->
