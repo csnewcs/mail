@@ -46,3 +46,16 @@ test('reuses existing share token when same message selection is shared again', 
   assert.strictEqual(typeof token1, 'string')
   assert.strictEqual(token1, token2)
 })
+
+test('authorizes attachments and counts reads for all messages included in thread share', async () => {
+  resetDemoState()
+  const { getDemoSharedAttachment, countDemoSharedMessageReads, markDemoShareTokenAsRead } = await import('./demo.js')
+  const messageIds = ['demo-msg-1', 'demo-msg-2']
+  const token = await createThreadShareToken(messageIds)
+
+  assert.ok(token)
+  markDemoShareTokenAsRead(token!)
+
+  assert.strictEqual(countDemoSharedMessageReads('demo-msg-1'), 1)
+  assert.strictEqual(countDemoSharedMessageReads('demo-msg-2'), 1)
+})
