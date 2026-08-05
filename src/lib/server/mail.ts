@@ -3584,6 +3584,19 @@ export async function createShareToken(mailboxEntryId: number): Promise<string |
 
   if (!row) return null
 
+  const [existing] = await db
+    .select({ token: mailShare.token })
+    .from(mailShare)
+    .where(
+      and(
+        eq(mailShare.messageId, row.messageId),
+        or(isNull(mailShare.messageIds), eq(mailShare.messageIds, JSON.stringify([row.messageId])))
+      )
+    )
+    .limit(1)
+
+  if (existing) return existing.token
+
   const token = randomUUID()
   await db.insert(mailShare).values({ token, messageId: row.messageId })
   return token
@@ -3593,10 +3606,27 @@ export async function createThreadShareToken(messageIds: string[]): Promise<stri
   if (isDemoModeEnabled()) return createDemoThreadShareToken(messageIds)
   if (!messageIds || messageIds.length === 0) return null
 
+  const jsonIds = JSON.stringify(messageIds)
+
+  const [existing] = await db
+    .select({ token: mailShare.token })
+    .from(mailShare)
+    .where(
+      or(
+        eq(mailShare.messageIds, jsonIds),
+        ...(messageIds.length === 1
+          ? [and(eq(mailShare.messageId, messageIds[0]), isNull(mailShare.messageIds))]
+          : [])
+      )
+    )
+    .limit(1)
+
+  if (existing) return existing.token
+
   const token = randomUUID()
   await db
     .insert(mailShare)
-    .values({ token, messageId: messageIds[0], messageIds: JSON.stringify(messageIds) })
+    .values({ token, messageId: messageIds[0], messageIds: jsonIds })
   return token
 }
 
