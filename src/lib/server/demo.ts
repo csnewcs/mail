@@ -1319,6 +1319,8 @@ export function moveDemoMessage(
 export function createDemoShareToken(mailboxEntryId: number) {
   const message = getDemoStoredMessageById(mailboxEntryId)
   if (!message) return null
+  const existing = demoShares.findExistingToken(message.messageId)
+  if (existing) return existing
   const token = randomUUID()
   demoShares.add(token, message.messageId)
   return token
@@ -1326,6 +1328,8 @@ export function createDemoShareToken(mailboxEntryId: number) {
 
 export function createDemoThreadShareToken(messageIds: string[]) {
   if (!messageIds || messageIds.length === 0) return null
+  const existing = demoShares.findExistingToken(messageIds[0], messageIds)
+  if (existing) return existing
   const token = randomUUID()
   demoShares.add(token, messageIds[0], messageIds)
   return token

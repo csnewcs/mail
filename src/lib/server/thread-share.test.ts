@@ -36,3 +36,13 @@ test('returns empty array for invalid or non-existent token', async () => {
   const shared = await getSharedMessagesByShareToken('non-existent-token-12345')
   assert.deepStrictEqual(shared, [])
 })
+
+test('reuses existing share token when same message selection is shared again', async () => {
+  resetDemoState()
+  const messageIds = ['demo-msg-1', 'demo-msg-2']
+  const token1 = await createThreadShareToken(messageIds)
+  const token2 = await createThreadShareToken(messageIds)
+
+  assert.strictEqual(typeof token1, 'string')
+  assert.strictEqual(token1, token2)
+})

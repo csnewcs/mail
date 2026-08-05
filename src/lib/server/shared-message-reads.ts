@@ -10,6 +10,20 @@ export class SharedMessageReads {
     }
   }
 
+  findExistingToken(messageId: string, messageIds?: string[]) {
+    const targetJson = messageIds ? JSON.stringify(messageIds) : null
+    for (const [token, mId] of this.messageIds.entries()) {
+      if (mId !== messageId) continue
+      const existingThread = this.threadMessageIds.get(token)
+      if (targetJson) {
+        if (existingThread && JSON.stringify(existingThread) === targetJson) return token
+      } else {
+        if (!existingThread || (existingThread.length === 1 && existingThread[0] === messageId)) return token
+      }
+    }
+    return null
+  }
+
   getMessageId(token: string) {
     return this.messageIds.get(token) ?? null
   }
