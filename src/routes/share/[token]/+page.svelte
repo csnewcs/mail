@@ -99,6 +99,19 @@
     return SCROLLBAR_STYLE + LINK_SCRIPT + html
   }
 
+  function setupEmailIframe(iframe: HTMLIFrameElement) {
+    try {
+      const doc = iframe.contentDocument || iframe.contentWindow?.document
+      if (!doc) return
+      const height = Math.max(doc.documentElement?.scrollHeight || 0, doc.body?.scrollHeight || 0)
+      if (height > 50) {
+        iframe.style.height = `${height + 24}px`
+      }
+    } catch {
+      // Ignore cross-origin errors if any
+    }
+  }
+
   function formatBytes(bytes: number): string {
     if (bytes < 1024) return `${bytes} B`
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -181,7 +194,7 @@
       {@const msgAtts = getMessageAttachments(msg.messageId)}
 
       <!-- Single Message Header -->
-      <div class="border-b border-white/8 pb-6">
+      <div class="border-white/8 pb-6">
         <h1 class="text-2xl font-semibold text-white">
           {msg.subject || '(no subject)'}
         </h1>
@@ -205,30 +218,29 @@
       </div>
 
       <!-- Single Message Body -->
-      <div class="mt-6 flex-1">
-        {#if srcdoc}
-          <div class="flex min-h-[400px] grow overflow-hidden rounded border border-white/8 bg-white">
-            <iframe
-              title={`Email body for ${msg.subject}`}
-              sandbox="allow-popups allow-popups-to-escape-sandbox allow-scripts"
-              {srcdoc}
-              class="block w-full grow min-h-[400px]"
-            ></iframe>
-          </div>
-        {:else}
-          <div class="space-y-5 text-[15px] leading-8 text-zinc-200">
-            {#each (msg.textContent || msg.preview || 'No message body available.')
-              .split(/\n{2,}/)
-              .filter(Boolean) as paragraph, i (i)}
-              <p>{paragraph}</p>
-            {/each}
-          </div>
-        {/if}
-      </div>
+      {#if srcdoc}
+        <div class="flex grow overflow-hidden rounded border border-white/8 bg-white">
+          <iframe
+            title={`Email body for ${msg.subject}`}
+            sandbox="allow-popups allow-popups-to-escape-sandbox allow-scripts"
+            {srcdoc}
+            class="block w-full grow"
+            onload={(e) => setupEmailIframe(e.currentTarget as HTMLIFrameElement)}
+          ></iframe>
+        </div>
+      {:else}
+        <div class="space-y-5 text-[15px] leading-8 text-zinc-200">
+          {#each (msg.textContent || msg.preview || 'No message body available.')
+            .split(/\n{2,}/)
+            .filter(Boolean) as paragraph, i (i)}
+            <p>{paragraph}</p>
+          {/each}
+        </div>
+      {/if}
 
       <!-- Single Message Attachments -->
       {#if msgAtts.length > 0}
-        <div class="mt-6 border-t border-white/8 pt-4">
+        <div class="mt-4 border-t border-white/8 pt-4">
           <div class="mb-3 flex items-center gap-2">
             <Paperclip size={14} class="text-zinc-500" />
             <span class="text-xs font-semibold tracking-wide text-zinc-500 uppercase">
