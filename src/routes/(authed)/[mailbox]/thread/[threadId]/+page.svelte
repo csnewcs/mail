@@ -20,7 +20,12 @@
     Star,
     Pin,
     StickyNote,
-    Code2
+    Code2,
+    Share2,
+    Copy,
+    Check,
+    CheckSquare,
+    Square
   } from 'lucide-svelte'
   import { goto } from '$app/navigation'
   import { resolve } from '$app/paths'
@@ -168,6 +173,80 @@
   let threadSummaryAbort = $state<AbortController | null>(null)
   let showRemoteContentIds = $state(new SvelteSet<number>())
   let trustingRemoteSenderId = $state<number | null>(null)
+
+  let showShareModal = $state(false)
+  let selectedShareMessageIds = $state<string[]>([])
+  let generatingShareUrl = $state(false)
+  let generatedShareUrl = $state<string | null>(null)
+  let copiedShareUrl = $state(false)
+
+  function openThreadShareModal() {
+    selectedShareMessageIds = messages.map((m) => m.messageId)
+    generatedShareUrl = null
+    copiedShareUrl = false
+    showShareModal = true
+  }
+
+  function closeThreadShareModal() {
+    showShareModal = false
+    generatedShareUrl = null
+    copiedShareUrl = false
+  }
+
+  function selectAllShareMessages() {
+    selectedShareMessageIds = messages.map((m) => m.messageId)
+    generatedShareUrl = null
+  }
+
+  function deselectAllShareMessages() {
+    selectedShareMessageIds = []
+    generatedShareUrl = null
+  }
+
+  function toggleShareMessage(messageId: string) {
+    if (selectedShareMessageIds.includes(messageId)) {
+      selectedShareMessageIds = selectedShareMessageIds.filter((id) => id !== messageId)
+    } else {
+      selectedShareMessageIds = [...selectedShareMessageIds, messageId]
+    }
+    generatedShareUrl = null
+  }
+
+  async function createThreadShareLink() {
+    if (selectedShareMessageIds.length === 0 || generatingShareUrl) return
+    generatingShareUrl = true
+    try {
+      const response = await fetch('/api/share', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ messageIds: selectedShareMessageIds })
+      })
+
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, 'Failed to create thread share link.'))
+      }
+
+      const payload = (await response.json()) as { url: string }
+      generatedShareUrl = payload.url
+      copiedShareUrl = false
+      toast('Thread share link generated')
+    } catch (error) {
+      errorDialogMessage = errorMessageFromUnknown(error, 'Failed to create thread share link.')
+    } finally {
+      generatingShareUrl = false
+    }
+  }
+
+  async function copyShareLink() {
+    if (!generatedShareUrl) return
+    try {
+      await navigator.clipboard.writeText(generatedShareUrl)
+      copiedShareUrl = true
+      toast('Share link copied to clipboard')
+    } catch {
+      toast.error('Failed to copy link')
+    }
+  }
   let allowedRemoteSenders = $state<string[]>([])
   let draftingReplyMessageId = $state<number | null>(null)
   let threadActions = $state<ThreadActionItem[] | null>(null)
@@ -997,6 +1076,15 @@
         >
           <ListChecks size={16} class={extractingThreadActions ? 'animate-pulse' : ''} />
         </button>
+        <button
+          type="button"
+          aria-label="Share thread"
+          title="Share thread"
+          onclick={() => openThreadShareModal()}
+          class="rounded-lg border border-transparent bg-white/3 p-2 text-zinc-400 transition hover:bg-white/6 hover:text-sky-300 md:border-white/8"
+        >
+          <Share2 size={16} />
+        </button>
         <span
           class={[
             'inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs',
@@ -1580,4 +1668,150 @@
     onconfirm={(value) => closeActionModal(value ?? true)}
     oncancel={() => closeActionModal(null)}
   />
+{/if}
+
+{#if showShareModal}
+  <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+    <div class="w-full max-w-lg overflow-hidden rounded-2xl border border-white/10 bg-zinc-900 shadow-2xl">
+      <!-- Header -->
+      <div class="flex items-center justify-between border-b border-white/8 px-6 py-4">
+        <div class="flex items-center gap-2">
+          <Share2 size={18} class="text-sky-400" />
+          <h2 class="text-lg font-semibold text-white">Share Thread</h2>
+        </div>
+        <button
+          type="button"
+          onclick={closeThreadShareModal}
+          class="rounded-lg p-1.5 text-zinc-400 hover:bg-white/6 hover:text-white"
+        >
+          <X size={18} />
+        </button>
+      </div>
+
+      <!-- Content -->
+      <div class="p-6">
+        <p class="text-sm text-zinc-400">
+          Select messages from this thread to include in the public share link.
+        </p>
+
+        <!-- Selection Controls: Select All / Deselect All -->
+        <div class="mt-4 flex items-center justify-between border-b border-white/8 pb-3">
+          <span class="text-xs font-medium text-zinc-400">
+            {selectedShareMessageIds.length} of {messages.length} messages selected
+          </span>
+          <div class="flex items-center gap-2">
+            <button
+              type="button"
+              onclick={selectAllShareMessages}
+              class="inline-flex items-center gap-1 rounded-md bg-white/5 px-2.5 py-1 text-xs font-medium text-zinc-300 transition hover:bg-white/10 hover:text-white"
+            >
+              <CheckSquare size={13} />
+              모두 선택
+            </button>
+            <button
+              type="button"
+              onclick={deselectAllShareMessages}
+              class="inline-flex items-center gap-1 rounded-md bg-white/5 px-2.5 py-1 text-xs font-medium text-zinc-400 transition hover:bg-white/10 hover:text-zinc-200"
+            >
+              <Square size={13} />
+              모두 해제
+            </button>
+          </div>
+        </div>
+
+        <!-- Message List -->
+        <div class="mt-3 max-h-60 space-y-2 overflow-y-auto pr-1">
+          {#each messages as msg (msg.messageId)}
+            {@const isSelected = selectedShareMessageIds.includes(msg.messageId)}
+            <div
+              role="button"
+              tabindex="0"
+              onclick={() => toggleShareMessage(msg.messageId)}
+              onkeydown={(e) => e.key === 'Enter' && toggleShareMessage(msg.messageId)}
+              class={[
+                'flex cursor-pointer items-center gap-3 rounded-lg border p-3 transition',
+                isSelected
+                  ? 'border-sky-500/30 bg-sky-500/10 text-white'
+                  : 'border-white/5 bg-white/2 text-zinc-400 hover:border-white/10 hover:bg-white/4'
+              ].join(' ')}
+            >
+              <input
+                type="checkbox"
+                checked={isSelected}
+                tabindex="-1"
+                onclick={(e) => e.stopPropagation()}
+                onchange={() => toggleShareMessage(msg.messageId)}
+                class="h-4 w-4 rounded border-white/20 bg-white/5 text-sky-500 focus:ring-sky-500"
+              />
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center justify-between gap-2">
+                  <p class="truncate text-xs font-medium text-zinc-200">
+                    {senderName(msg.from)}
+                  </p>
+                  <span class="text-[11px] text-zinc-500">
+                    {formatFullDate(msg.receivedAt)}
+                  </span>
+                </div>
+                <p class="truncate text-xs text-zinc-400 mt-0.5">
+                  {msg.preview || msg.subject || '(no content)'}
+                </p>
+              </div>
+            </div>
+          {/each}
+        </div>
+
+        <!-- Generated URL result -->
+        {#if generatedShareUrl}
+          <div class="mt-5 rounded-xl border border-sky-500/20 bg-sky-500/5 p-3.5">
+            <label for="share-link-input" class="block text-xs font-medium text-sky-300">Public Share Link</label>
+            <div class="mt-1.5 flex items-center gap-2">
+              <input
+                id="share-link-input"
+                type="text"
+                readonly
+                value={generatedShareUrl}
+                class="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-1.5 text-xs text-zinc-200 font-mono focus:outline-none"
+              />
+              <button
+                type="button"
+                onclick={copyShareLink}
+                class="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-sky-500"
+              >
+                {#if copiedShareUrl}
+                  <Check size={14} />
+                  Copied!
+                {:else}
+                  <Copy size={14} />
+                  복사
+                {/if}
+              </button>
+            </div>
+          </div>
+        {/if}
+      </div>
+
+      <!-- Footer Actions -->
+      <div class="flex items-center justify-end gap-3 border-t border-white/8 px-6 py-4 bg-white/2">
+        <button
+          type="button"
+          onclick={closeThreadShareModal}
+          class="rounded-lg px-4 py-2 text-xs font-medium text-zinc-400 hover:bg-white/6 hover:text-white"
+        >
+          Close
+        </button>
+        <button
+          type="button"
+          disabled={selectedShareMessageIds.length === 0 || generatingShareUrl}
+          onclick={createThreadShareLink}
+          class="inline-flex items-center gap-1.5 rounded-lg bg-sky-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {#if generatingShareUrl}
+            Generating...
+          {:else}
+            공유 링크 생성 ({selectedShareMessageIds.length})
+          {/if}
+        </button>
+      </div>
+    </div>
+  </div>
 {/if}

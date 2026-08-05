@@ -1324,10 +1324,24 @@ export function createDemoShareToken(mailboxEntryId: number) {
   return token
 }
 
+export function createDemoThreadShareToken(messageIds: string[]) {
+  if (!messageIds || messageIds.length === 0) return null
+  const token = randomUUID()
+  demoShares.add(token, messageIds[0], messageIds)
+  return token
+}
+
 export function getDemoMessageByShareToken(token: string) {
   const messageId = demoShares.getMessageId(token)
   if (!messageId) return null
   return demoMessages.find((message) => message.messageId === messageId) ?? null
+}
+
+export function getDemoSharedMessagesByShareToken(token: string) {
+  const ids = demoShares.getMessageIds(token)
+  if (!ids || ids.length === 0) return []
+  const set = new Set(ids)
+  return demoMessages.filter((msg) => set.has(msg.messageId))
 }
 
 export function markDemoShareTokenAsRead(token: string) {

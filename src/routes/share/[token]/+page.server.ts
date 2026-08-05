@@ -1,41 +1,53 @@
 import { error } from '@sveltejs/kit'
 import type { PageServerLoad } from './$types'
-import { getMessageByShareToken, markShareTokenAsRead } from '$lib/server/mail'
+import { getSharedMessagesByShareToken, markShareTokenAsRead } from '$lib/server/mail'
 import { db } from '$lib/server/db'
 import { mailAttachment } from '$lib/server/db/schema'
-import { eq } from 'drizzle-orm'
-import { isDemoModeEnabled, listDemoAttachmentsForMessage } from '$lib/server/demo'
+import { inArray } from 'drizzle-orm'
+import { isDemoModeEnabled, listDemoAttachmentsForMessages } from '$lib/server/demo'
 
 export const load: PageServerLoad = async ({ params }) => {
-  const message = await getMessageByShareToken(params.token)
+  const rawMessages = await getSharedMessagesByShareToken(params.token)
 
-  if (!message) {
-    error(404, 'Shared message not found or link is invalid')
+  if (!rawMessages || rawMessages.length === 0) {
+    error(404, 'Shared message or thread not found or link is invalid')
   }
 
   await markShareTokenAsRead(params.token)
 
+  const messageIds = rawMessages.map((m) => m.messageId)
+
   const attachments = isDemoModeEnabled()
-    ? listDemoAttachmentsForMessage(message.messageId)
+    ? listDemoAttachmentsForMessages(messageIds)
     : await db
         .select({
           id: mailAttachment.id,
+          messageId: mailAttachment.messageId,
           filename: mailAttachment.filename,
           contentType: mailAttachment.contentType,
           size: mailAttachment.size
         })
         .from(mailAttachment)
-        .where(eq(mailAttachment.messageId, message.messageId))
+        .where(inArray(mailAttachment.messageId, messageIds))
+
+  const messages = rawMessages.map((msg) => ({
+    messageId: msg.messageId,
+    subject: msg.subject ?? 'No Subject',
+    from: msg.from ?? 'Unknown Sender',
+    to: msg.to ?? '',
+    preview: msg.preview ?? '',
+    textContent: msg.textContent ?? '',
+    htmlContent: msg.htmlContent ?? null,
+    receivedAt: msg.receivedAt?.toISOString() ?? null
+  }))
+
+  const firstMessage = messages[0]
+  const subject = firstMessage.subject
 
   return {
     token: params.token,
-    subject: message.subject,
-    from: message.from,
-    to: message.to,
-    preview: message.preview,
-    textContent: message.textContent,
-    htmlContent: message.htmlContent,
-    receivedAt: message.receivedAt?.toISOString() ?? null,
+    subject,
+    messages,
     attachments
   }
 }
